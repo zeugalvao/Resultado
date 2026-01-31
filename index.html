@@ -819,6 +819,22 @@ async function isAllowedUid(uid) {
   }
 }
 
+// Compat: alguns trechos antigos podem chamar isEmailAllowed(email). Mantemos um alias.
+async function isEmailAllowed(_email){
+  try{
+    const u = firebase.auth().currentUser;
+    if(!u) return false;
+    return await isAllowedUid(u.uid);
+  }catch(e){
+    return false;
+  }
+}
+
+// Compat: evita erro caso renderPeriodTable não exista (não bloqueia o app)
+if (typeof window.renderPeriodTable !== "function") {
+  window.renderPeriodTable = function(){ /* no-op */ };
+}
+
 async function isAdminUid(uid) {
   try {
     if(!db || !uid) return false;
