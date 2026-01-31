@@ -1488,7 +1488,8 @@ async function carregarDoFirebase(){
   silentBackupElectron();
 });
 
-f(!tbody) return;
+if (!DOC_REF) return;
+
     if(!rows.length){
       tbody.innerHTML = `<tr><td colspan="3" class="muted">Sem dados para o filtro atual.</td></tr>`;
       return;
