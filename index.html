@@ -809,14 +809,12 @@ function emailKey(email){
   return (email || "").replace("@", "_").replaceAll(".", "_");
 }
 
-async function isEmailAllowed(email){
-  try{
-    if(!db || !email) return false;
-    const key = emailKey(email);
-    const doc = await db.collection("allowedEmails").doc(key).get();
-    return doc.exists;
-  }catch(e){
-    console.warn("Erro ao verificar whitelist:", e);
+async function isAllowedUid(uid) {
+  try {
+    const snap = await db.collection("allowedUids").doc(uid).get();
+    return snap.exists;
+  } catch (e) {
+    console.error("Erro ao verificar allowedUids:", e);
     return false;
   }
 }
@@ -1031,7 +1029,8 @@ function initFirebaseIfPossible(){
           // ✅ Whitelist: se não estiver liberado, desloga e avisa
           const allowed = await isEmailAllowed(user.email);
           if(!allowed){
-            alert(`Acesso negado para: ${user.email}\nPeça para liberar este e-mail na whitelist (allowedEmails).`);
+            alert(`Acesso negado para este usuário.
+UID não está liberado na whitelist (allowedUids).`);
             try{ await auth.signOut(); }catch(e){}
             if(label) label.textContent = 'Faça login para salvar na nuvem';
             if(btnLogin) btnLogin.style.display = 'inline-flex';
