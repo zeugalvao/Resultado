@@ -819,6 +819,17 @@ async function isAllowedUid(uid) {
   }
 }
 
+async function isAdminUid(uid) {
+  try {
+    if(!db || !uid) return false;
+    const snap = await db.collection("adminUids").doc(uid).get();
+    return snap.exists;
+  } catch (e) {
+    console.error("Erro ao verificar adminUids:", e);
+    return false;
+  }
+}
+
 // =======================
 // 👑 Admin / Migração
 // =======================
@@ -878,7 +889,7 @@ function mergeById(destArr, srcArr){
 
 async function adminCopyAllByEmails(sourceEmail, targetEmail){
   if(!firebaseUser) throw new Error("Precisa estar logado.");
-  const okAdmin = await isAdminEmail(firebaseUser.email);
+  const okAdmin = await isAdminUid(firebaseUser.uid);
   if(!okAdmin) throw new Error("Sem permissão de admin.");
 
   const sourceUid = await uidFromEmail(sourceEmail);
@@ -903,7 +914,7 @@ async function adminCopyAllByEmails(sourceEmail, targetEmail){
 
 async function adminMergeByEmails(sourceEmail, targetEmail){
   if(!firebaseUser) throw new Error("Precisa estar logado.");
-  const okAdmin = await isAdminEmail(firebaseUser.email);
+  const okAdmin = await isAdminUid(firebaseUser.uid);
   if(!okAdmin) throw new Error("Sem permissão de admin.");
 
   const sourceUid = await uidFromEmail(sourceEmail);
@@ -943,7 +954,7 @@ async function refreshAdminUI(){
     panel.style.display = "none";
     return;
   }
-  const okAdmin = await isAdminEmail(firebaseUser.email);
+  const okAdmin = await isAdminUid(firebaseUser.uid);
   panel.style.display = okAdmin ? "block" : "none";
 }
 
@@ -1027,9 +1038,9 @@ function initFirebaseIfPossible(){
         const label = document.getElementById('userLabel');
         if(user){
           // ✅ Whitelist: se não estiver liberado, desloga e avisa
-          const allowed = await isEmailAllowed(user.email);
+          const allowed = await isAllowedUid(user.uid);
           if(!allowed){
-            alert(`Acesso negado para este usuário.
+            alert(`Acesso negado:
 UID não está liberado na whitelist (allowedUids).`);
             try{ await auth.signOut(); }catch(e){}
             if(label) label.textContent = 'Faça login para salvar na nuvem';
