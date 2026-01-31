@@ -1301,23 +1301,15 @@
   }
 
   function renderPeriodTable(tableId, rows, labelFormatter){
-  const tbody = document.querySelector(`#${tableId} tbody`);
-  if(!tbody) return;
+    const tbody=document.querySelector(`#${tableId} tbody`);
+    if(!tbody) return;
+    if(!rows.length){
+      tbody.innerHTML = `<tr><td colspan="3" class="muted">Sem dados para o filtro atual.</td></tr>`;
+      return;
+    }
 
-  if(!rows || !rows.length){
-    tbody.innerHTML = `<tr><td colspan="3" class="muted">Sem dados para o filtro atual.</td></tr>`;
-    return;
-  }
-
-  tbody.innerHTML = rows.map(([key,stats])=>`
-    <tr>
-      <td class="nowrap">${escapeHtml(labelFormatter(key))}</td>
-      <td class="nowrap"><b>${stats.total}</b></td>
-      <td>${buildSummaryCellHTML(stats)}</td>
-    </tr>
-  `).join('');
-}
-
+  // Expor para debug
+  try{ window.renderPeriodTable = renderPeriodTable; }catch(e){}
     tbody.innerHTML = rows.map(([key,stats])=>`
       <tr>
         <td class="nowrap">${escapeHtml(labelFormatter(key))}</td>
