@@ -762,6 +762,40 @@ function setUserDocRef(uid){
   DOC_REF = db.collection("users").doc(uid).collection("app").doc("dados");
 }
 
+
+// =======================
+// Util: agregador genérico (usado nos relatórios)
+// =======================
+function aggregateByKey(items, keyFn){
+  const out = {};
+  for(const it of (items || [])){
+    const k = String(keyFn(it));
+    out[k] = (out[k] || 0) + 1;
+  }
+  return out;
+}
+
+// =======================
+// 🔐 Whitelist de e-mails permitidos (Firestore: allowedEmails/{emailKey})
+// =======================
+function emailKey(email){
+  return (email || "").replace("@", "_").replaceAll(".", "_");
+}
+
+async function isEmailAllowed(email){
+  try{
+    if(!db || !email) return false;
+    const key = emailKey(email);
+    const doc = await db.collection("allowedEmails").doc(key).get();
+    return doc.exists;
+  }catch(e){
+    console.warn("Erro ao verificar whitelist:", e);
+    return false;
+  }
+}
+
+
+
 // Para evitar salvar enquanto estamos aplicando dados vindos da nuvem
 let suppressAutoSave = false;
 
@@ -788,7 +822,7 @@ function initFirebaseIfPossible(){
 
       btnLogin?.addEventListener('click', async ()=>{
         try{
-          try{ await auth.signInWithPopup(provider); }catch(e){ await auth.signInWithRedirect(provider); }
+          try{ await auth.signInWithPopup(provider); }catch(e){ try{ await auth.signInWithRedirect(provider); }catch(e2){ console.error(e2); } }
         }catch(e){
           // Em alguns celulares o popup pode ser bloqueado
           try{
@@ -815,14 +849,6 @@ function initFirebaseIfPossible(){
         // Atualiza UI
         const label = document.getElementById('userLabel');
         if(user){
-      // ✅ Bloqueia uso do app se o e-mail não estiver na whitelist
-      const allowed = await isEmailAllowed(user.email);
-      if(!allowed){
-        alert("Seu e-mail não está autorizado para usar este sistema.");
-        try{ await auth.signOut(); }catch(e){}
-        return;
-      }
-
           if(label) label.textContent = user.displayName ? `Olá, ${user.displayName}` : 'Logado';
           if(btnLogin) btnLogin.style.display = 'none';
           if(btnLogout) btnLogout.style.display = 'inline-flex';
@@ -1520,9 +1546,12 @@ if (!DOC_REF) return;
       return dl && withinRange(dl,startStr,endStr);
     });
 
-    const daily = aggregateByKey(scoped, t => { const dl=parseDeadlineToLocalDate(t.deadline); return dl? `${dl.getFullYear()}-${pad2(dl.getMonth()+1)}-${pad2(dl.getDate())}` : 'invalid'; });
-    const weekly = aggregateByKey(scoped, t => { const dl=parseDeadlineToLocalDate(t.deadline); if(!dl) return 'invalid'; const {isoYear,weekNo}=getISOWeekInfo(dl); return `${isoYear}-W${pad2(weekNo)}`; });
-    const monthly = aggregateByKey(scoped, t => { const dl=parseDeadlineToLocalDate(t.deadline); return dl? `${dl.getFullYear()}-${pad2(dl.getMonth()+1)}` : 'invalid'; });
+    const daily = aggregateByKey(scoped, dl => `${dl.getFullYear()}-${pad2(dl.getMonth()+1)}-${pad2(dl.getDate())}`);
+    const weekly = aggregateByKey(scoped, dl => {
+      const {isoYear,weekNo}=getISOWeekInfo(dl);
+      return `${isoYear}-W${pad2(weekNo)}`;
+    });
+    const monthly = aggregateByKey(scoped, dl => `${dl.getFullYear()}-${pad2(dl.getMonth()+1)}`);
 
     renderPeriodTable('period-daily', daily, k=>{
       const [y,m,d]=k.split('-').map(Number);
