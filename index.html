@@ -543,6 +543,33 @@
         <thead><tr><th>Nome</th><th>Descrição</th><th>Ações</th></tr></thead>
         <tbody></tbody>
       </table>
+
+      <!-- ===================== -->
+      <!-- 👑 Painel Admin (Migração/Cópia) -->
+      <!-- ===================== -->
+      <div id="adminPanel" style="display:none; margin-top:50px; padding:18px; border:1px solid #e8e8ef; border-radius:14px; background:#fafaff;">
+        <h2 style="margin-bottom:10px;">👑 Admin • Migração / Cópia de Dados</h2>
+        <p class="muted" style="margin-bottom:14px;">
+          Use para <b>copiar</b> ou <b>mesclar</b> tarefas (e também responsáveis e setores) entre contas.
+          <br>
+          <b>Dica:</b> para o e-mail aparecer aqui, ele precisa ter logado ao menos 1 vez (para registrar emailToUid).
+        </p>
+
+        <div class="form-group">
+          <label>E-mail de origem</label>
+          <input type="email" id="adminSrcEmail" placeholder="ex: antigo@gmail.com">
+        </div>
+
+        <div class="form-group">
+          <label>E-mail de destino</label>
+          <input type="email" id="adminDstEmail" placeholder="ex: novo@gmail.com">
+        </div>
+
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button class="btn btn-danger" onclick="runAdminCopy()">Copiar (substituir tudo no destino)</button>
+          <button class="btn btn-primary" onclick="runAdminMerge()">Mesclar (não sobrescrever por ID)</button>
+        </div>
+      </div>
     </div>
 
     <!-- Relatórios -->
@@ -794,6 +821,159 @@ async function isEmailAllowed(email){
   }
 }
 
+// =======================
+// 👑 Admin / Migração
+// =======================
+async function isAdminEmail(email){
+  try{
+    if(!db || !email) return false;
+    const key = emailKey(email);
+    const doc = await db.collection("adminEmails").doc(key).get();
+    return doc.exists;
+  }catch(e){
+    console.warn("Erro ao verificar admin:", e);
+    return false;
+  }
+}
+
+// Registra (ou atualiza) o mapeamento email -> uid (usado pelo modo admin para achar UIDs por e-mail)
+async function upsertEmailToUid(user){
+  try{
+    if(!db || !user?.email || !user?.uid) return;
+    const key = emailKey(user.email);
+    await db.collection("emailToUid").doc(key).set({
+      email: user.email,
+      uid: user.uid,
+      displayName: user.displayName || "",
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }catch(e){
+    console.warn("Erro ao registrar emailToUid:", e);
+  }
+}
+
+function userDataRef(uid){
+  // users/{uid}/app/dados (mesma estrutura do app)
+  return db.collection("users").doc(uid).collection("app").doc("dados");
+}
+
+async function uidFromEmail(email){
+  if(!db || !email) return null;
+  const key = emailKey(email);
+  const snap = await db.collection("emailToUid").doc(key).get();
+  return snap.exists ? (snap.data()?.uid || null) : null;
+}
+
+function mergeById(destArr, srcArr){
+  const out = Array.isArray(destArr) ? [...destArr] : [];
+  const seen = new Set(out.map(x => String(x?.id)));
+  for(const item of (Array.isArray(srcArr) ? srcArr : [])){
+    // se não tiver id, gera uma chave "fraca" para não duplicar tudo
+    const id = item?.id != null ? String(item.id) : (String(item?.title || "") + "::" + String(item?.createdAt || ""));
+    if(!seen.has(id)){
+      out.push(item);
+      seen.add(id);
+    }
+  }
+  return out;
+}
+
+async function adminCopyAllByEmails(sourceEmail, targetEmail){
+  if(!firebaseUser) throw new Error("Precisa estar logado.");
+  const okAdmin = await isAdminEmail(firebaseUser.email);
+  if(!okAdmin) throw new Error("Sem permissão de admin.");
+
+  const sourceUid = await uidFromEmail(sourceEmail);
+  const targetUid = await uidFromEmail(targetEmail);
+  if(!sourceUid) throw new Error("Origem não encontrada em emailToUid (faça login 1x com esse e-mail).");
+  if(!targetUid) throw new Error("Destino não encontrado em emailToUid (faça login 1x com esse e-mail).");
+
+  const sourceSnap = await userDataRef(sourceUid).get();
+  const data = sourceSnap.exists ? (sourceSnap.data() || null) : null;
+  if(!data) throw new Error("Origem não tem dados no Firestore.");
+
+  await userDataRef(targetUid).set({
+    tasks: data.tasks || [],
+    responsibles: data.responsibles || [],
+    sectors: data.sectors || [],
+    migratedFrom: sourceEmail,
+    migratedAt: new Date().toISOString(),
+  }, { merge: false });
+
+  return { sourceUid, targetUid, tasks: (data.tasks || []).length };
+}
+
+async function adminMergeByEmails(sourceEmail, targetEmail){
+  if(!firebaseUser) throw new Error("Precisa estar logado.");
+  const okAdmin = await isAdminEmail(firebaseUser.email);
+  if(!okAdmin) throw new Error("Sem permissão de admin.");
+
+  const sourceUid = await uidFromEmail(sourceEmail);
+  const targetUid = await uidFromEmail(targetEmail);
+  if(!sourceUid) throw new Error("Origem não encontrada em emailToUid (faça login 1x com esse e-mail).");
+  if(!targetUid) throw new Error("Destino não encontrado em emailToUid (faça login 1x com esse e-mail).");
+
+  const [srcSnap, dstSnap] = await Promise.all([
+    userDataRef(sourceUid).get(),
+    userDataRef(targetUid).get(),
+  ]);
+
+  const src = srcSnap.exists ? (srcSnap.data() || {}) : {};
+  const dst = dstSnap.exists ? (dstSnap.data() || {}) : {};
+
+  const merged = {
+    tasks: mergeById(dst.tasks, src.tasks),
+    responsibles: mergeById(dst.responsibles, src.responsibles),
+    sectors: mergeById(dst.sectors, src.sectors),
+    mergedFrom: sourceEmail,
+    mergedAt: new Date().toISOString(),
+  };
+
+  await userDataRef(targetUid).set(merged, { merge: true });
+
+  return {
+    sourceUid,
+    targetUid,
+    tasksAdded: (merged.tasks?.length || 0) - (dst.tasks?.length || 0),
+  };
+}
+
+async function refreshAdminUI(){
+  const panel = document.getElementById("adminPanel");
+  if(!panel) return;
+  if(!firebaseUser?.email){
+    panel.style.display = "none";
+    return;
+  }
+  const okAdmin = await isAdminEmail(firebaseUser.email);
+  panel.style.display = okAdmin ? "block" : "none";
+}
+
+async function runAdminCopy(){
+  try{
+    const src = (document.getElementById("adminSrcEmail")?.value || "").trim();
+    const dst = (document.getElementById("adminDstEmail")?.value || "").trim();
+    if(!src || !dst) return alert("Informe os e-mails de origem e destino.");
+    if(!confirm(`Substituir TODOS os dados de ${dst} pelos de ${src}?`)) return;
+    const res = await adminCopyAllByEmails(src, dst);
+    showToast(`✅ Copiado: ${res.tasks} tarefas`);
+  }catch(e){
+    alert("Erro: " + (e?.message || e));
+  }
+}
+
+async function runAdminMerge(){
+  try{
+    const src = (document.getElementById("adminSrcEmail")?.value || "").trim();
+    const dst = (document.getElementById("adminDstEmail")?.value || "").trim();
+    if(!src || !dst) return alert("Informe os e-mails de origem e destino.");
+    const res = await adminMergeByEmails(src, dst);
+    showToast(`✅ Mesclado: +${res.tasksAdded} tarefas`);
+  }catch(e){
+    alert("Erro: " + (e?.message || e));
+  }
+}
+
 
 
 // Para evitar salvar enquanto estamos aplicando dados vindos da nuvem
@@ -844,62 +1024,66 @@ function initFirebaseIfPossible(){
 
       // Quando loga/desloga
       auth.onAuthStateChanged(async (user)=>{
-  firebaseUser = user || null;
+        firebaseUser = user || null;
 
-  const label = document.getElementById('userLabel');
-  const btnLogin = document.getElementById('btnLoginGoogle');
-  const btnLogout = document.getElementById('btnLogoutGoogle');
+        const label = document.getElementById('userLabel');
+        if(user){
+          // ✅ Whitelist: se não estiver liberado, desloga e avisa
+          const allowed = await isEmailAllowed(user.email);
+          if(!allowed){
+            alert(`Acesso negado para: ${user.email}\nPeça para liberar este e-mail na whitelist (allowedEmails).`);
+            try{ await auth.signOut(); }catch(e){}
+            if(label) label.textContent = 'Faça login para salvar na nuvem';
+            if(btnLogin) btnLogin.style.display = 'inline-flex';
+            if(btnLogout) btnLogout.style.display = 'none';
+            DOC_REF = null;
+            await refreshAdminUI();
+            return;
+          }
 
-  if(user){
-    // ✅ 1) Checa whitelist ANTES de acessar Firestore
-    const allowed = await isEmailAllowed(user.email);
-    if(!allowed){
-      alert(`Acesso negado para: ${user.email}\nPeça para liberar este e-mail na whitelist do Firestore (allowedEmails).`);
-      try{ await auth.signOut(); } catch(e){}
-      if(label) label.textContent = 'Faça login para salvar na nuvem';
-      if(btnLogin) btnLogin.style.display = 'inline-flex';
-      if(btnLogout) btnLogout.style.display = 'none';
-      DOC_REF = null;
-      return;
-    }
+          if(label) label.textContent = user.displayName ? `Olá, ${user.displayName}` : (user.email || 'Logado');
+          if(btnLogin) btnLogin.style.display = 'none';
+          if(btnLogout) btnLogout.style.display = 'inline-flex';
 
-    // ✅ 2) UI ok
-    if(label) label.textContent = user.displayName ? `Olá, ${user.displayName}` : 'Logado';
-    if(btnLogin) btnLogin.style.display = 'none';
-    if(btnLogout) btnLogout.style.display = 'inline-flex';
+          // ✅ Registra email -> uid (para migração admin)
+          await upsertEmailToUid(user);
 
-    // ✅ 3) Agora sim aponta pro doc do usuário e carrega
-    setUserDocRef(user.uid);
+          setUserDocRef(user.uid);
 
-    const cloud = await carregarDoFirebase();
-    if(cloud){
-      suppressAutoSave = true;
-      try{
-        tasks = cloud.tasks || [];
-        responsibles = cloud.responsibles || [];
-        sectors = cloud.sectors || [];
+          // Carrega dados da nuvem do usuário e aplica no app
+          const cloud = await carregarDoFirebase();
+          if(cloud){
+            suppressAutoSave = true;
+            try{
+              tasks = cloud.tasks || [];
+              responsibles = cloud.responsibles || [];
+              sectors = cloud.sectors || [];
 
-        localStorage.setItem('tasks', JSON.stringify(tasks));
-        localStorage.setItem('responsibles', JSON.stringify(responsibles));
-        localStorage.setItem('sectors', JSON.stringify(sectors));
-        localStorage.setItem('silent_backup', JSON.stringify(cloud));
-      }catch(e){}
+              // espelha no local (offline)
+              localStorage.setItem('tasks', JSON.stringify(tasks));
+              localStorage.setItem('responsibles', JSON.stringify(responsibles));
+              localStorage.setItem('sectors', JSON.stringify(sectors));
+              localStorage.setItem('silent_backup', JSON.stringify(cloud));
+            }catch(e){}
 
-      migrateAllTasksPendingHistory();
-      loadData();
-      updateSlaCharts();
-      showToast('✅ Dados carregados da nuvem!');
-      suppressAutoSave = false;
-    }else{
-      showToast('✅ Logado! (Sem dados na nuvem ainda)');
-    }
-  }else{
-    if(label) label.textContent = 'Faça login para salvar na nuvem';
-    if(btnLogin) btnLogin.style.display = 'inline-flex';
-    if(btnLogout) btnLogout.style.display = 'none';
-    DOC_REF = null;
-  }
-});
+            migrateAllTasksPendingHistory();
+            loadData();
+            updateSlaCharts();
+            showToast('✅ Dados carregados da nuvem!');
+            suppressAutoSave = false;
+          }else{
+            showToast('✅ Logado! (Sem dados na nuvem ainda)');
+          }
+
+          await refreshAdminUI();
+        }else{
+          if(label) label.textContent = 'Faça login para salvar na nuvem';
+          if(btnLogin) btnLogin.style.display = 'inline-flex';
+          if(btnLogout) btnLogout.style.display = 'none';
+          DOC_REF = null;
+          await refreshAdminUI();
+        }
+      });
     }
   }catch(e){
     firebaseReady = false;
