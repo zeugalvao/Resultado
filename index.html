@@ -844,48 +844,62 @@ function initFirebaseIfPossible(){
 
       // Quando loga/desloga
       auth.onAuthStateChanged(async (user)=>{
-        firebaseUser = user || null;
+  firebaseUser = user || null;
 
-        // Atualiza UI
-        const label = document.getElementById('userLabel');
-        if(user){
-          if(label) label.textContent = user.displayName ? `Olá, ${user.displayName}` : 'Logado';
-          if(btnLogin) btnLogin.style.display = 'none';
-          if(btnLogout) btnLogout.style.display = 'inline-flex';
+  const label = document.getElementById('userLabel');
+  const btnLogin = document.getElementById('btnLoginGoogle');
+  const btnLogout = document.getElementById('btnLogoutGoogle');
 
-          setUserDocRef(user.uid);
+  if(user){
+    // ✅ 1) Checa whitelist ANTES de acessar Firestore
+    const allowed = await isEmailAllowed(user.email);
+    if(!allowed){
+      alert(`Acesso negado para: ${user.email}\nPeça para liberar este e-mail na whitelist do Firestore (allowedEmails).`);
+      try{ await auth.signOut(); } catch(e){}
+      if(label) label.textContent = 'Faça login para salvar na nuvem';
+      if(btnLogin) btnLogin.style.display = 'inline-flex';
+      if(btnLogout) btnLogout.style.display = 'none';
+      DOC_REF = null;
+      return;
+    }
 
-          // Carrega dados da nuvem do usuário e aplica no app
-          const cloud = await carregarDoFirebase();
-          if(cloud){
-            suppressAutoSave = true;
-            try{
-              tasks = cloud.tasks || [];
-              responsibles = cloud.responsibles || [];
-              sectors = cloud.sectors || [];
+    // ✅ 2) UI ok
+    if(label) label.textContent = user.displayName ? `Olá, ${user.displayName}` : 'Logado';
+    if(btnLogin) btnLogin.style.display = 'none';
+    if(btnLogout) btnLogout.style.display = 'inline-flex';
 
-              // espelha no local (offline)
-              localStorage.setItem('tasks', JSON.stringify(tasks));
-              localStorage.setItem('responsibles', JSON.stringify(responsibles));
-              localStorage.setItem('sectors', JSON.stringify(sectors));
-              localStorage.setItem('silent_backup', JSON.stringify(cloud));
-            }catch(e){}
+    // ✅ 3) Agora sim aponta pro doc do usuário e carrega
+    setUserDocRef(user.uid);
 
-            migrateAllTasksPendingHistory();
-            loadData();
-            updateSlaCharts();
-            showToast('✅ Dados carregados da nuvem!');
-            suppressAutoSave = false;
-          }else{
-            showToast('✅ Logado! (Sem dados na nuvem ainda)');
-          }
-        }else{
-          if(label) label.textContent = 'Faça login para salvar na nuvem';
-          if(btnLogin) btnLogin.style.display = 'inline-flex';
-          if(btnLogout) btnLogout.style.display = 'none';
-          DOC_REF = null;
-        }
-      });
+    const cloud = await carregarDoFirebase();
+    if(cloud){
+      suppressAutoSave = true;
+      try{
+        tasks = cloud.tasks || [];
+        responsibles = cloud.responsibles || [];
+        sectors = cloud.sectors || [];
+
+        localStorage.setItem('tasks', JSON.stringify(tasks));
+        localStorage.setItem('responsibles', JSON.stringify(responsibles));
+        localStorage.setItem('sectors', JSON.stringify(sectors));
+        localStorage.setItem('silent_backup', JSON.stringify(cloud));
+      }catch(e){}
+
+      migrateAllTasksPendingHistory();
+      loadData();
+      updateSlaCharts();
+      showToast('✅ Dados carregados da nuvem!');
+      suppressAutoSave = false;
+    }else{
+      showToast('✅ Logado! (Sem dados na nuvem ainda)');
+    }
+  }else{
+    if(label) label.textContent = 'Faça login para salvar na nuvem';
+    if(btnLogin) btnLogin.style.display = 'inline-flex';
+    if(btnLogout) btnLogout.style.display = 'none';
+    DOC_REF = null;
+  }
+});
     }
   }catch(e){
     firebaseReady = false;
