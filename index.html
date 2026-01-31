@@ -772,6 +772,10 @@ const firebaseConfig = {
   measurementId: "G-J2JKC30PNN"
 };
 
+// 🔓 MODO PÚBLICO: sem autenticação, lê/escreve dados globais
+const PUBLIC_MODE = true;
+
+
 // Flags/refs
 let firebaseReady = false;
 let db = null;
@@ -784,8 +788,12 @@ let firebaseUser = null;
 // Doc do usuário logado (cada um tem o seu)
 let DOC_REF = null;
 function setUserDocRef(uid){
-  // Estrutura:
-  // users/{uid}/app/dados
+  // Estrutura original (por usuário): users/{uid}/app/dados
+  // Em modo público: public/dados
+  if(PUBLIC_MODE){
+    DOC_REF = db.collection("public").doc("dados");
+    return;
+  }
   DOC_REF = db.collection("users").doc(uid).collection("app").doc("dados");
 }
 
@@ -1011,35 +1019,18 @@ function initFirebaseIfPossible(){
     // Evita inicializar 2x
     if(firebase.apps && firebase.apps.length === 0){
       firebase.initializeApp(firebaseConfig);
-    
-
-// ===============================
-// 🔓 AUTH DESABILITADO (VISUALIZAÇÃO)
-// ===============================
-if (firebase && firebase.auth) {
-  try {
-    firebase.auth = function () {
-      return {
-        currentUser: { uid: "PUBLIC_VIEW", email: "public@view.local" },
-        signInWithPopup: async () => {},
-        signOut: async () => {},
-        onAuthStateChanged: () => {}
-      };
-    };
-  } catch (e) {}
-}
-
-}else if(!firebase.apps){
+    }else if(!firebase.apps){
       firebase.initializeApp(firebaseConfig);
     }
 
     if(firebase.firestore && firebase.auth){
       db = firebase.firestore();
       auth = firebase.auth();
-      provider = new firebase.auth.GoogleAuthProvider();
+      provider = null; // PUBLIC_MODE: sem provider
       firebaseReady = true;
 
-      // Liga UI de login (se existir)
+      if(!PUBLIC_MODE){
+// Liga UI de login (se existir)
       const btnLogin = document.getElementById('btnLoginGoogle');
       const btnLogout = document.getElementById('btnLogoutGoogle');
 
@@ -1128,6 +1119,38 @@ UID não está liberado na whitelist (allowedUids).`);
           await refreshAdminUI();
         }
       });
+}else{
+      // Modo público: define um usuário sintético e aponta para o documento global
+      firebaseUser = { uid: "PUBLIC_VIEW", email: "public@view.local" };
+      setUserDocRef(firebaseUser.uid);
+      const btnLogin = document.getElementById('btnLoginGoogle');
+      const btnLogout = document.getElementById('btnLogoutGoogle');
+      if(btnLogin) btnLogin.style.display = 'none';
+      if(btnLogout) btnLogout.style.display = 'none';
+      const userLabel = document.getElementById('userLabel');
+      if(userLabel) userLabel.textContent = 'Modo público (sem login)';
+      // Carrega dados globais automaticamente
+      carregarDoFirebase().then(cloud => {
+        if(cloud){
+          try{
+            if(cloud.tasks) tasks = cloud.tasks;
+            if(cloud.cadastros) cadastros = cloud.cadastros;
+            if(cloud.sectors) sectors = cloud.sectors;
+            if(cloud.responsibles) responsibles = cloud.responsibles;
+            localStorage.setItem('tasks', JSON.stringify(tasks||[]));
+            localStorage.setItem('cadastros', JSON.stringify(cadastros||[]));
+            localStorage.setItem('sectors', JSON.stringify(sectors||[]));
+            localStorage.setItem('responsibles', JSON.stringify(responsibles||[]));
+          }catch(e){}
+          loadData();
+          showToast('✅ Dados públicos carregados!');
+        }else{
+          loadData();
+          showToast('ℹ️ Nenhum dado público encontrado em public/dados');
+        }
+      });
+}
+
     }
   }catch(e){
     firebaseReady = false;
@@ -1160,7 +1183,7 @@ function agendarSalvarNoFirebase(dados){
 }
 
 async function carregarDoFirebase(){
-  if(!firebaseReady || !DOC_REF || !firebaseUser) return null;
+  if(!firebaseReady || !DOC_REF) return null;
   try{
     const doc = await DOC_REF.get();
     return doc.exists ? (doc.data() || null) : null;
@@ -2530,13 +2553,3 @@ if (!DOC_REF) return;
 </script>
 </body>
 </html>
-
-
-// Força carregamento do dashboard sem login
-try {
-  if (typeof loadDashboard === "function") loadDashboard();
-  if (typeof loadData === "function") loadData();
-  if (typeof loadTasks === "function") loadTasks();
-} catch (e) {
-  console.warn("Erro ao forçar carregamento:", e);
-}
