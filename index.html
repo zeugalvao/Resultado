@@ -811,7 +811,7 @@ function emailKey(email){
 
 async function isAllowedUid(uid) {
   try {
-    const snap = await db.collection("allowedUids").doc(uid).get();
+    const snap = await (db || firebase.firestore()).collection("allowedUids").doc(uid).get();
     return snap.exists;
   } catch (e) {
     console.error("Erro ao verificar allowedUids:", e);
@@ -838,7 +838,7 @@ if (typeof window.renderPeriodTable !== "function") {
 async function isAdminUid(uid) {
   try {
     if(!db || !uid) return false;
-    const snap = await db.collection("adminUids").doc(uid).get();
+    const snap = await (db || firebase.firestore()).collection("adminUids").doc(uid).get();
     return snap.exists;
   } catch (e) {
     console.error("Erro ao verificar adminUids:", e);
