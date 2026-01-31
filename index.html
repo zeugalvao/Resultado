@@ -810,6 +810,15 @@ function initFirebaseIfPossible(){
 
       // Quando loga/desloga
       auth.onAuthStateChanged(async (user)=>{
+        if(user){
+          const allowed = await isEmailAllowed(user.email);
+          if(!allowed){
+            alert("Seu e-mail não está autorizado para usar este sistema.");
+            try{ await auth.signOut(); }catch(e){}
+            return;
+          }
+        }
+
         firebaseUser = user || null;
 
         // Atualiza UI
