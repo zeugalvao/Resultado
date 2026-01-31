@@ -14,6 +14,9 @@
     .container{max-width:1400px;margin:0 auto;background:#fff;border-radius:20px;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden}
     .header{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;padding:30px;text-align:center}
     .header h1{font-size:2.5em;margin-bottom:10px}
+    .auth-bar{margin-top:12px;display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap}
+    .auth-label{font-weight:700;opacity:.95}
+    .auth-btn{margin:0;padding:10px 14px;border-radius:999px}
     .nav-tabs{display:flex;background:#f8f9fa;border-bottom:2px solid #dee2e6;overflow-x:auto}
     .nav-tab{padding:15px 25px;cursor:pointer;border:none;background:none;font-size:1em;transition:.3s;white-space:nowrap}
     .nav-tab:hover{background:#e9ecef}
@@ -225,12 +228,19 @@
   <!-- Firebase (Firestore) - compat (sem build/instalação) -->
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
 
 </head>
 <body>
 <div class="container">
   <div class="header">
     <h1>📋 Dashboard de Tarefas</h1>
+    <div class="auth-bar">
+      <span id="userLabel" class="auth-label">Faça login para salvar na nuvem</span>
+      <button id="btnLoginGoogle" class="btn btn-secondary auth-btn" type="button">Entrar com Google</button>
+      <button id="btnLogoutGoogle" class="btn btn-secondary auth-btn" type="button" style="display:none;">Sair</button>
+    </div>
+
   </div>
 
   <div class="nav-tabs">
@@ -722,74 +732,167 @@
 
 
   // =======================
-  // ✅ Firebase / Firestore (SEM LOGIN)
-  // =======================
-  // IMPORTANTE: Isso NÃO é senha. É a identificação do seu projeto.
-  const firebaseConfig = {
-    apiKey: "AIzaSyB9UudVJSWfaPqditFNhlZeC2eWvgY9tQM",
-    authDomain: "dash-547e0.firebaseapp.com",
-    projectId: "dash-547e0",
-    storageBucket: "dash-547e0.firebasestorage.app",
-    messagingSenderId: "600314268977",
-    appId: "1:600314268977:web:d59c2c1f8cf390689bf410",
-    measurementId: "G-J2JKC30PNN"
-  };
+// ✅ Firebase / Firestore + Login Google (SEGURO)
+// =======================
+// IMPORTANTE: Isso NÃO é senha. É a identificação do seu projeto.
+const firebaseConfig = {
+  apiKey: "AIzaSyB9UudVJSWfaPqditFNhlZeC2eWvgY9tQM",
+  authDomain: "dash-547e0.firebaseapp.com",
+  projectId: "dash-547e0",
+  storageBucket: "dash-547e0.firebasestorage.app",
+  messagingSenderId: "600314268977",
+  appId: "1:600314268977:web:d59c2c1f8cf390689bf410",
+  measurementId: "G-J2JKC30PNN"
+};
 
-  // Flags/refs
-  let firebaseReady = false;
-  let db = null;
-  let DOC_REF = null;
+// Flags/refs
+let firebaseReady = false;
+let db = null;
+let auth = null;
+let provider = null;
 
-  function initFirebaseIfPossible(){
-    try{
-      if(!window.firebase || !firebase.initializeApp) return;
-      // Evita inicializar 2x
-      if(firebase.apps && firebase.apps.length === 0){
-        firebase.initializeApp(firebaseConfig);
-      }else if(!firebase.apps){
-        // fallback raro
-        firebase.initializeApp(firebaseConfig);
-      }
-      if(firebase.firestore){
-        db = firebase.firestore();
-        DOC_REF = db.collection("dashboard").doc("dados"); // documento único
-        firebaseReady = true;
-      }
-    }catch(e){
-      firebaseReady = false;
-      db = null;
-      DOC_REF = null;
-      console.warn("Firebase não inicializou:", e);
+// Usuário logado
+let firebaseUser = null;
+
+// Doc do usuário logado (cada um tem o seu)
+let DOC_REF = null;
+function setUserDocRef(uid){
+  // Estrutura:
+  // users/{uid}/app/dados
+  DOC_REF = db.collection("users").doc(uid).collection("app").doc("dados");
+}
+
+// Para evitar salvar enquanto estamos aplicando dados vindos da nuvem
+let suppressAutoSave = false;
+
+function initFirebaseIfPossible(){
+  try{
+    if(!window.firebase || !firebase.initializeApp) return;
+
+    // Evita inicializar 2x
+    if(firebase.apps && firebase.apps.length === 0){
+      firebase.initializeApp(firebaseConfig);
+    }else if(!firebase.apps){
+      firebase.initializeApp(firebaseConfig);
     }
-  }
 
-  // Debounce para não gravar no Firestore a cada pequena alteração
-  let firebaseSaveTimer = null;
-  function agendarSalvarNoFirebase(dados){
-    if(!firebaseReady || !DOC_REF) return;
-    try{
-      if(firebaseSaveTimer) clearTimeout(firebaseSaveTimer);
-      firebaseSaveTimer = setTimeout(async ()=>{
+    if(firebase.firestore && firebase.auth){
+      db = firebase.firestore();
+      auth = firebase.auth();
+      provider = new firebase.auth.GoogleAuthProvider();
+      firebaseReady = true;
+
+      // Liga UI de login (se existir)
+      const btnLogin = document.getElementById('btnLoginGoogle');
+      const btnLogout = document.getElementById('btnLogoutGoogle');
+
+      btnLogin?.addEventListener('click', async ()=>{
         try{
-          await DOC_REF.set(dados);
-          // console.log("✅ Salvo no Firestore");
+          await auth.signInWithPopup(provider);
         }catch(e){
-          console.warn("❌ Erro ao salvar no Firestore:", e);
+          // Em alguns celulares o popup pode ser bloqueado
+          try{
+            await auth.signInWithRedirect(provider);
+          }catch(err){
+            console.warn("Erro no login Google:", err);
+            alert("Não foi possível fazer login. Veja o Console (F12) para detalhes.");
+          }
         }
-      }, 900); // 0.9s após a última mudança
-    }catch(e){}
-  }
+      });
 
-  async function carregarDoFirebase(){
-    if(!firebaseReady || !DOC_REF) return null;
-    try{
-      const doc = await DOC_REF.get();
-      return doc.exists ? (doc.data() || null) : null;
-    }catch(e){
-      console.warn("❌ Erro ao carregar do Firestore:", e);
-      return null;
+      btnLogout?.addEventListener('click', async ()=>{
+        try{
+          await auth.signOut();
+        }catch(e){
+          console.warn("Erro ao sair:", e);
+        }
+      });
+
+      // Quando loga/desloga
+      auth.onAuthStateChanged(async (user)=>{
+        firebaseUser = user || null;
+
+        // Atualiza UI
+        const label = document.getElementById('userLabel');
+        if(user){
+          if(label) label.textContent = user.displayName ? `Olá, ${user.displayName}` : 'Logado';
+          if(btnLogin) btnLogin.style.display = 'none';
+          if(btnLogout) btnLogout.style.display = 'inline-flex';
+
+          setUserDocRef(user.uid);
+
+          // Carrega dados da nuvem do usuário e aplica no app
+          const cloud = await carregarDoFirebase();
+          if(cloud){
+            suppressAutoSave = true;
+            try{
+              tasks = cloud.tasks || [];
+              responsibles = cloud.responsibles || [];
+              sectors = cloud.sectors || [];
+
+              // espelha no local (offline)
+              localStorage.setItem('tasks', JSON.stringify(tasks));
+              localStorage.setItem('responsibles', JSON.stringify(responsibles));
+              localStorage.setItem('sectors', JSON.stringify(sectors));
+              localStorage.setItem('silent_backup', JSON.stringify(cloud));
+            }catch(e){}
+
+            migrateAllTasksPendingHistory();
+            loadData();
+            updateSlaCharts();
+            showToast('✅ Dados carregados da nuvem!');
+            suppressAutoSave = false;
+          }else{
+            showToast('✅ Logado! (Sem dados na nuvem ainda)');
+          }
+        }else{
+          if(label) label.textContent = 'Faça login para salvar na nuvem';
+          if(btnLogin) btnLogin.style.display = 'inline-flex';
+          if(btnLogout) btnLogout.style.display = 'none';
+          DOC_REF = null;
+        }
+      });
     }
+  }catch(e){
+    firebaseReady = false;
+    db = null;
+    auth = null;
+    provider = null;
+    firebaseUser = null;
+    DOC_REF = null;
+    console.warn("Firebase não inicializou:", e);
   }
+}
+
+// Debounce para não gravar no Firestore a cada pequena alteração
+let firebaseSaveTimer = null;
+function agendarSalvarNoFirebase(dados){
+  if(!firebaseReady || !DOC_REF || !firebaseUser) return;
+  if(suppressAutoSave) return;
+
+  try{
+    if(firebaseSaveTimer) clearTimeout(firebaseSaveTimer);
+    firebaseSaveTimer = setTimeout(async ()=>{
+      try{
+        await DOC_REF.set(dados);
+        // console.log("✅ Salvo no Firestore (usuário)");
+      }catch(e){
+        console.warn("❌ Erro ao salvar no Firestore:", e);
+      }
+    }, 900); // 0.9s após a última mudança
+  }catch(e){}
+}
+
+async function carregarDoFirebase(){
+  if(!firebaseReady || !DOC_REF || !firebaseUser) return null;
+  try{
+    const doc = await DOC_REF.get();
+    return doc.exists ? (doc.data() || null) : null;
+  }catch(e){
+    console.warn("❌ Erro ao carregar do Firestore:", e);
+    return null;
+  }
+}
 
   // =======================
   // Utilitários
@@ -1354,46 +1457,38 @@
 
   function buildSummaryCellHTML(stats){
     const total = stats.total || 0;
-    const c = stats.completed || 0;
-    const p = stats.pending || 0;
-    const o = stats.overdue || 0;
+  document.addEventListener('DOMContentLoaded', ()=>{
+  // 1) Inicializa Firebase (se disponível)
+  initFirebaseIfPossible();
 
-    const pc = safePct(c,total);
-    const pp = safePct(p,total);
-    const po = safePct(o,total);
+  // 2) Carrega do localStorage (offline) e renderiza
+  migrateAllTasksPendingHistory();
+  loadData();
 
-    return `
-      <div class="mini-badges">
-        <span class="mini-pill">✅ ${pc}% <span class="muted">(${c})</span></span>
-        <span class="mini-pill">📝 ${pp}% <span class="muted">(${p})</span></span>
-        <span class="mini-pill">⚠️ ${po}% <span class="muted">(${o})</span></span>
-      </div>
-      <div style="margin-top:10px;">
-        <div class="bar" title="Concluídas"><div style="width:${pc}%;background:#28a745;"></div></div>
-        <div class="bar" style="margin-top:6px" title="Pendentes"><div style="width:${pp}%;background:#6c757d;"></div></div>
-        <div class="bar" style="margin-top:6px" title="Atrasadas"><div style="width:${po}%;background:#dc3545;"></div></div>
-        <div class="muted" style="margin-top:6px;">(Barras: Concluídas, Pendentes, Atrasadas)</div>
-      </div>
-    `;
+  // 3) Mês padrão do dashboard (se estiver vazio)
+  const now = new Date();
+  const dashMonth = document.getElementById('dash-month');
+  if(dashMonth && !dashMonth.value){
+    dashMonth.value = `${now.getFullYear()}-${pad2(now.getMonth()+1)}`;
   }
+  renderMonthlyDoneDetailed();
 
-  function aggregateByKey(tasksInScope, keyFn){
-    const map = new Map();
-    tasksInScope.forEach(t=>{
-      const dl = parseDeadlineToLocalDate(t.deadline);
-      if(!dl) return;
-      const key = keyFn(dl);
-      if(!map.has(key)) map.set(key,{total:0,completed:0,pending:0,overdue:0});
-      const bucket = map.get(key);
-      bucket.total += 1;
-      bucket[getTaskStatusNow(t)] += 1;
-    });
-    return Array.from(map.entries()).sort((a,b)=>a[0].localeCompare(b[0]));
-  }
+  // 4) Contador de caracteres do campo de pendência
+  document.getElementById('task-pending')?.addEventListener('input', function(){
+    document.getElementById('char-count').textContent = this.value.length + '/250';
+  });
 
-  function renderPeriodTable(tableId, rows, labelFormatter){
-    const tbody=document.querySelector(`#${tableId} tbody`);
-    if(!tbody) return;
+  // 5) Desenha pizzas inicialmente
+  updateSlaCharts();
+
+  // 6) Backup silencioso (local sempre; nuvem só quando logado) a cada 5 min
+  setInterval(silentBackupElectron, 300000);
+
+  // 7) Faz um save inicial (cria backup local; nuvem apenas se estiver logado)
+  silentBackupElectron();
+});
+
+f(!tbody) return;
     if(!rows.length){
       tbody.innerHTML = `<tr><td colspan="3" class="muted">Sem dados para o filtro atual.</td></tr>`;
       return;
