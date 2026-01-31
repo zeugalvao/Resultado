@@ -877,6 +877,20 @@ function initFirebaseIfPossible(){
             showToast('✅ Dados carregados da nuvem!');
             suppressAutoSave = false;
           }else{
+      // ✅ Limpando dados da tela ao sair
+      try{
+        ['tasks','responsibles','sectors','silent_backup'].forEach(k=>localStorage.removeItem(k));
+      }catch(e){}
+      try{
+        tasks = [];
+        responsibles = [];
+        sectors = [];
+      }catch(e){}
+      try{
+        // Recarrega a UI com estado vazio
+        loadData();
+      }catch(e){}
+
             showToast('✅ Logado! (Sem dados na nuvem ainda)');
           }
         }else{
