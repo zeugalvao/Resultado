@@ -1011,7 +1011,25 @@ function initFirebaseIfPossible(){
     // Evita inicializar 2x
     if(firebase.apps && firebase.apps.length === 0){
       firebase.initializeApp(firebaseConfig);
-    }else if(!firebase.apps){
+    
+
+// ===============================
+// 🔓 AUTH DESABILITADO (VISUALIZAÇÃO)
+// ===============================
+if (firebase && firebase.auth) {
+  try {
+    firebase.auth = function () {
+      return {
+        currentUser: { uid: "PUBLIC_VIEW", email: "public@view.local" },
+        signInWithPopup: async () => {},
+        signOut: async () => {},
+        onAuthStateChanged: () => {}
+      };
+    };
+  } catch (e) {}
+}
+
+}else if(!firebase.apps){
       firebase.initializeApp(firebaseConfig);
     }
 
@@ -2512,3 +2530,13 @@ if (!DOC_REF) return;
 </script>
 </body>
 </html>
+
+
+// Força carregamento do dashboard sem login
+try {
+  if (typeof loadDashboard === "function") loadDashboard();
+  if (typeof loadData === "function") loadData();
+  if (typeof loadTasks === "function") loadTasks();
+} catch (e) {
+  console.warn("Erro ao forçar carregamento:", e);
+}
