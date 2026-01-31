@@ -1560,12 +1560,9 @@ if (!DOC_REF) return;
       return dl && withinRange(dl,startStr,endStr);
     });
 
-    const daily = aggregateByKey(scoped, dl => `${dl.getFullYear()}-${pad2(dl.getMonth()+1)}-${pad2(dl.getDate())}`);
-    const weekly = aggregateByKey(scoped, dl => {
-      const {isoYear,weekNo}=getISOWeekInfo(dl);
-      return `${isoYear}-W${pad2(weekNo)}`;
-    });
-    const monthly = aggregateByKey(scoped, dl => `${dl.getFullYear()}-${pad2(dl.getMonth()+1)}`);
+    const daily = aggregateByKey(scoped, t => { const dl=parseDeadlineToLocalDate(t.deadline); return `${dl.getFullYear()}-${pad2(dl.getMonth()+1)}-${pad2(dl.getDate())}`; });
+    const weekly = aggregateByKey(scoped, t => { const dl=parseDeadlineToLocalDate(t.deadline); const {isoYear,weekNo}=getISOWeekInfo(dl); return `${isoYear}-W${pad2(weekNo)}`; });
+    const monthly = aggregateByKey(scoped, t => { const dl=parseDeadlineToLocalDate(t.deadline); return `${dl.getFullYear()}-${pad2(dl.getMonth()+1)}`; });
 
     renderPeriodTable('period-daily', daily, k=>{
       const [y,m,d]=k.split('-').map(Number);
