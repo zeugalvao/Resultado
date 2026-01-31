@@ -221,6 +221,11 @@
       .filters{flex-direction:column}
     }
   </style>
+
+  <!-- Firebase (Firestore) - compat (sem build/instalação) -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
 </head>
 <body>
 <div class="container">
@@ -715,6 +720,77 @@
   let sectors = JSON.parse(localStorage.getItem('sectors')) || [];
   let editingTaskId = null;
 
+
+  // =======================
+  // ✅ Firebase / Firestore (SEM LOGIN)
+  // =======================
+  // IMPORTANTE: Isso NÃO é senha. É a identificação do seu projeto.
+  const firebaseConfig = {
+    apiKey: "AIzaSyB9UudVJSWfaPqditFNhlZeC2eWvgY9tQM",
+    authDomain: "dash-547e0.firebaseapp.com",
+    projectId: "dash-547e0",
+    storageBucket: "dash-547e0.firebasestorage.app",
+    messagingSenderId: "600314268977",
+    appId: "1:600314268977:web:d59c2c1f8cf390689bf410",
+    measurementId: "G-J2JKC30PNN"
+  };
+
+  // Flags/refs
+  let firebaseReady = false;
+  let db = null;
+  let DOC_REF = null;
+
+  function initFirebaseIfPossible(){
+    try{
+      if(!window.firebase || !firebase.initializeApp) return;
+      // Evita inicializar 2x
+      if(firebase.apps && firebase.apps.length === 0){
+        firebase.initializeApp(firebaseConfig);
+      }else if(!firebase.apps){
+        // fallback raro
+        firebase.initializeApp(firebaseConfig);
+      }
+      if(firebase.firestore){
+        db = firebase.firestore();
+        DOC_REF = db.collection("dashboard").doc("dados"); // documento único
+        firebaseReady = true;
+      }
+    }catch(e){
+      firebaseReady = false;
+      db = null;
+      DOC_REF = null;
+      console.warn("Firebase não inicializou:", e);
+    }
+  }
+
+  // Debounce para não gravar no Firestore a cada pequena alteração
+  let firebaseSaveTimer = null;
+  function agendarSalvarNoFirebase(dados){
+    if(!firebaseReady || !DOC_REF) return;
+    try{
+      if(firebaseSaveTimer) clearTimeout(firebaseSaveTimer);
+      firebaseSaveTimer = setTimeout(async ()=>{
+        try{
+          await DOC_REF.set(dados);
+          // console.log("✅ Salvo no Firestore");
+        }catch(e){
+          console.warn("❌ Erro ao salvar no Firestore:", e);
+        }
+      }, 900); // 0.9s após a última mudança
+    }catch(e){}
+  }
+
+  async function carregarDoFirebase(){
+    if(!firebaseReady || !DOC_REF) return null;
+    try{
+      const doc = await DOC_REF.get();
+      return doc.exists ? (doc.data() || null) : null;
+    }catch(e){
+      console.warn("❌ Erro ao carregar do Firestore:", e);
+      return null;
+    }
+  }
+
   // =======================
   // Utilitários
   // =======================
@@ -857,7 +933,12 @@
       try{ await window.backupAPI.save(payload);}catch(e){}
       return;
     }
-    try{ localStorage.setItem('silent_backup', JSON.stringify({...payload, backupDate:new Date().toISOString()})); }catch(e){}
+    try{
+      const dadosParaSalvar = {...payload, backupDate:new Date().toISOString()};
+      localStorage.setItem('silent_backup', JSON.stringify(dadosParaSalvar));
+      // 🔥 NOVO: salva automaticamente na nuvem (Firestore)
+      agendarSalvarNoFirebase(dadosParaSalvar);
+    }catch(e){}
   }
 
   async function restoreSilentBackupElectron(){
@@ -880,9 +961,16 @@
       return;
     }
 
-    const raw=localStorage.getItem('silent_backup');
-    if(!raw){ alert('Nenhum backup silencioso encontrado neste navegador.'); return; }
-    const data=JSON.parse(raw);
+    // 🔥 NOVO: tenta buscar do Firebase primeiro (se existir)
+    let data = await carregarDoFirebase();
+
+    // Se não tiver nada no Firebase, cai pro backup local (como era antes)
+    if(!data){
+      const raw=localStorage.getItem('silent_backup');
+      if(!raw){ alert('Nenhum backup encontrado (nem no Firebase, nem neste navegador).'); return; }
+      data=JSON.parse(raw);
+    }
+
     if(confirm(`Restaurar backup de ${new Date(data.backupDate||Date.now()).toLocaleString('pt-BR')}? Isso substitui os dados atuais.`)){
       tasks=data.tasks||[];
       responsibles=data.responsibles||[];
@@ -890,7 +978,10 @@
       migrateAllTasksPendingHistory();
       saveData();
       loadData();
-      showToast('Backup silencioso restaurado!');
+      showToast('Backup restaurado!');
+
+      // Garante que a nuvem fique com o estado atual também
+      agendarSalvarNoFirebase({...data, backupDate: new Date().toISOString()});
     }
   }
 
@@ -1360,28 +1451,50 @@
   // Inicialização
   // =======================
   document.addEventListener('DOMContentLoaded', ()=>{
-    migrateAllTasksPendingHistory();
-    loadData();
-    updateStats();
-    renderTasks();
-    updateSelects();
-    renderPeriodAnalytics();
+    // 1) Inicializa Firebase (se disponível)
+    initFirebaseIfPossible();
 
-    const now = new Date();
-    const dashMonth = document.getElementById('dash-month');
-    if(dashMonth){
-      dashMonth.value = `${now.getFullYear()}-${pad2(now.getMonth()+1)}`;
-    }
-    renderMonthlyDoneDetailed();
+    // 2) Carrega da nuvem (se existir) e sincroniza com o localStorage
+    (async ()=>{
+      const cloud = await carregarDoFirebase();
+      if(cloud){
+        try{
+          // Atualiza memória
+          tasks = cloud.tasks || [];
+          responsibles = cloud.responsibles || [];
+          sectors = cloud.sectors || [];
 
-    document.getElementById('task-pending')?.addEventListener('input', function(){
-      document.getElementById('char-count').textContent = this.value.length + '/250';
-    });
+          // Espelha no localStorage (backup/offline)
+          localStorage.setItem('tasks', JSON.stringify(tasks));
+          localStorage.setItem('responsibles', JSON.stringify(responsibles));
+          localStorage.setItem('sectors', JSON.stringify(sectors));
+          localStorage.setItem('silent_backup', JSON.stringify(cloud));
+        }catch(e){}
+      }
 
-    // desenha pizzas inicialmente (e depois atualiza em cada mudança)
-    updateSlaCharts();
+      migrateAllTasksPendingHistory();
+      loadData();
 
-    setInterval(silentBackupElectron, 300000);
+      const now = new Date();
+      const dashMonth = document.getElementById('dash-month');
+      if(dashMonth){
+        dashMonth.value = `${now.getFullYear()}-${pad2(now.getMonth()+1)}`;
+      }
+      renderMonthlyDoneDetailed();
+
+      document.getElementById('task-pending')?.addEventListener('input', function(){
+        document.getElementById('char-count').textContent = this.value.length + '/250';
+      });
+
+      // desenha pizzas inicialmente (e depois atualiza em cada mudança)
+      updateSlaCharts();
+
+      // Backup silencioso (local + nuvem) a cada 5 min
+      setInterval(silentBackupElectron, 300000);
+
+      // Faz um save inicial (garante documento criado no Firestore quando vazio)
+      silentBackupElectron();
+    })();
   });
 
   // =======================
