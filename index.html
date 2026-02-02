@@ -78,6 +78,7 @@
     .task-card.dragging{opacity:.5}
     .task-card.completed{background:#d4edda;border-color:#28a745}
     .task-card.overdue{background:#f8d7da;border-color:#dc3545}
+    .task-card.due-today{background:#fff3cd;border-color:#ffc107}
     .task-card.todo{
       background:#d0ffd9;border:3px solid #00c853;box-shadow:0 0 20px rgba(0,200,83,.8);animation:pulseGreen 1.5s infinite
     }
@@ -152,11 +153,10 @@
       border:1px solid #e9ecef;background:#f8f9fa;color:#333;white-space:nowrap
     }
     .mini-badges{display:flex;gap:8px;flex-wrap:wrap}
-    .bar{height:10px;border-radius:999px;background:#e9ecef;overflow:hidden}
-    .bar>div{height:100%}
+    .bar{height:10px;border-radius:999px;background:#e9ecef;overflow:hidden;width:100%;}
+    .bar>div{height:100%;transition: width 0.3s ease-in-out;}
     .subsection-title{margin-top:30px;font-size:1.2em;font-weight:900;color:#333}
 
-    /* ✅ NOVO: área dos gráficos de pizza (SLA por dificuldade) */
     .pie-grid{
       display:grid;
       grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -230,6 +230,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
 
+<link rel="stylesheet" href="/index.css">
 </head>
 <body>
 <div class="container">
@@ -273,7 +274,6 @@
         </div>
       </div>
 
-      <!-- ✅ NOVO: Gráficos de pizza SLA por dificuldade -->
       <div class="subsection-title">🥧 SLA por Dificuldade (Gráfico de Pizza)</div>
       <p class="muted" style="margin-top:8px;">
         Regras:
@@ -337,6 +337,15 @@
           </div>
         </div>
       </div>
+      
+      <!-- ✅ NOVO: Análise de tempo por dificuldade -->
+      <div class="subsection-title" style="margin-top: 30px;">⏳ Tempo Gasto por Dificuldade</div>
+      <p class="muted" style="margin-top:8px;">
+        Análise do tempo total de resolução (início ao fim) para tarefas <b>concluídas</b>, dividido por dificuldade. Mostra qual categoria consome mais tempo de trabalho.
+      </p>
+      <div id="difficulty-time-stats" class="stats-grid" style="margin-top: 12px; gap: 12px; grid-template-columns: 1fr;">
+        <!-- JS irá popular esta área -->
+      </div>
 
       <h2 style="margin-top:30px;">🔥 Tarefas Atrasadas por Responsável</h2>
       <table id="overdue-by-responsible">
@@ -354,7 +363,6 @@
         <tbody></tbody>
       </table>
 
-      <!-- Relatório detalhado do mês (tarefas concluídas) + tempo por setor -->
       <div class="subsection-title">📅 Relatório detalhado do mês (tarefas concluídas)</div>
       <p class="muted" style="margin-top:8px;">
         Mostra todas as tarefas <b>concluídas no mês selecionado</b> e o <b>tempo “parado” em cada setor</b>.
@@ -544,9 +552,6 @@
         <tbody></tbody>
       </table>
 
-      <!-- ===================== -->
-      <!-- 👑 Painel Admin (Migração/Cópia) -->
-      <!-- ===================== -->
       <div id="adminPanel" style="display:none; margin-top:50px; padding:18px; border:1px solid #e8e8ef; border-radius:14px; background:#fafaff;">
         <h2 style="margin-bottom:10px;">👑 Admin • Migração / Cópia de Dados</h2>
         <p class="muted" style="margin-bottom:14px;">
@@ -759,9 +764,8 @@
 
 
   // =======================
-// ✅ Firebase / Firestore + Login Google (SEGURO)
+// Firebase / Firestore + Login Google (SEGURO)
 // =======================
-// IMPORTANTE: Isso NÃO é senha. É a identificação do seu projeto.
 const firebaseConfig = {
   apiKey: "AIzaSyB9UudVJSWfaPqditFNhlZeC2eWvgY9tQM",
   authDomain: "dash-547e0.firebaseapp.com",
@@ -772,24 +776,18 @@ const firebaseConfig = {
   measurementId: "G-J2JKC30PNN"
 };
 
-// 🔓 MODO PÚBLICO: sem autenticação, lê/escreve dados globais
 const PUBLIC_MODE = true;
 
 
-// Flags/refs
 let firebaseReady = false;
 let db = null;
 let auth = null;
 let provider = null;
 
-// Usuário logado
 let firebaseUser = null;
 
-// Doc do usuário logado (cada um tem o seu)
 let DOC_REF = null;
 function setUserDocRef(uid){
-  // Estrutura original (por usuário): users/{uid}/app/dados
-  // Em modo público: public/dados
   if(PUBLIC_MODE){
     DOC_REF = db.collection("public").doc("dados");
     return;
@@ -811,7 +809,7 @@ function aggregateByKey(items, keyFn){
 }
 
 // =======================
-// 🔐 Whitelist de e-mails permitidos (Firestore: allowedEmails/{emailKey})
+// Whitelist de e-mails permitidos (Firestore: allowedEmails/{emailKey})
 // =======================
 function emailKey(email){
   return (email || "").replace("@", "_").replaceAll(".", "_");
@@ -827,7 +825,6 @@ async function isAllowedUid(uid) {
   }
 }
 
-// Compat: alguns trechos antigos podem chamar isEmailAllowed(email). Mantemos um alias.
 async function isEmailAllowed(_email){
   try{
     const u = firebase.auth().currentUser;
@@ -838,7 +835,6 @@ async function isEmailAllowed(_email){
   }
 }
 
-// Compat: evita erro caso renderPeriodTable não exista (não bloqueia o app)
 if (typeof window.renderPeriodTable !== "function") {
   window.renderPeriodTable = function(){ /* no-op */ };
 }
@@ -855,7 +851,7 @@ async function isAdminUid(uid) {
 }
 
 // =======================
-// 👑 Admin / Migração
+// Admin / Migração
 // =======================
 async function isAdminEmail(email){
   try{
@@ -869,7 +865,6 @@ async function isAdminEmail(email){
   }
 }
 
-// Registra (ou atualiza) o mapeamento email -> uid (usado pelo modo admin para achar UIDs por e-mail)
 async function upsertEmailToUid(user){
   try{
     if(!db || !user?.email || !user?.uid) return;
@@ -886,7 +881,6 @@ async function upsertEmailToUid(user){
 }
 
 function userDataRef(uid){
-  // users/{uid}/app/dados (mesma estrutura do app)
   return db.collection("users").doc(uid).collection("app").doc("dados");
 }
 
@@ -901,7 +895,6 @@ function mergeById(destArr, srcArr){
   const out = Array.isArray(destArr) ? [...destArr] : [];
   const seen = new Set(out.map(x => String(x?.id)));
   for(const item of (Array.isArray(srcArr) ? srcArr : [])){
-    // se não tiver id, gera uma chave "fraca" para não duplicar tudo
     const id = item?.id != null ? String(item.id) : (String(item?.title || "") + "::" + String(item?.createdAt || ""));
     if(!seen.has(id)){
       out.push(item);
@@ -1009,14 +1002,12 @@ async function runAdminMerge(){
 
 
 
-// Para evitar salvar enquanto estamos aplicando dados vindos da nuvem
 let suppressAutoSave = false;
 
 function initFirebaseIfPossible(){
   try{
     if(!window.firebase || !firebase.initializeApp) return;
 
-    // Evita inicializar 2x
     if(firebase.apps && firebase.apps.length === 0){
       firebase.initializeApp(firebaseConfig);
     }else if(!firebase.apps){
@@ -1026,11 +1017,10 @@ function initFirebaseIfPossible(){
     if(firebase.firestore && firebase.auth){
       db = firebase.firestore();
       auth = firebase.auth();
-      provider = null; // PUBLIC_MODE: sem provider
+      provider = null; 
       firebaseReady = true;
 
       if(!PUBLIC_MODE){
-// Liga UI de login (se existir)
       const btnLogin = document.getElementById('btnLoginGoogle');
       const btnLogout = document.getElementById('btnLogoutGoogle');
 
@@ -1038,7 +1028,6 @@ function initFirebaseIfPossible(){
         try{
           try{ await auth.signInWithPopup(provider); }catch(e){ try{ await auth.signInWithRedirect(provider); }catch(e2){ console.error(e2); } }
         }catch(e){
-          // Em alguns celulares o popup pode ser bloqueado
           try{
             await auth.signInWithRedirect(provider);
           }catch(err){
@@ -1056,13 +1045,11 @@ function initFirebaseIfPossible(){
         }
       });
 
-      // Quando loga/desloga
       auth.onAuthStateChanged(async (user)=>{
         firebaseUser = user || null;
 
         const label = document.getElementById('userLabel');
         if(user){
-          // ✅ Whitelist: se não estiver liberado, desloga e avisa
           const allowed = await isAllowedUid(user.uid);
           if(!allowed){
             alert(`Acesso negado:
@@ -1080,12 +1067,10 @@ UID não está liberado na whitelist (allowedUids).`);
           if(btnLogin) btnLogin.style.display = 'none';
           if(btnLogout) btnLogout.style.display = 'inline-flex';
 
-          // ✅ Registra email -> uid (para migração admin)
           await upsertEmailToUid(user);
 
           setUserDocRef(user.uid);
 
-          // Carrega dados da nuvem do usuário e aplica no app
           const cloud = await carregarDoFirebase();
           if(cloud){
             suppressAutoSave = true;
@@ -1094,7 +1079,6 @@ UID não está liberado na whitelist (allowedUids).`);
               responsibles = cloud.responsibles || [];
               sectors = cloud.sectors || [];
 
-              // espelha no local (offline)
               localStorage.setItem('tasks', JSON.stringify(tasks));
               localStorage.setItem('responsibles', JSON.stringify(responsibles));
               localStorage.setItem('sectors', JSON.stringify(sectors));
@@ -1120,7 +1104,6 @@ UID não está liberado na whitelist (allowedUids).`);
         }
       });
 }else{
-      // Modo público: define um usuário sintético e aponta para o documento global
       firebaseUser = { uid: "PUBLIC_VIEW", email: "public@view.local" };
       setUserDocRef(firebaseUser.uid);
       const btnLogin = document.getElementById('btnLoginGoogle');
@@ -1129,7 +1112,6 @@ UID não está liberado na whitelist (allowedUids).`);
       if(btnLogout) btnLogout.style.display = 'none';
       const userLabel = document.getElementById('userLabel');
       if(userLabel) userLabel.textContent = 'Modo público (sem login)';
-      // Carrega dados globais automaticamente
       carregarDoFirebase().then(cloud => {
         if(cloud){
           try{
@@ -1163,7 +1145,6 @@ UID não está liberado na whitelist (allowedUids).`);
   }
 }
 
-// Debounce para não gravar no Firestore a cada pequena alteração
 let firebaseSaveTimer = null;
 function agendarSalvarNoFirebase(dados){
   if(!firebaseReady || !DOC_REF || !firebaseUser) return;
@@ -1174,11 +1155,10 @@ function agendarSalvarNoFirebase(dados){
     firebaseSaveTimer = setTimeout(async ()=>{
       try{
         await DOC_REF.set(dados);
-        // console.log("✅ Salvo no Firestore (usuário)");
       }catch(e){
         console.warn("❌ Erro ao salvar no Firestore:", e);
       }
-    }, 900); // 0.9s após a última mudança
+    }, 900); 
   }catch(e){}
 }
 
@@ -1338,7 +1318,6 @@ async function carregarDoFirebase(){
     try{
       const dadosParaSalvar = {...payload, backupDate:new Date().toISOString()};
       localStorage.setItem('silent_backup', JSON.stringify(dadosParaSalvar));
-      // 🔥 NOVO: salva automaticamente na nuvem (Firestore)
       agendarSalvarNoFirebase(dadosParaSalvar);
     }catch(e){}
   }
@@ -1363,10 +1342,8 @@ async function carregarDoFirebase(){
       return;
     }
 
-    // 🔥 NOVO: tenta buscar do Firebase primeiro (se existir)
     let data = await carregarDoFirebase();
 
-    // Se não tiver nada no Firebase, cai pro backup local (como era antes)
     if(!data){
       const raw=localStorage.getItem('silent_backup');
       if(!raw){ alert('Nenhum backup encontrado (nem no Firebase, nem neste navegador).'); return; }
@@ -1382,7 +1359,6 @@ async function carregarDoFirebase(){
       loadData();
       showToast('Backup restaurado!');
 
-      // Garante que a nuvem fique com o estado atual também
       agendarSalvarNoFirebase({...data, backupDate: new Date().toISOString()});
     }
   }
@@ -1442,7 +1418,7 @@ async function carregarDoFirebase(){
   }
 
   // =======================
-  // ✅ NOVO: SLA por dificuldade + Pizza
+  // SLA por dificuldade + Pizza
   // =======================
   const SLA = {
     easy:   { label: 'Fácil',   type: 'hours', hours: 5 },
@@ -1451,12 +1427,11 @@ async function carregarDoFirebase(){
   };
 
   function isWeekend(d){
-    const day = d.getDay(); // 0 dom, 6 sáb
+    const day = d.getDay();
     return day === 0 || day === 6;
   }
 
   function addBusinessDays(startDate, businessDays){
-    // Retorna uma NOVA data com N dias úteis somados (ignorando sáb/dom).
     const d = new Date(startDate.getTime());
     let added = 0;
     while(added < businessDays){
@@ -1477,19 +1452,17 @@ async function carregarDoFirebase(){
     if(diff === 'medium'){
       return new Date(start.getTime() + (SLA.medium.hours * 60 * 60 * 1000));
     }
-    // hard: 5 dias úteis
     return addBusinessDays(start, SLA.hard.businessDays);
   }
 
   function getTaskSlaStatus(task){
-    // "no prazo" se (end <= SLA_deadline)
     const start = getTaskStartDate(task);
     if(!start) return null;
 
     const slaDeadline = getTaskSlaDeadline(task);
     if(!slaDeadline) return null;
 
-    const end = task.completedAt ? new Date(task.completedAt) : new Date(); // se pendente, mede contra "agora"
+    const end = task.completedAt ? new Date(task.completedAt) : new Date();
     if(isNaN(end.getTime())) return null;
 
     const inSla = end.getTime() <= slaDeadline.getTime();
@@ -1523,17 +1496,14 @@ async function carregarDoFirebase(){
 
     const total = inCount + outCount;
 
-    // limpa
     ctx.clearRect(0,0,w,h);
 
-    // fundo
     ctx.beginPath();
     ctx.arc(cx,cy,r,0,Math.PI*2);
     ctx.fillStyle = '#f3f4f6';
     ctx.fill();
 
     if(total === 0){
-      // texto centro
       ctx.fillStyle = '#6c757d';
       ctx.font = 'bold 14px Segoe UI, Tahoma, sans-serif';
       ctx.textAlign = 'center';
@@ -1545,7 +1515,6 @@ async function carregarDoFirebase(){
     const inFrac = inCount / total;
     const startAngle = -Math.PI/2;
 
-    // fatia "no prazo" (verde)
     const inAngle = inFrac * Math.PI * 2;
     ctx.beginPath();
     ctx.moveTo(cx,cy);
@@ -1554,7 +1523,6 @@ async function carregarDoFirebase(){
     ctx.fillStyle = '#28a745';
     ctx.fill();
 
-    // fatia "fora do prazo" (vermelho)
     ctx.beginPath();
     ctx.moveTo(cx,cy);
     ctx.arc(cx,cy,r,startAngle + inAngle,startAngle + Math.PI*2);
@@ -1562,14 +1530,12 @@ async function carregarDoFirebase(){
     ctx.fillStyle = '#dc3545';
     ctx.fill();
 
-    // borda
     ctx.beginPath();
     ctx.arc(cx,cy,r,0,Math.PI*2);
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 4;
     ctx.stroke();
 
-    // texto central
     const pct = Math.round(inFrac * 100);
     ctx.fillStyle = '#111827';
     ctx.font = 'bold 22px Segoe UI, Tahoma, sans-serif';
@@ -1585,7 +1551,6 @@ async function carregarDoFirebase(){
   function updateSlaCharts(){
     const s = computeSlaSummary();
 
-    // Fácil
     document.getElementById('easy-in').textContent  = s.easy.in;
     document.getElementById('easy-out').textContent = s.easy.out;
     {
@@ -1595,7 +1560,6 @@ async function carregarDoFirebase(){
       drawPie('pie-easy', s.easy.in, s.easy.out);
     }
 
-    // Médio
     document.getElementById('medium-in').textContent  = s.medium.in;
     document.getElementById('medium-out').textContent = s.medium.out;
     {
@@ -1605,7 +1569,6 @@ async function carregarDoFirebase(){
       drawPie('pie-medium', s.medium.in, s.medium.out);
     }
 
-    // Difícil
     document.getElementById('hard-in').textContent  = s.hard.in;
     document.getElementById('hard-out').textContent = s.hard.out;
     {
@@ -1614,6 +1577,74 @@ async function carregarDoFirebase(){
       document.getElementById('hard-kpi').textContent = `${pct}% no prazo (${s.hard.in}/${total})`;
       drawPie('pie-hard', s.hard.in, s.hard.out);
     }
+  }
+
+  // =======================
+  // Análise de tempo por Dificuldade (Dashboard)
+  // =======================
+  function updateDifficultyTimeStats(){
+    const container = document.getElementById('difficulty-time-stats');
+    if (!container) return;
+
+    const completedTasks = tasks.filter(t => t.completed && t.completedAt && (t.startTime || t.createdAt));
+    
+    const timeByDifficulty = { easy: 0, medium: 0, hard: 0 };
+    
+    completedTasks.forEach(t => {
+        const start = new Date(t.startTime || t.createdAt);
+        const end = new Date(t.completedAt);
+        const duration = end.getTime() - start.getTime();
+        
+        if (duration > 0) {
+            const difficulty = t.difficulty || 'easy';
+            if(timeByDifficulty.hasOwnProperty(difficulty)){
+              timeByDifficulty[difficulty] += duration;
+            }
+        }
+    });
+
+    const totalTime = timeByDifficulty.easy + timeByDifficulty.medium + timeByDifficulty.hard;
+
+    if (totalTime <= 0) {
+        container.innerHTML = '<div class="stat-card" style="background: #f8f9fa; color: #6c757d; text-align: left; padding: 20px;">Nenhuma tarefa concluída com tempo registrado para análise.</div>';
+        return;
+    }
+
+    const easyPct = totalTime > 0 ? Math.round((timeByDifficulty.easy / totalTime) * 100) : 0;
+    const mediumPct = totalTime > 0 ? Math.round((timeByDifficulty.medium / totalTime) * 100) : 0;
+    const hardPct = 100 - easyPct - mediumPct;
+
+    const difficultyColors = { easy: '#28a745', medium: '#ffc107', hard: '#dc3545' };
+
+    container.innerHTML = `
+      <div class="pie-card" style="padding: 12px 18px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <h4 style="margin:0; font-size: 1em;">🟢 Fácil</h4>
+            <div class="kpi-line" style="margin-top:0;"><b>${easyPct}%</b></div>
+        </div>
+        <div class="bar" title="Tempo total: ${formatDuration(timeByDifficulty.easy)}">
+            <div style="width: ${easyPct}%; background-color: ${difficultyColors.easy};"></div>
+        </div>
+      </div>
+      <div class="pie-card" style="padding: 12px 18px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <h4 style="margin:0; font-size: 1em;">🟡 Médio</h4>
+            <div class="kpi-line" style="margin-top:0;"><b>${mediumPct}%</b></div>
+        </div>
+        <div class="bar" title="Tempo total: ${formatDuration(timeByDifficulty.medium)}">
+            <div style="width: ${mediumPct}%; background-color: ${difficultyColors.medium};"></div>
+        </div>
+      </div>
+      <div class="pie-card" style="padding: 12px 18px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <h4 style="margin:0; font-size: 1em;">🔴 Difícil</h4>
+            <div class="kpi-line" style="margin-top:0;"><b>${hardPct}%</b></div>
+        </div>
+        <div class="bar" title="Tempo total: ${formatDuration(timeByDifficulty.hard)}">
+            <div style="width: ${hardPct}%; background-color: ${difficultyColors.hard};"></div>
+        </div>
+      </div>
+    `;
   }
 
   // =======================
@@ -1756,38 +1787,43 @@ async function carregarDoFirebase(){
 
   function buildSummaryCellHTML(stats){
     const total = stats.total || 0;
-  document.addEventListener('DOMContentLoaded', ()=>{
-  // 1) Inicializa Firebase (se disponível)
-  initFirebaseIfPossible();
+    if(!total) return '<span class="muted">N/A</span>';
+    
+    const completedPct = safePct(stats.completed, total);
+    const pendingPct = safePct(stats.pending, total);
+    const overduePct = 100 - completedPct - pendingPct;
 
-  // 2) Carrega do localStorage (offline) e renderiza
-  migrateAllTasksPendingHistory();
-  loadData();
-
-  // 3) Mês padrão do dashboard (se estiver vazio)
-  const now = new Date();
-  const dashMonth = document.getElementById('dash-month');
-  if(dashMonth && !dashMonth.value){
-    dashMonth.value = `${now.getFullYear()}-${pad2(now.getMonth()+1)}`;
+    return `
+      <div style="display:flex; align-items:center; gap: 8px;">
+        <div class="bar" style="flex:1;">
+          <div style="width:${completedPct}%; background:#28a745;" title="${completedPct}% Concluídas"></div>
+          <div style="width:${pendingPct}%; background:#007bff;" title="${pendingPct}% Pendentes"></div>
+          <div style="width:${overduePct}%; background:#dc3545;" title="${overduePct}% Atrasadas"></div>
+        </div>
+        <div class="mini-badges">
+          <span class="mini-pill" style="background:#d4edda; border-color:#c3e6cb;">✅ ${stats.completed}</span>
+          <span class="mini-pill" style="background:#cce5ff; border-color:#b8daff;">📝 ${stats.pending}</span>
+          <span class="mini-pill" style="background:#f8d7da; border-color:#f5c6cb;">⚠️ ${stats.overdue}</span>
+        </div>
+      </div>
+    `;
   }
-  renderMonthlyDoneDetailed();
 
-  // 4) Contador de caracteres do campo de pendência
-  document.getElementById('task-pending')?.addEventListener('input', function(){
-    document.getElementById('char-count').textContent = this.value.length + '/250';
-  });
+  function renderPeriodTable(tableId, data, labelFormatter){
+    const tbody=document.querySelector(`#${tableId} tbody`);
+    if(!tbody) return;
 
-  // 5) Desenha pizzas inicialmente
-  updateSlaCharts();
-
-  // 6) Backup silencioso (local sempre; nuvem só quando logado) a cada 5 min
-  setInterval(silentBackupElectron, 300000);
-
-  // 7) Faz um save inicial (cria backup local; nuvem apenas se estiver logado)
-  silentBackupElectron();
-});
-
-if (!DOC_REF) return;
+    const rows = Object.entries(data)
+      .map(([key, taskGroup]) => {
+        const stats = { total: 0, completed: 0, pending: 0, overdue: 0 };
+        taskGroup.forEach(t => {
+          stats.total++;
+          const status = getTaskStatusNow(t);
+          if(stats.hasOwnProperty(status)) stats[status]++;
+        });
+        return [key, stats];
+      })
+      .sort((a,b)=>a[0].localeCompare(b[0]));
 
     if(!rows.length){
       tbody.innerHTML = `<tr><td colspan="3" class="muted">Sem dados para o filtro atual.</td></tr>`;
@@ -1811,12 +1847,30 @@ if (!DOC_REF) return;
       return dl && withinRange(dl,startStr,endStr);
     });
 
-    const daily = aggregateByKey(scoped, dl => `${dl.getFullYear()}-${pad2(dl.getMonth()+1)}-${pad2(dl.getDate())}`);
-    const weekly = aggregateByKey(scoped, dl => {
-      const {isoYear,weekNo}=getISOWeekInfo(dl);
-      return `${isoYear}-W${pad2(weekNo)}`;
-    });
-    const monthly = aggregateByKey(scoped, dl => `${dl.getFullYear()}-${pad2(dl.getMonth()+1)}`);
+    const daily = scoped.reduce((acc, t) => {
+        const dl = parseDeadlineToLocalDate(t.deadline);
+        const key = `${dl.getFullYear()}-${pad2(dl.getMonth() + 1)}-${pad2(dl.getDate())}`;
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(t);
+        return acc;
+    }, {});
+    
+    const weekly = scoped.reduce((acc, t) => {
+        const dl = parseDeadlineToLocalDate(t.deadline);
+        const { isoYear, weekNo } = getISOWeekInfo(dl);
+        const key = `${isoYear}-W${pad2(weekNo)}`;
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(t);
+        return acc;
+    }, {});
+
+    const monthly = scoped.reduce((acc, t) => {
+        const dl = parseDeadlineToLocalDate(t.deadline);
+        const key = `${dl.getFullYear()}-${pad2(dl.getMonth() + 1)}`;
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(t);
+        return acc;
+    }, {});
 
     renderPeriodTable('period-daily', daily, k=>{
       const [y,m,d]=k.split('-').map(Number);
@@ -1846,20 +1900,16 @@ if (!DOC_REF) return;
   // Inicialização
   // =======================
   document.addEventListener('DOMContentLoaded', ()=>{
-    // 1) Inicializa Firebase (se disponível)
     initFirebaseIfPossible();
 
-    // 2) Carrega da nuvem (se existir) e sincroniza com o localStorage
     (async ()=>{
       const cloud = await carregarDoFirebase();
       if(cloud){
         try{
-          // Atualiza memória
           tasks = cloud.tasks || [];
           responsibles = cloud.responsibles || [];
           sectors = cloud.sectors || [];
 
-          // Espelha no localStorage (backup/offline)
           localStorage.setItem('tasks', JSON.stringify(tasks));
           localStorage.setItem('responsibles', JSON.stringify(responsibles));
           localStorage.setItem('sectors', JSON.stringify(sectors));
@@ -1872,7 +1922,7 @@ if (!DOC_REF) return;
 
       const now = new Date();
       const dashMonth = document.getElementById('dash-month');
-      if(dashMonth){
+      if(dashMonth && !dashMonth.value){
         dashMonth.value = `${now.getFullYear()}-${pad2(now.getMonth()+1)}`;
       }
       renderMonthlyDoneDetailed();
@@ -1881,13 +1931,8 @@ if (!DOC_REF) return;
         document.getElementById('char-count').textContent = this.value.length + '/250';
       });
 
-      // desenha pizzas inicialmente (e depois atualiza em cada mudança)
       updateSlaCharts();
-
-      // Backup silencioso (local + nuvem) a cada 5 min
       setInterval(silentBackupElectron, 300000);
-
-      // Faz um save inicial (garante documento criado no Firestore quando vazio)
       silentBackupElectron();
     })();
   });
@@ -1999,13 +2044,7 @@ if (!DOC_REF) return;
     saveData();
     silentBackupElectron();
     closeTaskModal();
-
-    renderTasks();
-    updateStats();
-    renderPeriodAnalytics();
-    renderMonthlyDoneDetailed();
-    updateSlaCharts();
-
+    loadData();
     showToast('Tarefa salva com sucesso!');
 
     document.getElementById('task-pending').value='';
@@ -2039,9 +2078,20 @@ if (!DOC_REF) return;
     card.className='task-card';
     card.draggable=true;
     card.dataset.id=task.id;
+    
+    const today = toDateOnlyLocal(new Date());
+    const deadlineDate = parseDeadlineToLocalDate(task.deadline);
 
-    if(task.completed) card.classList.add('completed');
-    else if(new Date(task.deadline) < new Date()) card.classList.add('overdue');
+    if (task.completed) {
+      card.classList.add('completed');
+    } else if (deadlineDate) {
+      if (deadlineDate.getTime() < today.getTime()) {
+        card.classList.add('overdue');
+      } else if (deadlineDate.getTime() === today.getTime()) {
+        card.classList.add('due-today');
+      }
+    }
+
     if(task.period==='todo') card.classList.add('todo');
 
     const resp=responsibles.find(r=>String(r.id)===String(task.responsible));
@@ -2096,11 +2146,7 @@ if (!DOC_REF) return;
     else task.period='afternoon';
 
     saveData();
-    renderTasks();
-    updateStats();
-    renderPeriodAnalytics();
-    renderMonthlyDoneDetailed();
-    updateSlaCharts();
+    loadData();
     document.querySelector('.dragging')?.classList.remove('dragging');
   }
 
@@ -2112,25 +2158,14 @@ if (!DOC_REF) return;
     task.completed=!task.completed;
     task.completedAt = task.completed ? new Date().toISOString() : null;
     saveData();
-
-    renderTasks();
-    updateStats();
-    renderPeriodAnalytics();
-    renderMonthlyDoneDetailed();
-    updateSlaCharts();
+    loadData();
   }
 
   function deleteTask(id){
     if(confirm('Tem certeza que deseja excluir esta tarefa?')){
       tasks=tasks.filter(t=>t.id!==id);
       saveData();
-
-      renderTasks();
-      updateStats();
-      renderPeriodAnalytics();
-      renderMonthlyDoneDetailed();
-      updateSlaCharts();
-
+      loadData();
       showToast('Tarefa excluída!');
     }
   }
@@ -2154,17 +2189,19 @@ if (!DOC_REF) return;
       const matchSector=!sectorFilter || String(task.sector)===String(sectorFilter);
 
       let matchStatus=noStatusSelected;
-      if(statusPending && !task.completed && new Date(task.deadline) >= new Date()) matchStatus=true;
+      if (statusPending) {
+        const deadline = parseDeadlineToLocalDate(task.deadline);
+        const today = toDateOnlyLocal(new Date());
+        if (!task.completed && deadline && deadline >= today) matchStatus = true;
+      }
       if(statusCompleted && task.completed) matchStatus=true;
-      if(statusOverdue && !task.completed && new Date(task.deadline) < new Date()) matchStatus=true;
+      if(statusOverdue && !task.completed && new Date(task.deadline) < toDateOnlyLocal(new Date())) matchStatus=true;
 
       let matchSearch=true;
       if(q.length>0){
         const resp=responsibles.find(r=>String(r.id)===String(task.responsible));
         const sec=sectors.find(s=>String(s.id)===String(task.sector));
-
         ensurePendingHistory(task);
-
         const searchable=[
           task.title, task.description,
           resp?resp.name:'', resp?resp.email:'',
@@ -2172,7 +2209,6 @@ if (!DOC_REF) return;
           task.pendingLatest||'',
           ...(Array.isArray(task.pendingHistory)?task.pendingHistory.map(p=>p.text):[])
         ].join(' ').toLowerCase();
-
         matchSearch=searchable.includes(q);
       }
 
@@ -2186,9 +2222,9 @@ if (!DOC_REF) return;
   // Estatísticas Dashboard
   // =======================
   function updateStats(){
-    const pending=tasks.filter(t=>!t.completed && new Date(t.deadline) >= new Date()).length;
+    const pending=tasks.filter(t=>!t.completed && new Date(t.deadline) >= toDateOnlyLocal(new Date())).length;
     const completed=tasks.filter(t=>t.completed).length;
-    const overdue=tasks.filter(t=>!t.completed && new Date(t.deadline) < new Date()).length;
+    const overdue=tasks.filter(t=>!t.completed && new Date(t.deadline) < toDateOnlyLocal(new Date())).length;
     const efficiency=tasks.length>0 ? Math.round((completed/tasks.length)*100) : 0;
 
     document.getElementById('stat-pending').textContent=pending;
@@ -2198,11 +2234,12 @@ if (!DOC_REF) return;
 
     updateOverdueTables();
     updateSlaCharts();
+    updateDifficultyTimeStats();
   }
 
   function updateOverdueTables(){
     const overdueByResp={};
-    tasks.filter(t=>!t.completed && new Date(t.deadline) < new Date()).forEach(task=>{
+    tasks.filter(t=>!t.completed && new Date(t.deadline) < toDateOnlyLocal(new Date())).forEach(task=>{
       const resp=responsibles.find(r=>String(r.id)===String(task.responsible));
       const sec=sectors.find(s=>String(s.id)===String(task.sector));
       if(resp){
@@ -2224,7 +2261,7 @@ if (!DOC_REF) return;
     `).join('');
 
     const overdueBySector={};
-    tasks.filter(t=>!t.completed && new Date(t.deadline) < new Date()).forEach(task=>{
+    tasks.filter(t=>!t.completed && new Date(t.deadline) < toDateOnlyLocal(new Date())).forEach(task=>{
       const sec=sectors.find(s=>String(s.id)===String(task.sector));
       const resp=responsibles.find(r=>String(r.id)===String(task.responsible));
       if(sec){
@@ -2299,7 +2336,7 @@ if (!DOC_REF) return;
       saveData();
       updateSelects();
       renderResponsibles();
-      updateSlaCharts();
+      loadData();
       showToast('Responsável excluído!');
     }
   }
@@ -2314,7 +2351,6 @@ if (!DOC_REF) return;
     renderSectors();
     document.getElementById('sector-name').value='';
     document.getElementById('sector-description').value='';
-    updateSlaCharts();
     showToast('Setor adicionado!');
   }
 
@@ -2335,7 +2371,7 @@ if (!DOC_REF) return;
       saveData();
       updateSelects();
       renderSectors();
-      updateSlaCharts();
+      loadData();
       showToast('Setor excluído!');
     }
   }
@@ -2386,8 +2422,8 @@ if (!DOC_REF) return;
 
     const total=filtered.length;
     const completed=filtered.filter(t=>t.completed).length;
-    const pending=filtered.filter(t=>!t.completed && new Date(t.deadline)>=new Date()).length;
-    const overdue=filtered.filter(t=>!t.completed && new Date(t.deadline)<new Date()).length;
+    const pending=filtered.filter(t=>!t.completed && new Date(t.deadline)>=toDateOnlyLocal(new Date())).length;
+    const overdue=filtered.filter(t=>!t.completed && new Date(t.deadline)<toDateOnlyLocal(new Date())).length;
 
     document.getElementById('report-total').textContent=total;
     document.getElementById('report-completed').textContent=completed;
@@ -2401,7 +2437,7 @@ if (!DOC_REF) return;
       if(!byResp[resp.id]) byResp[resp.id]={name:resp.name,total:0,completed:0,pending:0,overdue:0};
       byResp[resp.id].total++;
       if(task.completed) byResp[resp.id].completed++;
-      else if(new Date(task.deadline)<new Date()) byResp[resp.id].overdue++;
+      else if(new Date(task.deadline)<toDateOnlyLocal(new Date())) byResp[resp.id].overdue++;
       else byResp[resp.id].pending++;
     });
 
@@ -2512,7 +2548,6 @@ if (!DOC_REF) return;
           migrateAllTasksPendingHistory();
           saveData();
           loadData();
-          updateSlaCharts();
           showToast('Dados importados com sucesso!');
         }
       }catch(err){
@@ -2538,7 +2573,6 @@ if (!DOC_REF) return;
     updateSelects();
     renderPeriodAnalytics();
     renderMonthlyDoneDetailed();
-    updateSlaCharts();
   }
 
   // =======================
@@ -2551,5 +2585,6 @@ if (!DOC_REF) return;
     setTimeout(()=>toast.classList.remove('active'),3000);
   }
 </script>
+<script type="module" src="/index.tsx"></script>
 </body>
 </html>
