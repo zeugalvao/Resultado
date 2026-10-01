@@ -1157,6 +1157,128 @@ a.wa.fixo{color:var(--muted);background:#F1F4F6;border-color:var(--line)}
 <input type="file" id="fileInput" accept=".json,application/json" hidden>
 <div class="toast" id="toast"></div>
 
+<!-- ============================================================
+     FIREBASE: login obrigatório + banco de dados na nuvem
+     Preencha o bloco FIREBASE_CONFIG abaixo com os dados do seu
+     projeto (passo a passo no guia). Enquanto ele estiver com
+     "COLE_AQUI", o CRM continua funcionando só no navegador.
+     ============================================================ -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script>
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyB9UudVJSWfaPqditFNhlZeC2eWvgY9tQM",
+  authDomain: "dash-547e0.firebaseapp.com",
+  databaseURL: "https://dash-547e0-default-rtdb.firebaseio.com",
+  projectId: "dash-547e0",
+  storageBucket: "dash-547e0.firebasestorage.app",
+  messagingSenderId: "600314268977",
+  appId: "1:600314268977:web:d59c2c1f8cf390689bf410"
+};
+
+window.NUVEM = (() => {
+  const ativo = typeof firebase !== "undefined" &&
+    !Object.values(FIREBASE_CONFIG).some(v => String(v).includes("COLE_AQUI"));
+  let auth = null, db = null, usuario = null;
+  const CAMINHO = "crm/principal";
+
+  if(ativo){
+    firebase.initializeApp(FIREBASE_CONFIG);
+    auth = firebase.auth();
+    db = firebase.database();
+  } else {
+    console.warn("Firebase não configurado: preencha FIREBASE_CONFIG no index.html.");
+  }
+
+  const ERROS = {
+    "auth/invalid-email": "E-mail inválido.",
+    "auth/user-disabled": "Este usuário foi desativado.",
+    "auth/user-not-found": "E-mail ou senha incorretos.",
+    "auth/wrong-password": "E-mail ou senha incorretos.",
+    "auth/invalid-credential": "E-mail ou senha incorretos.",
+    "auth/invalid-login-credentials": "E-mail ou senha incorretos.",
+    "auth/too-many-requests": "Muitas tentativas. Espere alguns minutos e tente de novo.",
+    "auth/network-request-failed": "Sem conexão com a internet."
+  };
+  const msgErro = e => ERROS[e && e.code] || ("Não foi possível entrar (" + ((e && e.code) || e) + ").");
+
+  function telaLogin(){
+    return new Promise(resolve => {
+      let lg = document.getElementById("login");
+      if(!lg){ lg = document.createElement("div"); lg.id = "login"; document.body.append(lg); }
+      lg.innerHTML = `
+        <div class="logincard">
+          <h1>CRM de Frentes</h1>
+          <p class="sub">Entre com o e-mail e a senha cadastrados pelo administrador.</p>
+          <form>
+            <label>E-mail<input type="email" autocomplete="username" required></label>
+            <label>Senha<input type="password" autocomplete="current-password" required></label>
+            <div class="erro"></div>
+            <button class="btn primary" type="submit">Entrar</button>
+            <button class="btn" type="button" data-esqueci>Esqueci minha senha</button>
+          </form>
+          <p class="rodape">Acesso protegido pelo Firebase. Ao fechar a aba, será pedido o login novamente.</p>
+        </div>`;
+      const f = lg.querySelector("form");
+      const [iEmail, iSenha] = f.querySelectorAll("input");
+      const erro = f.querySelector(".erro");
+      const bt = f.querySelector("button[type=submit]");
+      f.onsubmit = async ev => {
+        ev.preventDefault();
+        erro.textContent = ""; bt.disabled = true; bt.textContent = "Entrando...";
+        try{
+          await auth.signInWithEmailAndPassword(iEmail.value.trim(), iSenha.value);
+          lg.classList.remove("on");
+          resolve(auth.currentUser);
+        }catch(e){ erro.textContent = msgErro(e); iSenha.select(); }
+        finally{ bt.disabled = false; bt.textContent = "Entrar"; }
+      };
+      f.querySelector("[data-esqueci]").onclick = async () => {
+        const email = iEmail.value.trim();
+        if(!email){ erro.textContent = "Digite seu e-mail acima e clique de novo em \"Esqueci minha senha\"."; iEmail.focus(); return; }
+        try{
+          await auth.sendPasswordResetEmail(email);
+          erro.textContent = "Se esse e-mail estiver cadastrado, você vai receber um link para criar nova senha.";
+        }catch(e){ erro.textContent = msgErro(e); }
+      };
+      lg.classList.add("on");
+      setTimeout(() => iEmail.focus(), 30);
+    });
+  }
+
+  return {
+    ativo,
+    get email(){ return usuario && usuario.email ? usuario.email.toLowerCase() : null; },
+
+    /* Pede o login sempre que a aba for aberta (sessão vale só enquanto a aba existir). */
+    async exigirLogin(){
+      if(!ativo) return null;
+      await auth.setPersistence(firebase.auth.Auth.Persistence.SESSION);
+      usuario = await new Promise(res => { const off = auth.onAuthStateChanged(u => { off(); res(u); }); });
+      if(!usuario) usuario = await telaLogin();
+      return usuario;
+    },
+    async sair(){
+      if(!ativo) return;
+      try{ await auth.signOut(); }catch(e){}
+      location.reload();
+    },
+
+    /* Banco: o CRM inteiro fica guardado como um texto JSON em /crm/principal */
+    async ler(){
+      const snap = await db.ref(CAMINHO).get();
+      const v = snap.val();
+      return v && v.json ? v.json : null;
+    },
+    async gravar(texto){
+      await db.ref(CAMINHO).set({ json: texto, por: this.email, em: new Date().toISOString() });
+    },
+    async apagar(){ await db.ref(CAMINHO).remove(); }
+  };
+})();
+</script>
+
 <script>
 "use strict";
 
@@ -1194,11 +1316,24 @@ const Store = (() => {
   return {
     get kind(){ return kind; },
     async init(){
+      if(window.NUVEM && NUVEM.ativo){
+        try { idb = await openIDB(); } catch(e){ idb = null; }
+        kind = "Firebase (nuvem)"; return;
+      }
       try { idb = await openIDB(); kind = "IndexedDB"; return; } catch(e){ /* segue */ }
       if(typeof window.storage?.get === "function"){ kind = "Claude (nuvem)"; return; }
       kind = "memória (sessão)";
     },
     async load(){
+      if(kind.startsWith("Firebase")){
+        try{
+          const t = await NUVEM.ler();
+          if(t) return JSON.parse(t);
+        }catch(e){ console.error("Erro lendo o Firebase:", e); }
+        /* nuvem vazia: aproveita o que já existia neste navegador (migração) */
+        try{ if(idb){ const v = await tx(idb, "readonly", s => s.get(KEY)); return v ? JSON.parse(v) : mem; } }catch(e){}
+        return mem;
+      }
       try{
         if(idb){ const v = await tx(idb, "readonly", s => s.get(KEY)); return v ? JSON.parse(v) : null; }
         if(kind.startsWith("Claude")){ const r = await window.storage.get(KEY); return r ? JSON.parse(r.value) : null; }
@@ -1208,6 +1343,11 @@ const Store = (() => {
     async save(obj){
       const s = JSON.stringify(obj);
       mem = obj;
+      if(kind.startsWith("Firebase")){
+        try{ if(idb) tx(idb, "readwrite", st => st.put(s, KEY)).catch(() => {}); }catch(e){}
+        try{ await NUVEM.gravar(s); return true; }
+        catch(e){ console.error("Erro gravando no Firebase:", e); return false; }
+      }
       try{
         if(idb){ await tx(idb, "readwrite", st => st.put(s, KEY)); return true; }
         if(kind.startsWith("Claude")){ await window.storage.set(KEY, s); return true; }
@@ -1216,6 +1356,7 @@ const Store = (() => {
     },
     async wipe(){
       mem = null;
+      if(kind.startsWith("Firebase")){ try{ await NUVEM.apagar(); }catch(e){} }
       try{
         if(idb) await tx(idb, "readwrite", s => s.delete(KEY));
         else if(kind.startsWith("Claude")) await window.storage.delete(KEY);
@@ -15895,6 +16036,15 @@ function aplicarAcessoGlobal(){
 }
 function iniciarSessao(){
   if(!precisaLogin()){ USR = null; aplicarAcessoGlobal(); return true; }
+  /* Entrou pelo Firebase: usa o usuário do CRM com o mesmo e-mail */
+  if(window.NUVEM && NUVEM.email){
+    const uf = DB.usuarios.find(x => x.ativo !== false && (x.email || "").toLowerCase() === NUVEM.email);
+    if(uf){
+      USR = uf; uf.ultimoAcesso = new Date().toISOString();
+      try{ sessionStorage.setItem(SESS_USR, uf.id); }catch(e){}
+      ajustarRamoAtivo(); aplicarAcessoGlobal(); return true;
+    }
+  }
   let id = null;
   try{ id = sessionStorage.getItem(SESS_USR); }catch(e){}
   const u = DB.usuarios.find(x => x.id === id && x.ativo !== false);
@@ -15913,6 +16063,7 @@ function entrarComo(u){
 function sair(){
   USR = null;
   try{ sessionStorage.removeItem(SESS_USR); }catch(e){}
+  if(window.NUVEM && NUVEM.ativo){ NUVEM.sair(); return; }
   fecharPicker();
   $("#wrap").innerHTML = ""; $("#nav").innerHTML = "";
   aplicarAcessoGlobal();
@@ -18691,6 +18842,7 @@ function carregarDB(bruto){
 }
 
 (async function boot(){
+  if(window.NUVEM && NUVEM.ativo) await NUVEM.exigirLogin();
   await Store.init();
   await Store.restaurarHandle();
   $("#dbkind").textContent = Store.kind;
