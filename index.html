@@ -1275,7 +1275,17 @@ window.NUVEM = (() => {
     async gravar(texto){
       await db.ref(CAMINHO).set({ json: texto, por: this.email, em: new Date().toISOString() });
     },
-    async apagar(){ await db.ref(CAMINHO).remove(); }
+    async apagar(){ await db.ref(CAMINHO).remove(); },
+    /* tempo real: avisa sempre que alguém grava no banco */
+    ouvir(cb){
+      if(!ativo) return;
+      let ligado = false;
+      auth.onAuthStateChanged(u => {
+        if(!u || ligado) return;
+        ligado = true;
+        db.ref(CAMINHO + "/em").on("value", () => { try{ cb(); }catch(e){} }, e => console.warn("Tempo real:", e));
+      });
+    }
   };
 })();
 </script>
@@ -17653,6 +17663,20 @@ function stDeLead(a){ return statusPorId(a.andamento) || statusInicial(); }
 function retornaAdm(st){ return !!(st && st.retornaAdm); }
 function emRetorno(a){ return retornaAdm(statusPorId(a.andamento)); }
 function statusDeVolta(){ return statusLista().find(s => s.tipo === "aberto" && !s.retornaAdm) || statusInicial(); }
+/* ADM que recebe o retorno: quem colocou o lead no ramo, se for ADM; senão o primeiro ADM ativo */
+function admDoRetorno(ref){
+  const adms = (DB.usuarios || []).filter(u => u.ativo !== false && (perfilDe(u) || {}).adm);
+  const ent = (ref.log || []).find(e => e.tipo === "entrada");
+  return adms.find(u => ent && u.id === ent.por) || adms.find(u => u.id === ref.por) || adms[0] || null;
+}
+function moverLead(ref, u, agora, auto){
+  ref.historico = (ref.historico || []).concat([{ usuarioId: ref.usuarioId, andamento: ref.andamento,
+                                                  obs: ref.obs || "", ate: agora, para: u.id }]);
+  registrar(ref, { t: agora, tipo:"repasse", status: ref.andamento, de: ref.usuarioId, dono: u.id, auto: auto || undefined });
+  ref.repassadoPor = ref.usuarioId;
+  ref.repassadoEm = agora;
+  ref.usuarioId = u.id;
+}
 function totalRetornos(){ return Object.values(atribs()).filter(emRetorno).length; }
 function encerrado(a){ const s = statusPorId(a.andamento); return !!s && s.tipo !== "aberto"; }
 function slaMs(st){ return st && st.tipo === "aberto" && num(st.sla) > 0 ? num(st.sla) * HORA : 0; }
@@ -17766,7 +17790,8 @@ function textoEvento(e){
   const quem = e.por ? nomeUsuario(e.por) : "Sistema";
   if(e.tipo === "entrada") return "Entrou para " + nomeUsuario(e.dono) + " como " + nomeStatus(e.status) + (e.aprox ? " (data aproximada)" : "");
   if(e.tipo === "status") return quem + " mudou de " + nomeStatus(e.anterior) + " para " + nomeStatus(e.status) + (e.aprox ? " (data aproximada)" : "");
-  if(e.tipo === "repasse") return nomeUsuario(e.de) + " repassou para " + nomeUsuario(e.dono) + ", em " + nomeStatus(e.status);
+  if(e.tipo === "repasse") return nomeUsuario(e.de) + (e.auto ? " classificou como " + nomeStatus(e.status) + " e o lead foi transferido automaticamente para " + nomeUsuario(e.dono)
+                                                         : " repassou para " + nomeUsuario(e.dono) + ", em " + nomeStatus(e.status));
   if(e.tipo === "devolucao") return quem + " devolveu para a Base";
   if(e.tipo === "whatsapp") return quem + " abriu conversa no WhatsApp com " + (e.tel || "o contato");
   if(e.tipo === "conversa") return quem + " importou a conversa do WhatsApp (" + (e.novas || 0) + " mensagens novas, arquivo " + (e.arquivo || "") + ")";
@@ -17945,10 +17970,19 @@ function renderLeadsTrab(host){
                          retorno: retornaAdm(novo) || undefined });
         if(retornaAdm(novo)){
           ref.retornoEm = ref.atualizadoEm; ref.retornoPor = USR ? USR.id : ref.usuarioId;
-          if(!ehAdm()) toast((l.razaoSocial || "Lead") + " foi enviado para o administrador tratar.");
+          if(!ehAdm()){
+            const adm = admDoRetorno(ref);
+            if(adm && adm.id !== ref.usuarioId) moverLead(ref, adm, ref.atualizadoEm, true);
+            toast((l.razaoSocial || "Lead") + " foi transferido automaticamente para " + (adm ? adm.nome : "o administrador") + ".");
+          }
         } else if(vinhaDeRetorno){
+          const sdr = (DB.usuarios || []).find(u => u.id === ref.retornoPor && u.ativo !== false);
           delete ref.retornoEm; delete ref.retornoPor;
-          toast((l.razaoSocial || "Lead") + " voltou para a lista de " + nomeUsuario(ref.usuarioId) + ".");
+          if(sdr && sdr.id !== ref.usuarioId &&
+             confirm("Devolver " + (l.razaoSocial || "este lead") + " para " + sdr.nome + "?\n\nOK = volta para a lista dele(a).\nCancelar = o lead fica com você.")){
+            moverLead(ref, sdr, ref.atualizadoEm);
+          }
+          toast((l.razaoSocial || "Lead") + " está agora com " + nomeUsuario(ref.usuarioId) + ".");
         }
         persist(); render();
       };
@@ -18739,6 +18773,8 @@ function avisarAbas(){ try{ if(canalAbas) canalAbas.postMessage({ salvoEm: meuCa
 window.addEventListener("focus", () => { sincronizar(); });
 document.addEventListener("visibilitychange", () => { if(!document.hidden) sincronizar(); });
 setInterval(() => { if(!document.hidden) sincronizar(); }, 20000);
+/* com o Firebase, qualquer gravação de outro usuário chega na hora */
+if(window.NUVEM && NUVEM.ativo) NUVEM.ouvir(() => { sincronizar(); });
 
 /* ============================================================
    9. BOOT
