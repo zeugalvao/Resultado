@@ -973,6 +973,11 @@ ol.logl li{display:flex;gap:10px;flex-wrap:wrap}
 ol.logl time{color:var(--muted);font-variant-numeric:tabular-nums;min-width:108px}
 ol.logl em{color:var(--muted);font-style:normal}
 ol.logl em::before{content:"· "}
+.paguardo{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;font-size:12px;font-weight:500;margin-top:5px;border:0;cursor:pointer;font-family:inherit}
+.paguardo::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor}
+.paguardo.verm{background:#fbe4e2;color:#a3261d}
+.paguardo.verde{background:#dcf1e3;color:#1c6b3a}
+.dtcampo{width:100%;font-size:15px;padding:8px 10px;margin-top:4px}
 .ltlinhas{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:0 0 20px;display:flex;flex-direction:column;gap:12px}
 .ltlinha{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap}
 .ltlinha .lttit{flex:0 0 170px;display:flex;flex-direction:column;justify-content:center}
@@ -13395,8 +13400,9 @@ function pickFrentes(host){
     crt.append(el("div","tp","RETORNOS PARA O ADM"));
     crt.append(el("h3",null,"Contatos para tratar"));
     crt.append(el("div","ds","Leads que os SDRs classificaram num status que retorna para o administrador, como número incorreto."));
-    const m2 = el("div","mt"), nRet = totalRetornos();
-    m2.append(nRet ? el("span","pill st-late", nRet + " para tratar") : el("span",null,"nenhum pendente"));
+    const m2 = el("div","mt"), nRet = totalRetornos(), nAg = totalAguardando(), nLib = totalLiberados();
+    m2.append(nRet ? el("span","pill st-late", nRet + " para tratar") : el("span",null,"nenhum retorno pendente"));
+    if(nAg) m2.append(el("span",null, nAg + " aguardando CNPJ" + (nLib ? " · " + nLib + " liberados" : "")));
     crt.append(m2);
     crt.onclick = () => { pickEtapa = "retornos"; desenhaPicker(); $("#picker").scrollTop = 0; };
     dupla.append(cst, crt);
@@ -17677,6 +17683,68 @@ function stDeLead(a){ return statusPorId(a.andamento) || statusInicial(); }
 /* status com a flag "Retorna para o ADM": o lead sai da lista do SDR e volta para o ADM tratar */
 function retornaAdm(st){ return !!(st && st.retornaAdm); }
 function emRetorno(a){ return retornaAdm(statusPorId(a.andamento)); }
+/* status que pede data prevista (ex.: Falta tempo de CNPJ aberto): fica em "Aguardando tempo de CNPJ" */
+function pedeData(st){ return !!(st && st.pedeData); }
+function emAguardo(a){ return emRetorno(a) && pedeData(statusPorId(a.andamento)); }
+function emRetornoComum(a){ return emRetorno(a) && !pedeData(statusPorId(a.andamento)); }
+function hojeISO(){ const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0"); }
+function liberado(a){ return !!a.dataPrevista && a.dataPrevista <= hojeISO(); }
+function fmtDataISO(x){ const [y, m, d] = String(x).split("-"); return d + "/" + m + "/" + y; }
+function diasAte(x){ const [y, m, d] = String(x).split("-").map(Number); const h = new Date(); h.setHours(0,0,0,0); return Math.round((new Date(y, m-1, d) - h) / 864e5); }
+function pillAguardo(a, aoClicar){
+  const b = el("button","paguardo " + (liberado(a) ? "verde" : "verm"));
+  b.type = "button"; b.dataset.livre = "1";
+  if(!a.dataPrevista) b.textContent = "Sem data prevista";
+  else if(liberado(a)){ const n = -diasAte(a.dataPrevista); b.textContent = "Liberado" + (n > 0 ? " há " + n + (n === 1 ? " dia" : " dias") : " hoje") + " · " + fmtDataISO(a.dataPrevista); }
+  else { const n = diasAte(a.dataPrevista); b.textContent = "Aguardando · faltam " + n + (n === 1 ? " dia" : " dias") + " · " + fmtDataISO(a.dataPrevista); }
+  if(aoClicar){ b.title = "Alterar a data prevista"; b.onclick = aoClicar; } else b.style.cursor = "default";
+  return b;
+}
+/* calendário obrigatório: devolve "AAAA-MM-DD" ou null se cancelar */
+function pedirData(titulo, texto, atual){
+  return new Promise(resolve => {
+    const fundo = el("div","tmodal"), caixa = el("div","tcaixa");
+    caixa.setAttribute("role","dialog"); caixa.setAttribute("aria-modal","true");
+    fundo.append(caixa);
+    let feito = false;
+    const fim = v => { if(feito) return; feito = true; fundo.remove(); document.removeEventListener("keydown", esc, true); resolve(v); };
+    const esc = ev => { if(ev.key === "Escape"){ ev.stopPropagation(); fim(null); } };
+    document.addEventListener("keydown", esc, true);
+    fundo.onclick = ev => { if(ev.target === fundo) fim(null); };
+    caixa.append(el("h3",null,titulo));
+    if(texto) caixa.append(el("p","sub",texto));
+    const lb = el("label",null,"Data prevista *");
+    const inp = el("input","dtcampo"); inp.type = "date";
+    const amanha = new Date(); amanha.setDate(amanha.getDate() + 1);
+    inp.min = amanha.getFullYear() + "-" + String(amanha.getMonth()+1).padStart(2,"0") + "-" + String(amanha.getDate()).padStart(2,"0");
+    if(atual) inp.value = atual;
+    lb.append(inp);
+    const erro = el("p","terro");
+    inp.oninput = () => { erro.textContent = ""; };
+    const ac = el("div","pickacoes");
+    const ok = el("button","btn primary","Confirmar");
+    const cc = el("button","btn","Cancelar");
+    ok.onclick = () => {
+      if(!inp.value) return (erro.textContent = "Escolha a data prevista para continuar.");
+      if(inp.value <= hojeISO()) return (erro.textContent = "A data prevista precisa ser depois de hoje.");
+      fim(inp.value);
+    };
+    cc.onclick = () => fim(null);
+    ac.append(ok, cc);
+    caixa.append(lb, erro, ac);
+    document.body.append(fundo);
+    setTimeout(() => { inp.focus(); try{ inp.showPicker && inp.showPicker(); }catch(e){} }, 50);
+  });
+}
+function alterarDataPrevista(a, depois){
+  const ref = atribs()[a.chave]; if(!ref) return;
+  pedirData("Alterar data prevista", (a.lead && a.lead.razaoSocial) || "", ref.dataPrevista).then(d => {
+    if(!d) return;
+    registrar(ref, { tipo:"data", status: ref.andamento, dono: ref.usuarioId, de: ref.dataPrevista || null, data: d });
+    ref.dataPrevista = d; ref.atualizadoEm = new Date().toISOString();
+    persist(); render(); if(depois) depois();
+  });
+}
 function statusDeVolta(){ return statusLista().find(s => s.tipo === "aberto" && !s.retornaAdm) || statusInicial(); }
 /* ADM que recebe o retorno: quem colocou o lead no ramo, se for ADM; senão o primeiro ADM ativo */
 function admDoRetorno(ref){
@@ -17703,7 +17771,7 @@ function repararRetornos(){
     const volta = statusDeVolta(), agora = new Date().toISOString();
     registrar(ref, { t: agora, tipo:"status", anterior: ref.andamento, status: volta.id, dono: ref.usuarioId, por: null });
     ref.andamento = volta.id; ref.atualizadoEm = agora;
-    delete ref.retornoEm; delete ref.retornoPor;
+    delete ref.retornoEm; delete ref.retornoPor; delete ref.dataPrevista;
     n++;
   });
   return n;
@@ -17711,7 +17779,9 @@ function repararRetornos(){
 function leadForaSla(a){ const st = stDeLead(a), s = slaMs(st); return !!s && Date.now() - inicioAtual(a) > s; }
 /* status de entrada: o lead chega "sem ação" para quem recebe (Base ou repasse) */
 function statusEntrada(){ return statusDeVolta(); }
-function totalRetornos(){ return Object.values(atribs()).filter(emRetorno).length; }
+function totalRetornos(){ return Object.values(atribs()).filter(emRetornoComum).length; }
+function totalAguardando(){ return Object.values(atribs()).filter(emAguardo).length; }
+function totalLiberados(){ return Object.values(atribs()).filter(a => emAguardo(a) && liberado(a)).length; }
 function encerrado(a){ const s = statusPorId(a.andamento); return !!s && s.tipo !== "aberto"; }
 function slaMs(st){ return st && st.tipo === "aberto" && num(st.sla) > 0 ? num(st.sla) * HORA : 0; }
 function fmtDur(ms){
@@ -17746,6 +17816,12 @@ function migrarStatusLeads(){
   statusLista();
   const sn = statusPorId("st_novo");
   if(sn && !sn.nenhumOk){ if(sn.nome === "Novo") sn.nome = "Nenhum"; sn.nenhumOk = true; }
+  if(sn && !sn.cnpjOk){
+    const ja = DB.statusLead.find(x => /cnpj/i.test(x.nome || ""));
+    if(ja){ ja.pedeData = true; ja.retornaAdm = true; }
+    else DB.statusLead.push({ id:"st_cnpj", nome:"Falta tempo de CNPJ aberto", sla:0, tipo:"aberto", repasse:false, retornaAdm:true, pedeData:true });
+    sn.cnpjOk = true;
+  }
   const porNome = {};
   statusLista().forEach(s => { porNome[baseChave(s.nome)] = s.id; });
   const mapear = v => statusPorId(v) ? v : (porNome[baseChave(v || "Novo")] || statusInicial().id);
@@ -17798,7 +17874,7 @@ function repassarLead(a, u){
     const volta = statusDeVolta();
     registrar(ref, { t: agora, tipo:"status", anterior: ref.andamento, status: volta.id, dono: ref.usuarioId });
     ref.andamento = volta.id;
-    delete ref.retornoEm; delete ref.retornoPor;
+    delete ref.retornoEm; delete ref.retornoPor; delete ref.dataPrevista;
     if(u.id === ref.usuarioId){
       ref.atualizadoEm = agora;
       persist(); render();
@@ -17835,6 +17911,7 @@ function textoEvento(e){
   const quem = e.por ? nomeUsuario(e.por) : "Sistema";
   if(e.tipo === "entrada") return "Entrou para " + nomeUsuario(e.dono) + " como " + nomeStatus(e.status) + (e.aprox ? " (data aproximada)" : "");
   if(e.tipo === "status") return quem + " mudou de " + nomeStatus(e.anterior) + " para " + nomeStatus(e.status) + (e.aprox ? " (data aproximada)" : "");
+  if(e.tipo === "data") return nomeUsuario(e.por) + " alterou a data prevista" + (e.de ? " de " + fmtDataISO(e.de) : "") + " para " + fmtDataISO(e.data);
   if(e.tipo === "repasse") return nomeUsuario(e.de) + (e.auto ? " classificou como " + nomeStatus(e.status) + " e o lead foi transferido automaticamente para " + nomeUsuario(e.dono)
                                                          : " repassou para " + nomeUsuario(e.dono) + (e.statusAnt ? " (entregou em " + nomeStatus(e.statusAnt) + "; chega como " + nomeStatus(e.status) + ")" : ", em " + nomeStatus(e.status)));
   if(e.tipo === "devolucao") return quem + " devolveu para a Base";
@@ -17947,7 +18024,7 @@ function linhasDoPainel(todos){
   if(!ordem.length) l2.append(chip(0, "Nenhum lead saiu da lista no período", ""));
   ordem.forEach(st => {
     const tipo = (statusPorId(st.id) || {}).tipo;
-    l2.append(chip(saiu[st.id], st.nome + (retornaAdm(st) ? " · voltou ao ADM" : tipo === "ganho" ? " · ganho" : tipo === "perdido" ? " · perdido" : " · repassado"),
+    l2.append(chip(saiu[st.id], st.nome + (pedeData(statusPorId(st.id)) ? " · aguardando CNPJ" : retornaAdm(st) ? " · voltou ao ADM" : tipo === "ganho" ? " · ganho" : tipo === "perdido" ? " · perdido" : " · repassado"),
       tipo === "perdido" || retornaAdm(st) ? "ruim" : ""));
   });
   const tot = Object.values(saiu).reduce((x, y) => x + y, 0);
@@ -17988,8 +18065,12 @@ function renderLeadsTrab(host){
   statusLista().forEach(s => sa.append(Object.assign(el("option",null,s.nome), {value:s.id})));
   if(repassados.length) sa.append(Object.assign(el("option",null,"Repassados por mim"), {value:"__rep"}));
   if(ehAdm()){
-    const nRet = todos.filter(emRetorno).length;
+    const nRet = todos.filter(emRetornoComum).length;
     sa.append(Object.assign(el("option",null,"↩ Retornos para tratar (" + nRet + ")"), {value:"__ret"}));
+    if(statusLista().some(pedeData)){
+      const nAg = todos.filter(emAguardo).length, nLib = todos.filter(a => emAguardo(a) && liberado(a)).length;
+      sa.append(Object.assign(el("option",null,"⏳ Aguardando tempo de CNPJ (" + nAg + (nLib ? " · " + nLib + " liberados" : "") + ")"), {value:"__cnpj"}));
+    }
   }
   sa.value = LT.andamento;
   campo("Status", sa);
@@ -18015,7 +18096,8 @@ function renderLeadsTrab(host){
       else if(LT.andamento === "__entrada"){ if(!a.meu || a.andamento !== statusEntrada().id || foraDoSla(a)) return false; }
       else if(LT.andamento === "__andamento"){ if(!a.meu || encerrado(a) || emRetorno(a) || a.andamento === statusEntrada().id || foraDoSla(a)) return false; }
       else if(LT.andamento === "__fora"){ if(!a.meu || !foraDoSla(a)) return false; }
-      else if(LT.andamento === "__ret"){ if(!emRetorno(a)) return false; }
+      else if(LT.andamento === "__ret"){ if(!emRetornoComum(a)) return false; }
+      else if(LT.andamento === "__cnpj"){ if(!emAguardo(a)) return false; }
       else if(LT.andamento && (!a.meu || a.andamento !== LT.andamento)) return false;
       if(LT.usuario && a.usuarioId !== LT.usuario) return false;
       if(!q) return true;
@@ -18081,28 +18163,36 @@ function renderLeadsTrab(host){
       const td = el("td"), s = el("select","andsel");
       statusLista().forEach(x => s.append(Object.assign(el("option",null,x.nome), {value:x.id})));
       s.value = st.id;
-      s.onchange = () => {
+      s.onchange = async () => {
         const ant = ref.andamento;
         if(ant === s.value) return;
         const novo = statusPorId(s.value), vinhaDeRetorno = retornaAdm(statusPorId(ant));
-        if(retornaAdm(novo) && !ehAdm() &&
+        let dataPrev = null;
+        if(pedeData(novo)){
+          dataPrev = await pedirData("Quando o CNPJ atinge o tempo mínimo?",
+            (l.razaoSocial || "Este lead") + (ehAdm() ? "" : " vai para o administrador, na divisão Aguardando tempo de CNPJ, e sai da sua lista."));
+          if(!dataPrev){ s.value = ant; return; }
+        } else if(retornaAdm(novo) && !ehAdm() &&
            !confirm('"' + novo.nome + '" devolve o lead para o administrador tratar. Ele vai sair da sua lista. Continuar?')){
           s.value = ant; return;
         }
+        if(ref.andamento !== ant){ s.value = ref.andamento; return; }
+        if(dataPrev) ref.dataPrevista = dataPrev; else if(!retornaAdm(novo)) delete ref.dataPrevista;
         ref.andamento = s.value;
         ref.atualizadoEm = new Date().toISOString();
         registrar(ref, { t: ref.atualizadoEm, tipo:"status", anterior: ant, status: s.value, dono: ref.usuarioId,
-                         retorno: retornaAdm(novo) || undefined });
+                         retorno: retornaAdm(novo) || undefined, data: dataPrev || undefined });
         if(retornaAdm(novo)){
           ref.retornoEm = ref.atualizadoEm; ref.retornoPor = USR ? USR.id : ref.usuarioId;
           if(!ehAdm()){
             const adm = admDoRetorno(ref);
             if(adm && adm.id !== ref.usuarioId) moverLead(ref, adm, ref.atualizadoEm, true);
-            toast((l.razaoSocial || "Lead") + " foi transferido automaticamente para " + (adm ? adm.nome : "o administrador") + ".");
+            toast((l.razaoSocial || "Lead") + " foi transferido automaticamente para " + (adm ? adm.nome : "o administrador") +
+              (dataPrev ? ", aguardando até " + fmtDataISO(dataPrev) : "") + ".");
           }
         } else if(vinhaDeRetorno){
           const sdr = (DB.usuarios || []).find(u => u.id === ref.retornoPor && u.ativo !== false);
-          delete ref.retornoEm; delete ref.retornoPor;
+          delete ref.retornoEm; delete ref.retornoPor; delete ref.dataPrevista;
           if(sdr && sdr.id !== ref.usuarioId &&
              confirm("Devolver " + (l.razaoSocial || "este lead") + " para " + sdr.nome + "?\n\nOK = volta para a lista dele(a).\nCancelar = o lead fica com você.")){
             moverLead(ref, sdr, ref.atualizadoEm);
@@ -18116,6 +18206,7 @@ function renderLeadsTrab(host){
         td.append(el("div","sub","↩ classificado por " + nomeUsuario(a.retornoPor || a.usuarioId) +
           (a.retornoEm ? " em " + dataHora(a.retornoEm) : "")));
         tr.classList.add("retorno");
+        if(pedeData(st)) td.append(pillAguardo(a, () => alterarDataPrevista(a)));
       }
       tr.append(td);
       if(colRepasse){
@@ -18579,57 +18670,93 @@ function pickRetornos(host){
   hd.append(el("h1",null,"Retornos para tratar"));
   hd.append(el("p",null,"Leads que voltaram para você porque o SDR escolheu um status marcado com \"Retorna para o ADM\". Abra o ramo, corrija o contato e: mude o status (o lead volta para o mesmo SDR), use Transferir para (vai para outro usuário) ou Devolver (volta para a Base)."));
   host.append(hd);
-  const sts = statusLista().filter(retornaAdm);
+  const sts = statusLista().filter(x => retornaAdm(x) && !pedeData(x));
+  const abrir = (fid, rid, filtro) => {
+    ativarFrente(fid, rid);
+    LT.andamento = filtro; LT.usuario = ""; LT.busca = ""; LT.pag = 0;
+    fecharPicker(); persist(); go("leadstrab");
+  };
+
+  /* ---- divisão 1: número incorreto e outros retornos ---- */
+  const b1 = el("div","pickbloco");
+  b1.append(el("h2",null,"Número incorreto e outros retornos"));
   if(!sts.length){
-    const n = el("div","note");
-    n.append(el("div","txt","Nenhum status está marcado com \"Retorna para o ADM\" ainda. Vá em Status dos leads e marque essa opção, por exemplo, em \"Número incorreto\"."));
-    const b = el("button","btn primary sm","Abrir Status dos leads");
+    b1.append(el("p","leadshint","Nenhum status está marcado com \"Retorna para o ADM\" (sem data prevista). Marque essa opção em Status dos leads, por exemplo, em \"Número incorreto\"."));
+    const b = el("button","btn sm","Abrir Status dos leads");
     b.onclick = () => { pickEtapa = "status"; desenhaPicker(); };
-    n.append(b); host.append(n);
-    return;
+    b1.append(b);
+  } else {
+    const grupos = {};
+    Object.values(atribs()).filter(emRetornoComum).forEach(a => {
+      const k = a.frenteId + "|" + a.ramoId;
+      const g = grupos[k] || (grupos[k] = { f:a.frenteId, r:a.ramoId, n:0, por:{}, sdr:{} });
+      g.n++; g.por[a.andamento] = (g.por[a.andamento] || 0) + 1;
+      const q = a.retornoPor || a.usuarioId; g.sdr[q] = (g.sdr[q] || 0) + 1;
+    });
+    const lista = Object.values(grupos).map(g => Object.assign(g, { x: acharRamo(g.f, g.r) })).filter(g => g.x).sort((a, b) => b.n - a.n);
+    if(!lista.length) b1.append(el("p","leadshint","Nenhum contato pendente. Tudo tratado! ✅"));
+    else {
+      const tw = el("div","tablewrap"), t = el("table","leadlista gtab");
+      const h = el("tr");
+      ["Vertical","Ramo"].concat(sts.map(x => x.nome)).concat(["Total","Classificados por",""]).forEach(x => h.append(el("th",null,x)));
+      t.append(h);
+      lista.forEach(g => {
+        const tr = el("tr");
+        tr.append(el("td",null,g.x.f.nome), el("td",null,g.x.r.nome));
+        sts.forEach(x => tr.append(el("td",g.por[x.id] ? null : "muted",String(g.por[x.id] || 0))));
+        tr.append(tdNegrito(String(g.n)));
+        tr.append(el("td","muted",Object.entries(g.sdr).map(([u, n]) => nomeUsuario(u) + " (" + n + ")").join(", ")));
+        const tb = el("td"), b = el("button","btn primary sm","Tratar");
+        b.onclick = () => abrir(g.f, g.r, "__ret");
+        tb.append(b); tr.append(tb);
+        t.append(tr);
+      });
+      tw.append(t); b1.append(tw);
+    }
   }
-  const grupos = {};
-  Object.values(atribs()).filter(emRetorno).forEach(a => {
-    const k = a.frenteId + "|" + a.ramoId;
-    const g = grupos[k] || (grupos[k] = { f:a.frenteId, r:a.ramoId, n:0, por:{}, sdr:{} });
-    g.n++; g.por[a.andamento] = (g.por[a.andamento] || 0) + 1;
-    const q = a.retornoPor || a.usuarioId; g.sdr[q] = (g.sdr[q] || 0) + 1;
-  });
-  const lista = Object.values(grupos).map(g => Object.assign(g, { x: acharRamo(g.f, g.r) })).filter(g => g.x)
-    .sort((a, b) => b.n - a.n);
-  const bloco = el("div","pickbloco");
-  if(!lista.length){ bloco.append(el("p","leadshint","Nenhum contato pendente. Tudo tratado! ✅")); host.append(bloco); return; }
-  const tw = el("div","tablewrap"), t = el("table","leadlista gtab");
-  const h = el("tr");
-  ["Vertical","Ramo"].concat(sts.map(s => s.nome)).concat(["Total","Classificados por",""]).forEach(x => h.append(el("th",null,x)));
-  t.append(h);
-  lista.forEach(g => {
-    const tr = el("tr");
-    tr.append(el("td",null,g.x.f.nome), el("td",null,g.x.r.nome));
-    sts.forEach(s => tr.append(el("td",g.por[s.id] ? null : "muted",String(g.por[s.id] || 0))));
-    tr.append(tdNegrito(String(g.n)));
-    tr.append(el("td","muted",Object.entries(g.sdr).map(([u, n]) => nomeUsuario(u) + " (" + n + ")").join(", ")));
-    const tb = el("td"), b = el("button","btn primary sm","Tratar");
-    b.onclick = () => {
-      ativarFrente(g.f, g.r);
-      LT.andamento = "__ret"; LT.usuario = ""; LT.busca = ""; LT.pag = 0;
-      fecharPicker(); persist(); go("leadstrab");
-    };
-    tb.append(b); tr.append(tb);
-    t.append(tr);
-  });
-  tw.append(t); bloco.append(tw); host.append(bloco);
+  host.append(b1);
+
+  /* ---- divisão 2: aguardando tempo de CNPJ ---- */
+  if(statusLista().some(pedeData)){
+    const b2 = el("div","pickbloco");
+    const ag = Object.entries(atribs()).filter(([, a]) => emAguardo(a)).map(([chave, a]) => Object.assign({ chave }, a))
+      .map(a => Object.assign(a, { x: acharRamo(a.frenteId, a.ramoId) })).filter(a => a.x)
+      .sort((a, b) => (liberado(b) - liberado(a)) || String(a.dataPrevista || "9").localeCompare(String(b.dataPrevista || "9")));
+    const nLib = ag.filter(liberado).length;
+    b2.append(el("h2",null,"Aguardando tempo de CNPJ · " + ag.length + (nLib ? " (" + nLib + " liberados)" : "")));
+    b2.append(el("p","leadshint","Vermelho: ainda não chegou a data prevista. Verde: a data chegou e o lead já pode ser reenviado ao SDR. Clique na data para alterar."));
+    if(!ag.length) b2.append(el("p","leadshint","Nenhum lead aguardando."));
+    else {
+      const tw = el("div","tablewrap"), t = el("table","leadlista gtab");
+      const h = el("tr");
+      ["Empresa","Telefone","Vertical · ramo","Classificado por","Situação",""].forEach(x => h.append(el("th",null,x)));
+      t.append(h);
+      ag.forEach(a => {
+        const l = a.lead || {}, tr = el("tr");
+        const te = el("td"); te.append(el("b",null,l.razaoSocial || a.cnpj || "")); if(l.nomeFantasia) te.append(el("div","sub",l.nomeFantasia));
+        tr.append(te, el("td",null,l.telefone || l.telefone1 || ""), el("td","muted",a.x.f.nome + " · " + a.x.r.nome),
+          el("td","muted",nomeUsuario(a.retornoPor || a.repassadoPor || a.usuarioId) + (a.retornoEm ? " em " + dataHora(a.retornoEm) : "")));
+        const tp = el("td"); tp.append(pillAguardo(a, () => alterarDataPrevista(a, desenhaPicker))); tr.append(tp);
+        const tb = el("td"), b = el("button","btn " + (liberado(a) ? "primary" : "") + " sm","Tratar");
+        b.onclick = () => abrir(a.frenteId, a.ramoId, "__cnpj");
+        tb.append(b); tr.append(tb);
+        t.append(tr);
+      });
+      tw.append(t); b2.append(tw);
+    }
+    host.append(b2);
+  }
 }
 
 /* ---------- cadastro: status e SLA (fica em Usuários e perfis) ---------- */
 function blocoStatusSla(host){
   const bs = el("div","consbloco");
   bs.append(el("h2",null,"Status dos leads e SLA"));
-  bs.append(el("p","sub","Os status que aparecem na coluna Status dos Leads a trabalhar, para SDRs e demais perfis. O prazo é o tempo máximo que o lead pode ficar parado em cada um: dentro dele a barra fica amarela, passando dele fica vermelha. Marque \"Retorna para o ADM\" nos status em que o contato precisa voltar para o administrador tratar (ex.: Número incorreto): quando o SDR escolhe esse status, o lead sai da lista dele e aparece em Retornos para tratar."));
+  bs.append(el("p","sub","Os status que aparecem na coluna Status dos Leads a trabalhar, para SDRs e demais perfis. O prazo é o tempo máximo que o lead pode ficar parado em cada um: dentro dele a barra fica amarela, passando dele fica vermelha. Marque \"Retorna para o ADM\" nos status em que o contato precisa voltar para o administrador tratar (ex.: Número incorreto): quando o SDR escolhe esse status, o lead sai da lista dele e aparece em Retornos para tratar. Marque também \"Pede data prevista\" quando o SDR precisar informar uma data (ex.: Falta tempo de CNPJ aberto): o lead fica em Aguardando tempo de CNPJ, vermelho até a data e verde quando ela chega."));
   const box = el("div","pickbloco");
   const tw = el("div","tablewrap"), t = el("table","ed utab stab");
   const h = el("tr");
-  ["","Status","Prazo máximo (horas)","Tipo","Libera repasse","Retorna para o ADM","Leads agora",""].forEach(x => h.append(el("th",null,x)));
+  ["","Status","Prazo máximo (horas)","Tipo","Libera repasse","Retorna para o ADM","Pede data prevista","Leads agora",""].forEach(x => h.append(el("th",null,x)));
   const th = el("thead"); th.append(h); t.append(th);
   const tb = el("tbody");
   const uso = {};
@@ -18683,6 +18810,15 @@ function blocoStatusSla(host){
     };
     tr3.append(cr); tr.append(tr3);
 
+    const tr4 = el("td","c"), cd = el("input"); cd.type = "checkbox"; cd.checked = !!s.pedeData;
+    cd.title = "Ao escolher este status, abre um calendário obrigatório. O lead vai para o ADM na divisão Aguardando tempo de CNPJ";
+    cd.onchange = () => {
+      s.pedeData = cd.checked;
+      if(cd.checked && !s.retornaAdm){ s.retornaAdm = true; toast("\"Retorna para o ADM\" foi marcado junto, porque o lead aguarda com o administrador."); }
+      persist(); redesenharPicker();
+    };
+    tr4.append(cd); tr.append(tr4);
+
     tr.append(el("td","muted", String(uso[s.id] || 0)));
     const tx = el("td"), bx = el("button","btn sm danger","Excluir");
     bx.onclick = () => {
@@ -18701,7 +18837,7 @@ function blocoStatusSla(host){
     const nome = prompt("Nome do novo status:", "");
     if(nome === null || !nome.trim()) return;
     const pos = lista.findIndex(x => x.tipo !== "aberto");
-    const novo = { id: novoIdUsr("st"), nome: nome.trim(), sla: 24, tipo:"aberto", repasse:false, retornaAdm:false };
+    const novo = { id: novoIdUsr("st"), nome: nome.trim(), sla: 24, tipo:"aberto", repasse:false, retornaAdm:false, pedeData:false };
     if(pos < 0) lista.push(novo); else lista.splice(pos, 0, novo);
     persist(); redesenharPicker();
   };
