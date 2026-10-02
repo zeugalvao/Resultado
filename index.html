@@ -1083,6 +1083,7 @@ a.wa.fixo{color:var(--muted);background:#F1F4F6;border-color:var(--line)}
 .msg .txt{white-space:pre-wrap;word-break:break-word}
 .msg .txt.midia{font-style:italic;color:var(--muted)}
 .msg time{display:block;text-align:right;font-size:10px;color:var(--muted);margin-top:1px}
+  tr.lrow.retorno td{background:rgba(214,120,30,.07)}
 </style>
 </head>
 <body>
@@ -6032,6 +6033,8 @@ function desenhaPicker(){
   else if(pickEtapa === "usuarios") pickUsuarios(w);
   else if(pickEtapa === "perfil") pickPerfil(w);
   else if(pickEtapa === "dashboard") pickDashboard(w);
+  else if(pickEtapa === "status") pickStatus(w);
+  else if(pickEtapa === "retornos") pickRetornos(w);
   else pickAnalise(w);
   ajustarCamposNumericos(w);
 }
@@ -13349,6 +13352,32 @@ function pickFrentes(host){
     host.append(dsh);
   }
 
+  if(ehAdm()){
+    const dupla = el("div"); dupla.style.cssText = "display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-bottom:16px";
+    const cst = el("button","fcard consol");
+    cst.style.margin = "0";
+    cst.append(el("div","tp","CADASTRO"));
+    cst.append(el("h3",null,"Status dos leads"));
+    cst.append(el("div","ds","Cadastre, altere e exclua os status, defina o prazo (SLA) de cada um e quais devolvem o contato para o ADM tratar."));
+    const m1 = el("div","mt");
+    m1.append(el("span",null, statusLista().length + " status"));
+    const nFlag = statusLista().filter(retornaAdm).length;
+    m1.append(el("span",null, nFlag + (nFlag === 1 ? " retorna" : " retornam") + " para o ADM"));
+    cst.append(m1);
+    cst.onclick = () => { pickEtapa = "status"; desenhaPicker(); $("#picker").scrollTop = 0; };
+    const crt = el("button","fcard consol dash");
+    crt.style.margin = "0";
+    crt.append(el("div","tp","RETORNOS PARA O ADM"));
+    crt.append(el("h3",null,"Contatos para tratar"));
+    crt.append(el("div","ds","Leads que os SDRs classificaram num status que retorna para o administrador, como número incorreto."));
+    const m2 = el("div","mt"), nRet = totalRetornos();
+    m2.append(nRet ? el("span","pill st-late", nRet + " para tratar") : el("span",null,"nenhum pendente"));
+    crt.append(m2);
+    crt.onclick = () => { pickEtapa = "retornos"; desenhaPicker(); $("#picker").scrollTop = 0; };
+    dupla.append(cst, crt);
+    host.append(dupla);
+  }
+
   const gleads = el("div","leadsgrid4");
 
   const cartaoLead = (numero, titulo, descricao, marcas, etapa, extra) => {
@@ -17620,6 +17649,11 @@ function statusPorId(id){ return statusLista().find(s => s.id === id) || null; }
 function statusInicial(){ return statusLista().find(s => s.tipo === "aberto") || statusLista()[0]; }
 function nomeStatus(id){ const s = statusPorId(id); return s ? s.nome : "status removido"; }
 function stDeLead(a){ return statusPorId(a.andamento) || statusInicial(); }
+/* status com a flag "Retorna para o ADM": o lead sai da lista do SDR e volta para o ADM tratar */
+function retornaAdm(st){ return !!(st && st.retornaAdm); }
+function emRetorno(a){ return retornaAdm(statusPorId(a.andamento)); }
+function statusDeVolta(){ return statusLista().find(s => s.tipo === "aberto" && !s.retornaAdm) || statusInicial(); }
+function totalRetornos(){ return Object.values(atribs()).filter(emRetorno).length; }
 function encerrado(a){ const s = statusPorId(a.andamento); return !!s && s.tipo !== "aberto"; }
 function slaMs(st){ return st && st.tipo === "aberto" && num(st.sla) > 0 ? num(st.sla) * HORA : 0; }
 function fmtDur(ms){
@@ -17681,7 +17715,7 @@ const LT = { busca:"", andamento:"", usuario:"", pag:0, hist:new Set(), aba:{}, 
 function foiMeu(a){ return !!USR && (a.historico || []).some(h => h.usuarioId === USR.id); }
 function leadsDoRamo(){
   return Object.entries(atribs())
-    .filter(([, a]) => a.ramoId === S.id && (ehAdm() || (USR && (a.usuarioId === USR.id || foiMeu(a)))))
+    .filter(([, a]) => a.ramoId === S.id && (ehAdm() || (USR && !emRetorno(a) && (a.usuarioId === USR.id || foiMeu(a)))))
     .map(([k, a]) => Object.assign({ chave:k, meu: ehAdm() || a.usuarioId === USR.id }, a));
 }
 function contaLeadsDoRamo(){
@@ -17700,6 +17734,12 @@ function repassarLead(a, u){
   const ref = atribs()[a.chave];
   if(!ref || ref.usuarioId !== a.usuarioId) return toast("Este lead já mudou de mãos. Atualize a tela.");
   const agora = new Date().toISOString();
+  if(emRetorno(ref)){
+    const volta = statusDeVolta();
+    registrar(ref, { t: agora, tipo:"status", anterior: ref.andamento, status: volta.id, dono: ref.usuarioId });
+    ref.andamento = volta.id;
+    delete ref.retornoEm; delete ref.retornoPor;
+  }
   ref.historico = (ref.historico || []).concat([{ usuarioId: ref.usuarioId, andamento: ref.andamento,
                                                   obs: ref.obs || "", ate: agora, para: u.id }]);
   registrar(ref, { t: agora, tipo:"repasse", status: ref.andamento, de: ref.usuarioId, dono: u.id });
@@ -17800,6 +17840,10 @@ function renderLeadsTrab(host){
   sa.append(Object.assign(el("option",null,"Fora do SLA"), {value:"__fora"}));
   statusLista().forEach(s => sa.append(Object.assign(el("option",null,s.nome), {value:s.id})));
   if(repassados.length) sa.append(Object.assign(el("option",null,"Repassados por mim"), {value:"__rep"}));
+  if(ehAdm()){
+    const nRet = todos.filter(emRetorno).length;
+    sa.append(Object.assign(el("option",null,"↩ Retornos para tratar (" + nRet + ")"), {value:"__ret"}));
+  }
   sa.value = LT.andamento;
   campo("Status", sa);
   let su = null;
@@ -17821,6 +17865,7 @@ function renderLeadsTrab(host){
     return todos.filter(a => {
       if(LT.andamento === "__rep"){ if(a.meu) return false; }
       else if(LT.andamento === "__fora"){ if(!a.meu || !foraDoSla(a)) return false; }
+      else if(LT.andamento === "__ret"){ if(!emRetorno(a)) return false; }
       else if(LT.andamento && (!a.meu || a.andamento !== LT.andamento)) return false;
       if(LT.usuario && a.usuarioId !== LT.usuario) return false;
       if(!q) return true;
@@ -17839,7 +17884,7 @@ function renderLeadsTrab(host){
 
     const tw = el("div","tablewrap"), t = el("table","leadlista lt");
     const cab = el("tr");
-    const colRepasse = pag.some(a => a.meu && stDeLead(a).repasse) || pag.some(a => !a.meu);
+    const colRepasse = pag.some(a => a.meu && (stDeLead(a).repasse || (ehAdm() && retornaAdm(stDeLead(a))))) || pag.some(a => !a.meu);
     const cols = ["Empresa","CNPJ","Cidade","Telefone","Sócios"].concat(ehAdm() ? ["Responsável"] : [])
       .concat(["Status"]).concat(colRepasse ? ["Transferir para"] : [])
       .concat(["Observação","Recebido",""]);
@@ -17889,15 +17934,34 @@ function renderLeadsTrab(host){
       s.onchange = () => {
         const ant = ref.andamento;
         if(ant === s.value) return;
+        const novo = statusPorId(s.value), vinhaDeRetorno = retornaAdm(statusPorId(ant));
+        if(retornaAdm(novo) && !ehAdm() &&
+           !confirm('"' + novo.nome + '" devolve o lead para o administrador tratar. Ele vai sair da sua lista. Continuar?')){
+          s.value = ant; return;
+        }
         ref.andamento = s.value;
         ref.atualizadoEm = new Date().toISOString();
-        registrar(ref, { t: ref.atualizadoEm, tipo:"status", anterior: ant, status: s.value, dono: ref.usuarioId });
+        registrar(ref, { t: ref.atualizadoEm, tipo:"status", anterior: ant, status: s.value, dono: ref.usuarioId,
+                         retorno: retornaAdm(novo) || undefined });
+        if(retornaAdm(novo)){
+          ref.retornoEm = ref.atualizadoEm; ref.retornoPor = USR ? USR.id : ref.usuarioId;
+          if(!ehAdm()) toast((l.razaoSocial || "Lead") + " foi enviado para o administrador tratar.");
+        } else if(vinhaDeRetorno){
+          delete ref.retornoEm; delete ref.retornoPor;
+          toast((l.razaoSocial || "Lead") + " voltou para a lista de " + nomeUsuario(ref.usuarioId) + ".");
+        }
         persist(); render();
       };
-      td.append(s); tr.append(td);
+      td.append(s);
+      if(retornaAdm(st)){
+        td.append(el("div","sub","↩ classificado por " + nomeUsuario(a.retornoPor || a.usuarioId) +
+          (a.retornoEm ? " em " + dataHora(a.retornoEm) : "")));
+        tr.classList.add("retorno");
+      }
+      tr.append(td);
       if(colRepasse){
         const tp = el("td");
-        if(st.repasse){
+        if(st.repasse || (ehAdm() && retornaAdm(st))){
           const destinos = destinosRepasse(a);
           const semAcesso = destinosRepasse(a, true).filter(u => !destinos.includes(u));
           if(destinos.length || semAcesso.length){
@@ -17986,7 +18050,8 @@ const GRAFICOS = [
   ["tempo","Tempo médio em cada status","Quanto o lead fica parado em cada etapa, contra o SLA"],
   ["transicoes","Tempo de um status até o outro","Ex.: de Proposta enviada até Ganho"],
   ["funil","Leads por status agora","Onde a carteira está hoje"],
-  ["atrasados","Leads fora do SLA agora","Os que estão há mais tempo além do prazo"]
+  ["atrasados","Leads fora do SLA agora","Os que estão há mais tempo além do prazo"],
+  ["retornos","Retornos para o ADM por dia","Quantos contatos cada usuário classificou, por dia, em status que voltam para o ADM"]
 ];
 const DASH = { dias:"30", frente:"", ramo:"", usuario:"" };
 
@@ -18012,7 +18077,7 @@ function intervalosDe(a, agora){
 
 function calcDash(f){
   const agora = Date.now();
-  const R = { porStatus:{}, porUsuario:{}, trans:{}, atrasados:[], funil:{}, ciclo:[], ativos:0, mud:0 };
+  const R = { porStatus:{}, porUsuario:{}, trans:{}, atrasados:[], funil:{}, ciclo:[], ativos:0, mud:0, retornos:{}, retornosTot:0 };
   const U = id => R.porUsuario[id] || (R.porUsuario[id] = { mud:0, ganhos:0, perdidos:0, recebidos:0, repassados:0,
                                                            cumpridos:0, estourados:0, ativos:0, fora:0 });
   const SS = id => R.porStatus[id] || (R.porStatus[id] = { n:0, soma:0, cumpridos:0, estourados:0, foraAgora:0 });
@@ -18034,6 +18099,12 @@ function calcDash(f){
         const st = statusPorId(e.status);
         if(st && st.tipo === "ganho" && doUsuario(e.dono)) U(e.dono).ganhos++;
         if(st && st.tipo === "perdido" && doUsuario(e.dono)) U(e.dono).perdidos++;
+        if(retornaAdm(st) && doUsuario(quem)){
+          const d = new Date(t), dia = d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+          const k = dia + "|" + quem;
+          const x = R.retornos[k] || (R.retornos[k] = { dia, quem, por:{}, total:0 });
+          x.por[st.id] = (x.por[st.id] || 0) + 1; x.total++; R.retornosTot++;
+        }
       } else if(e.tipo === "entrada"){
         if(doUsuario(e.dono)) U(e.dono).recebidos++;
       } else if(e.tipo === "repasse"){
@@ -18205,8 +18276,37 @@ function graficoAtrasados(R){
   if(R.atrasados.length > 25) c.append(el("p","leadshint","Mostrando 25 de " + R.atrasados.length + "."));
   return c;
 }
+function tdNegrito(t){ const d = el("td"); d.append(el("b",null,t)); return d; }
+function graficoRetornos(R){
+  const c = gCard("Retornos para o ADM por dia","Contatos que cada usuário classificou, em cada dia, num status que volta para o administrador tratar (ex.: Número incorreto).");
+  const sts = statusLista().filter(retornaAdm);
+  if(!sts.length) return gVazio(c, "Nenhum status está marcado com \"Retorna para o ADM\". Marque essa opção em Status dos leads.");
+  const linhas = Object.values(R.retornos).sort((x, y) => y.dia.localeCompare(x.dia) || nomeUsuario(x.quem).localeCompare(nomeUsuario(y.quem)));
+  if(!linhas.length) return gVazio(c, "Nenhum contato foi classificado nesses status no período.");
+  const tw = el("div","tablewrap"), t = el("table","leadlista gtab");
+  const h = el("tr");
+  ["Dia","Usuário"].concat(sts.map(x => x.nome)).concat(["Total"]).forEach(x => h.append(el("th",null,x)));
+  t.append(h);
+  const tot = {};
+  linhas.slice(0, 90).forEach(x => {
+    const tr = el("tr");
+    const [a, m, d] = x.dia.split("-");
+    tr.append(el("td",null,d + "/" + m + "/" + a), el("td",null,nomeUsuario(x.quem)));
+    sts.forEach(st => { const n = x.por[st.id] || 0; tot[st.id] = (tot[st.id] || 0) + n; tr.append(el("td",n ? null : "muted",String(n))); });
+    tr.append(tdNegrito(String(x.total)));
+    t.append(tr);
+  });
+  const tf = el("tr");
+  tf.append(tdNegrito("Total"), el("td"));
+  sts.forEach(st => tf.append(tdNegrito(String(tot[st.id] || 0))));
+  tf.append(tdNegrito(String(R.retornosTot)));
+  t.append(tf);
+  tw.append(t); c.append(tw);
+  if(linhas.length > 90) c.append(el("p","leadshint","Mostrando os 90 dias/usuários mais recentes de " + linhas.length + ". Use o filtro de período."));
+  return c;
+}
 const DESENHA_GRAFICO = { produtividade:graficoProdutividade, slaUsuario:graficoSlaUsuario, slaStatus:graficoSlaStatus,
-  tempo:graficoTempo, transicoes:graficoTransicoes, funil:graficoFunil, atrasados:graficoAtrasados };
+  tempo:graficoTempo, transicoes:graficoTransicoes, funil:graficoFunil, atrasados:graficoAtrasados, retornos:graficoRetornos };
 
 function kpis(host, R){
   const tot = Object.values(R.porUsuario).reduce((s, u) => s + u.cumpridos + u.estourados, 0);
@@ -18219,6 +18319,7 @@ function kpis(host, R){
    [tot ? Math.round(ok / tot * 100) + "%" : "—", "das etapas no prazo", tot && ok / tot < .7 ? "ruim" : ""],
    [String(R.mud), "mudanças de status", ""],
    [String(ganhos), "ganhos", ""],
+   [String(R.retornosTot), "retornos ao ADM", ""],
    [ciclo ? fmtDur(ciclo) : "—", "da entrada até o ganho, em média", ""]
   ].forEach(([v, l, cls]) => { const d = el("div","gkpi " + cls); d.append(el("b",null,v), el("span",null,l)); k.append(d); });
   host.append(k);
@@ -18297,15 +18398,76 @@ function pickDashboard(host){
   host.append(g);
 }
 
+/* ---------- tela: cadastro de status (tela inicial) ---------- */
+function pickStatus(host){
+  if(!ehAdm()){ pickEtapa = "frentes"; return pickFrentes(host); }
+  trilha(host, ["Status dos leads"], "frentes");
+  const hd = el("div","pickhead");
+  hd.append(el("h1",null,"Status dos leads"));
+  hd.append(el("p",null,"Inclua um status com + Novo status, altere o nome, o prazo e o tipo direto na tabela, e exclua o que não usa mais. A ordem da tabela é a ordem em que os status aparecem para o SDR."));
+  host.append(hd);
+  blocoStatusSla(host);
+}
+
+/* ---------- tela: retornos para o ADM tratar ---------- */
+function pickRetornos(host){
+  if(!ehAdm()){ pickEtapa = "frentes"; return pickFrentes(host); }
+  trilha(host, ["Retornos para tratar"], "frentes");
+  const hd = el("div","pickhead");
+  hd.append(el("h1",null,"Retornos para tratar"));
+  hd.append(el("p",null,"Leads que voltaram para você porque o SDR escolheu um status marcado com \"Retorna para o ADM\". Abra o ramo, corrija o contato e: mude o status (o lead volta para o mesmo SDR), use Transferir para (vai para outro usuário) ou Devolver (volta para a Base)."));
+  host.append(hd);
+  const sts = statusLista().filter(retornaAdm);
+  if(!sts.length){
+    const n = el("div","note");
+    n.append(el("div","txt","Nenhum status está marcado com \"Retorna para o ADM\" ainda. Vá em Status dos leads e marque essa opção, por exemplo, em \"Número incorreto\"."));
+    const b = el("button","btn primary sm","Abrir Status dos leads");
+    b.onclick = () => { pickEtapa = "status"; desenhaPicker(); };
+    n.append(b); host.append(n);
+    return;
+  }
+  const grupos = {};
+  Object.values(atribs()).filter(emRetorno).forEach(a => {
+    const k = a.frenteId + "|" + a.ramoId;
+    const g = grupos[k] || (grupos[k] = { f:a.frenteId, r:a.ramoId, n:0, por:{}, sdr:{} });
+    g.n++; g.por[a.andamento] = (g.por[a.andamento] || 0) + 1;
+    const q = a.retornoPor || a.usuarioId; g.sdr[q] = (g.sdr[q] || 0) + 1;
+  });
+  const lista = Object.values(grupos).map(g => Object.assign(g, { x: acharRamo(g.f, g.r) })).filter(g => g.x)
+    .sort((a, b) => b.n - a.n);
+  const bloco = el("div","pickbloco");
+  if(!lista.length){ bloco.append(el("p","leadshint","Nenhum contato pendente. Tudo tratado! ✅")); host.append(bloco); return; }
+  const tw = el("div","tablewrap"), t = el("table","leadlista gtab");
+  const h = el("tr");
+  ["Vertical","Ramo"].concat(sts.map(s => s.nome)).concat(["Total","Classificados por",""]).forEach(x => h.append(el("th",null,x)));
+  t.append(h);
+  lista.forEach(g => {
+    const tr = el("tr");
+    tr.append(el("td",null,g.x.f.nome), el("td",null,g.x.r.nome));
+    sts.forEach(s => tr.append(el("td",g.por[s.id] ? null : "muted",String(g.por[s.id] || 0))));
+    tr.append(tdNegrito(String(g.n)));
+    tr.append(el("td","muted",Object.entries(g.sdr).map(([u, n]) => nomeUsuario(u) + " (" + n + ")").join(", ")));
+    const tb = el("td"), b = el("button","btn primary sm","Tratar");
+    b.onclick = () => {
+      ativarFrente(g.f, g.r);
+      LT.andamento = "__ret"; LT.usuario = ""; LT.busca = ""; LT.pag = 0;
+      fecharPicker(); persist(); go("leadstrab");
+    };
+    tb.append(b); tr.append(tb);
+    t.append(tr);
+  });
+  tw.append(t); bloco.append(tw); host.append(bloco);
+}
+
 /* ---------- cadastro: status e SLA (fica em Usuários e perfis) ---------- */
 function blocoStatusSla(host){
   const bs = el("div","consbloco");
   bs.append(el("h2",null,"Status dos leads e SLA"));
-  bs.append(el("p","sub","Os status que aparecem na coluna Status dos Leads a trabalhar, para SDRs e demais perfis. O prazo é o tempo máximo que o lead pode ficar parado em cada um: dentro dele a barra fica amarela, passando dele fica vermelha."));
+  bs.append(el("p","sub","Os status que aparecem na coluna Status dos Leads a trabalhar, para SDRs e demais perfis. O prazo é o tempo máximo que o lead pode ficar parado em cada um: dentro dele a barra fica amarela, passando dele fica vermelha. Marque \"Retorna para o ADM\" nos status em que o contato precisa voltar para o administrador tratar (ex.: Número incorreto): quando o SDR escolhe esse status, o lead sai da lista dele e aparece em Retornos para tratar."));
   const box = el("div","pickbloco");
   const tw = el("div","tablewrap"), t = el("table","ed utab stab");
   const h = el("tr");
-  ["","Status","Prazo máximo (horas)","Tipo","Libera repasse","Leads agora",""].forEach(x => h.append(el("th",null,x)));
+  ["","Status","Prazo máximo (horas)","Tipo","Libera repasse","Retorna para o ADM","Leads agora",""].forEach(x => h.append(el("th",null,x)));
   const th = el("thead"); th.append(h); t.append(th);
   const tb = el("tbody");
   const uso = {};
@@ -18349,6 +18511,16 @@ function blocoStatusSla(host){
     cb.onchange = () => { s.repasse = cb.checked; persist(); };
     tr2.append(cb); tr.append(tr2);
 
+    const tr3 = el("td","c"), cr = el("input"); cr.type = "checkbox"; cr.checked = !!s.retornaAdm;
+    cr.title = "Clientes retornam para tratamento: o lead sai da lista do SDR e volta para o ADM";
+    cr.onchange = () => {
+      if(cr.checked && s === statusDeVolta() && lista.filter(x => x.tipo === "aberto" && !x.retornaAdm).length === 1){
+        cr.checked = false; return toast("Mantenha ao menos um status em aberto que não retorne para o ADM.");
+      }
+      s.retornaAdm = cr.checked; persist(); redesenharPicker();
+    };
+    tr3.append(cr); tr.append(tr3);
+
     tr.append(el("td","muted", String(uso[s.id] || 0)));
     const tx = el("td"), bx = el("button","btn sm danger","Excluir");
     bx.onclick = () => {
@@ -18367,7 +18539,7 @@ function blocoStatusSla(host){
     const nome = prompt("Nome do novo status:", "");
     if(nome === null || !nome.trim()) return;
     const pos = lista.findIndex(x => x.tipo !== "aberto");
-    const novo = { id: novoIdUsr("st"), nome: nome.trim(), sla: 24, tipo:"aberto", repasse:false };
+    const novo = { id: novoIdUsr("st"), nome: nome.trim(), sla: 24, tipo:"aberto", repasse:false, retornaAdm:false };
     if(pos < 0) lista.push(novo); else lista.splice(pos, 0, novo);
     persist(); redesenharPicker();
   };
