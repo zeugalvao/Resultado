@@ -973,6 +973,21 @@ ol.logl li{display:flex;gap:10px;flex-wrap:wrap}
 ol.logl time{color:var(--muted);font-variant-numeric:tabular-nums;min-width:108px}
 ol.logl em{color:var(--muted);font-style:normal}
 ol.logl em::before{content:"· "}
+.ltlinhas{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:0 0 20px;display:flex;flex-direction:column;gap:12px}
+.ltlinha{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap}
+.ltlinha .lttit{flex:0 0 170px;display:flex;flex-direction:column;justify-content:center}
+.ltlinha .lttit b{font-size:13.5px;font-weight:600}
+.ltlinha .lttit small{font-size:11.5px;color:var(--muted);line-height:1.3}
+.ltlinha .lttit select{margin-top:4px;font-size:12px;padding:3px 6px;max-width:150px}
+.ltchip{flex:1 1 120px;min-width:110px;background:var(--surface);border:1px solid var(--line-soft);border-radius:7px;padding:9px 12px;display:flex;flex-direction:column;gap:1px;text-align:left;font:inherit;color:inherit;cursor:pointer}
+.ltchip:hover{border-color:var(--line)}
+.ltchip.on{outline:2px solid var(--accent, #1f7a6c);outline-offset:-1px}
+.ltchip b{font-size:21px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.ltchip span{font-size:11.5px;color:var(--muted);line-height:1.3}
+.ltchip.ruim b{color:var(--brick)}
+.ltchip.alerta b{color:#b7791f}
+.ltchip.fixo{cursor:default}
+.ltaviso{font-size:12.5px;color:var(--brick);margin:0}
 .gpessoal{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px 18px;margin:0 0 20px}
 .gpcab{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:12px}
 .gpcab h4{margin:0;font-size:15px;font-weight:600}
@@ -17677,6 +17692,25 @@ function moverLead(ref, u, agora, auto){
   ref.repassadoEm = agora;
   ref.usuarioId = u.id;
 }
+/* lead em status de retorno que está com um SDR (classificado antes da transferência
+   automática, ou devolvido pelo ADM sem trocar o status): volta para um status em aberto */
+function repararRetornos(){
+  let n = 0;
+  Object.values(atribs()).forEach(ref => {
+    if(!emRetorno(ref)) return;
+    const dono = (DB.usuarios || []).find(u => u.id === ref.usuarioId);
+    if(!dono || (perfilDe(dono) || {}).adm) return;
+    const volta = statusDeVolta(), agora = new Date().toISOString();
+    registrar(ref, { t: agora, tipo:"status", anterior: ref.andamento, status: volta.id, dono: ref.usuarioId, por: null });
+    ref.andamento = volta.id; ref.atualizadoEm = agora;
+    delete ref.retornoEm; delete ref.retornoPor;
+    n++;
+  });
+  return n;
+}
+function leadForaSla(a){ const st = stDeLead(a), s = slaMs(st); return !!s && Date.now() - inicioAtual(a) > s; }
+/* status de entrada: o lead chega "sem ação" para quem recebe (Base ou repasse) */
+function statusEntrada(){ return statusDeVolta(); }
 function totalRetornos(){ return Object.values(atribs()).filter(emRetorno).length; }
 function encerrado(a){ const s = statusPorId(a.andamento); return !!s && s.tipo !== "aberto"; }
 function slaMs(st){ return st && st.tipo === "aberto" && num(st.sla) > 0 ? num(st.sla) * HORA : 0; }
@@ -17710,6 +17744,8 @@ function inicioAtual(a){
 /* leads antigos, de antes do log, ganham um histórico aproximado */
 function migrarStatusLeads(){
   statusLista();
+  const sn = statusPorId("st_novo");
+  if(sn && !sn.nenhumOk){ if(sn.nome === "Novo") sn.nome = "Nenhum"; sn.nenhumOk = true; }
   const porNome = {};
   statusLista().forEach(s => { porNome[baseChave(s.nome)] = s.id; });
   const mapear = v => statusPorId(v) ? v : (porNome[baseChave(v || "Novo")] || statusInicial().id);
@@ -17739,7 +17775,7 @@ const LT = { busca:"", andamento:"", usuario:"", pag:0, hist:new Set(), aba:{}, 
 function foiMeu(a){ return !!USR && (a.historico || []).some(h => h.usuarioId === USR.id); }
 function leadsDoRamo(){
   return Object.entries(atribs())
-    .filter(([, a]) => a.ramoId === S.id && (ehAdm() || (USR && !emRetorno(a) && (a.usuarioId === USR.id || foiMeu(a)))))
+    .filter(([, a]) => a.ramoId === S.id && (ehAdm() || (USR && (a.usuarioId === USR.id || (!emRetorno(a) && foiMeu(a))))))
     .map(([k, a]) => Object.assign({ chave:k, meu: ehAdm() || a.usuarioId === USR.id }, a));
 }
 function contaLeadsDoRamo(){
@@ -17763,10 +17799,19 @@ function repassarLead(a, u){
     registrar(ref, { t: agora, tipo:"status", anterior: ref.andamento, status: volta.id, dono: ref.usuarioId });
     ref.andamento = volta.id;
     delete ref.retornoEm; delete ref.retornoPor;
+    if(u.id === ref.usuarioId){
+      ref.atualizadoEm = agora;
+      persist(); render();
+      return toast((a.lead && a.lead.razaoSocial ? a.lead.razaoSocial : "Lead") + " voltou para a lista de " + u.nome + ", em " + volta.nome + ".");
+    }
   }
+  const entrada = statusEntrada();
   ref.historico = (ref.historico || []).concat([{ usuarioId: ref.usuarioId, andamento: ref.andamento,
                                                   obs: ref.obs || "", ate: agora, para: u.id }]);
-  registrar(ref, { t: agora, tipo:"repasse", status: ref.andamento, de: ref.usuarioId, dono: u.id });
+  /* quem repassou fica com o status em que entregou (ex.: Reunião marcada);
+     quem recebe começa em "Nenhum", porque ainda não fez nenhuma ação */
+  registrar(ref, { t: agora, tipo:"repasse", statusAnt: ref.andamento, status: entrada.id, de: ref.usuarioId, dono: u.id });
+  ref.andamento = entrada.id;
   ref.repassadoPor = ref.usuarioId;
   ref.repassadoEm = agora;
   ref.usuarioId = u.id;
@@ -17791,7 +17836,7 @@ function textoEvento(e){
   if(e.tipo === "entrada") return "Entrou para " + nomeUsuario(e.dono) + " como " + nomeStatus(e.status) + (e.aprox ? " (data aproximada)" : "");
   if(e.tipo === "status") return quem + " mudou de " + nomeStatus(e.anterior) + " para " + nomeStatus(e.status) + (e.aprox ? " (data aproximada)" : "");
   if(e.tipo === "repasse") return nomeUsuario(e.de) + (e.auto ? " classificou como " + nomeStatus(e.status) + " e o lead foi transferido automaticamente para " + nomeUsuario(e.dono)
-                                                         : " repassou para " + nomeUsuario(e.dono) + ", em " + nomeStatus(e.status));
+                                                         : " repassou para " + nomeUsuario(e.dono) + (e.statusAnt ? " (entregou em " + nomeStatus(e.statusAnt) + "; chega como " + nomeStatus(e.status) + ")" : ", em " + nomeStatus(e.status)));
   if(e.tipo === "devolucao") return quem + " devolveu para a Base";
   if(e.tipo === "whatsapp") return quem + " abriu conversa no WhatsApp com " + (e.tel || "o contato");
   if(e.tipo === "conversa") return quem + " importou a conversa do WhatsApp (" + (e.novas || 0) + " mensagens novas, arquivo " + (e.arquivo || "") + ")";
@@ -17839,6 +17884,81 @@ function linhaSoHistorico(a, colunas){
   return tr;
 }
 
+const LT_PERIODOS = [["1","Hoje"],["7","Últimos 7 dias"],["30","Últimos 30 dias"],["0","Desde o início"]];
+if(LT.periodo == null) LT.periodo = "1";
+function linhasDoPainel(todos){
+  const box = el("div","ltlinhas");
+  const alvo = ehAdm() ? (LT.usuario || "") : (USR ? USR.id : "");
+  const doAlvo = id => !alvo || id === alvo;
+  const quem = ehAdm() ? (alvo ? nomeUsuario(alvo) : "toda a equipe") : "você";
+  const entrada = statusEntrada();
+
+  const filtro = (v) => { LT.andamento = LT.andamento === v ? "" : v; LT.pag = 0; render(); };
+  const chip = (valor, rot, cls, filtroV) => {
+    const b = el("button","ltchip " + (cls || "") + (filtroV && LT.andamento === filtroV ? " on" : "") + (filtroV ? "" : " fixo"));
+    b.type = "button"; b.dataset.livre = "1";
+    b.append(el("b",null,String(valor)), el("span",null,rot));
+    if(filtroV) b.onclick = () => filtro(filtroV);
+    return b;
+  };
+
+  /* ---- linha 1: na lista agora ---- */
+  const ativos = todos.filter(a => a.meu && doAlvo(a.usuarioId) && !encerrado(a) && !emRetorno(a));
+  const atrasados = ativos.filter(leadForaSla);
+  const nenhum = ativos.filter(a => a.andamento === entrada.id && !leadForaSla(a));
+  const contato = ativos.filter(a => a.andamento !== entrada.id && !leadForaSla(a));
+  const hojeIni = new Date(); hojeIni.setHours(0,0,0,0);
+  const recebidosHoje = ativos.filter(a => Date.parse(a.repassadoEm || a.em) >= hojeIni.getTime()).length;
+  const l1 = el("div","ltlinha");
+  const t1 = el("div","lttit");
+  t1.append(el("b",null,"Na lista agora"), el("small",null, (ehAdm() ? "de " + quem + " · " : "") + "clique para filtrar"));
+  l1.append(t1);
+  l1.append(chip(nenhum.length, entrada.nome + " · sem ação ainda", nenhum.length > 20 ? "alerta" : "", "__entrada"));
+  l1.append(chip(contato.length, "Em contato · em andamento no prazo", "", "__andamento"));
+  l1.append(chip(atrasados.length, "Atrasados · passaram do SLA", atrasados.length ? "ruim" : "", "__fora"));
+  l1.append(chip(ativos.length, "Total na lista · " + recebidosHoje + " recebidos hoje", ativos.length > 40 ? "alerta" : ""));
+  box.append(l1);
+
+  /* ---- linha 2: já saíram da lista (repassados e encerrados), pelo status em que saíram ---- */
+  const dias = parseInt(LT.periodo, 10) || 0;
+  const desde = dias === 1 ? hojeIni.getTime() : (dias ? Date.now() - dias * 24 * HORA : 0);
+  const saiu = {};
+  const somar = (stId) => { saiu[stId] = (saiu[stId] || 0) + 1; };
+  const fontes = Object.values(atribs()).map(a => ({ a, ativo:true }))
+    .concat(Object.values(DB.logArquivo || {}).filter(a => !a.cancelado).map(a => ({ a, ativo:false })));
+  fontes.forEach(({ a, ativo }) => {
+    if(a.ramoId !== S.id) return;
+    const passagens = (a.historico && a.historico.length) ? a.historico.map(h => ({ de:h.usuarioId, st:h.andamento, t:h.ate }))
+      : (a.log || []).filter(e => e.tipo === "repasse").map(e => ({ de:e.de, st:e.statusAnt || e.status, t:e.t }));
+    passagens.forEach(p => { if(doAlvo(p.de) && Date.parse(p.t) >= desde) somar(p.st); });
+    /* encerrados (ganho / perdido) que continuam com a pessoa */
+    if(ativo && encerrado(a) && doAlvo(a.usuarioId) && Date.parse(a.atualizadoEm || a.em) >= desde) somar(a.andamento);
+  });
+  const l2 = el("div","ltlinha");
+  const t2 = el("div","lttit");
+  t2.append(el("b",null,"Já saíram da lista"), el("small",null,"pelo status em que " + (quem === "você" ? "você entregou" : "foram entregues")));
+  const sp = el("select"); sp.dataset.livre = "1";
+  LT_PERIODOS.forEach(([v, r]) => sp.append(Object.assign(el("option",null,r), {value:v})));
+  sp.value = LT.periodo; sp.onchange = () => { LT.periodo = sp.value; render(); };
+  t2.append(sp);
+  l2.append(t2);
+  const ordem = statusLista().filter(st => saiu[st.id]);
+  Object.keys(saiu).filter(id => !statusPorId(id)).forEach(id => ordem.push({ id, nome: nomeStatus(id) }));
+  if(!ordem.length) l2.append(chip(0, "Nenhum lead saiu da lista no período", ""));
+  ordem.forEach(st => {
+    const tipo = (statusPorId(st.id) || {}).tipo;
+    l2.append(chip(saiu[st.id], st.nome + (retornaAdm(st) ? " · voltou ao ADM" : tipo === "ganho" ? " · ganho" : tipo === "perdido" ? " · perdido" : " · repassado"),
+      tipo === "perdido" || retornaAdm(st) ? "ruim" : ""));
+  });
+  const tot = Object.values(saiu).reduce((x, y) => x + y, 0);
+  if(ordem.length) l2.append(chip(tot, "Total que saiu", ""));
+  box.append(l2);
+
+  if(!ehAdm() && nenhum.length + atrasados.length > 20)
+    box.append(el("p","ltaviso","Você tem " + (nenhum.length + atrasados.length) + " leads sem ação ou atrasados. Trabalhe primeiro os atrasados, depois os em \"" + entrada.nome + "\"."));
+  return box;
+}
+
 function renderLeadsTrab(host){
   const todos = leadsDoRamo();
   const meus = todos.filter(a => a.meu), repassados = todos.filter(a => !a.meu);
@@ -17852,6 +17972,8 @@ function renderLeadsTrab(host){
     return;
   }
 
+  /* as 2 linhas: o que está na mão agora e o que já saiu da lista */
+  host.append(linhasDoPainel(todos));
   /* painel pessoal: quanto tempo os leads ficam parados em cada status */
   host.append(painelPessoal());
   host.append(barraPastaConversas());
@@ -17888,7 +18010,10 @@ function renderLeadsTrab(host){
   const filtrar = () => {
     const q = baseChave(LT.busca);
     return todos.filter(a => {
+      if(!LT.andamento && !a.meu) return false;
       if(LT.andamento === "__rep"){ if(a.meu) return false; }
+      else if(LT.andamento === "__entrada"){ if(!a.meu || a.andamento !== statusEntrada().id || foraDoSla(a)) return false; }
+      else if(LT.andamento === "__andamento"){ if(!a.meu || encerrado(a) || emRetorno(a) || a.andamento === statusEntrada().id || foraDoSla(a)) return false; }
       else if(LT.andamento === "__fora"){ if(!a.meu || !foraDoSla(a)) return false; }
       else if(LT.andamento === "__ret"){ if(!emRetorno(a)) return false; }
       else if(LT.andamento && (!a.meu || a.andamento !== LT.andamento)) return false;
@@ -17998,11 +18123,14 @@ function renderLeadsTrab(host){
         if(st.repasse || (ehAdm() && retornaAdm(st))){
           const destinos = destinosRepasse(a);
           const semAcesso = destinosRepasse(a, true).filter(u => !destinos.includes(u));
-          if(destinos.length || semAcesso.length){
+          const quemClassif = ehAdm() && retornaAdm(st)
+            ? (DB.usuarios || []).find(u => u.id === (a.retornoPor || a.repassadoPor || a.usuarioId) && u.ativo !== false && !(perfilDe(u) || {}).adm) : null;
+          if(destinos.length || semAcesso.length || quemClassif){
             const sr = el("select","repsel");
             sr.append(Object.assign(el("option",null,"Escolher…"), {value:""}));
+            if(quemClassif) sr.append(Object.assign(el("option",null,"↩ Devolver para " + quemClassif.nome), {value:quemClassif.id}));
             let g = null, og = null;
-            destinos.slice().sort((x, y) => String((perfilDe(x)||{}).nome).localeCompare(String((perfilDe(y)||{}).nome)) || x.nome.localeCompare(y.nome))
+            destinos.filter(u => u !== quemClassif).sort((x, y) => String((perfilDe(x)||{}).nome).localeCompare(String((perfilDe(y)||{}).nome)) || x.nome.localeCompare(y.nome))
               .forEach(u => {
                 const pn = (perfilDe(u) || {}).nome || "Sem perfil";
                 if(pn !== g){ g = pn; og = el("optgroup"); og.label = pn; sr.append(og); }
@@ -18014,7 +18142,7 @@ function renderLeadsTrab(host){
               sr.append(og2);
             }
             sr.onchange = () => {
-              const u = destinos.find(x => x.id === sr.value);
+              const u = destinos.find(x => x.id === sr.value) || (quemClassif && quemClassif.id === sr.value ? quemClassif : null);
               if(!u){ sr.value = ""; return; }
               const txt = "Repassar " + (l.razaoSocial || "este lead") + " para " + u.nome + "?" +
                 (ehAdm() ? "" : " Depois disso você não trabalha mais este lead.");
@@ -19064,6 +19192,10 @@ function carregarDB(bruto){
   fotografarBase();
   await firmarArmazenamento();
   const logado = iniciarSessao();
+  if(logado && ehAdm()){
+    const n = repararRetornos();
+    if(n) setTimeout(() => toast(n + (n === 1 ? " lead devolvido ao SDR voltou" : " leads devolvidos aos SDRs voltaram") + " para \"" + statusDeVolta().nome + "\" e já aparecem na lista deles."), 800);
+  }
   render();
   fecharPicker();
 
