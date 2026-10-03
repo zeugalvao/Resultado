@@ -7616,6 +7616,7 @@ function pickBase(host){
   btRestaurar.onclick = () => arquivoCopia.click();
   arquivoCopia.onchange = () => { baseRestaurar(arquivoCopia.files[0]); arquivoCopia.value = ""; };
 
+  BASE.niveis = new Set(["Quente","Morno","Frio"]);            /* ao abrir a Base, mostra todos os níveis de score */
   BASE.ui = { aviso, selRamo, selUf, selCidade, estados, numeros, conteudo, abaEmpresas, abaRedes,
               btBaixar, btImportar, relatorio, btCopia, btRestaurar };
 
@@ -7731,7 +7732,7 @@ function basePintarEstados(resumo){
     if(e.uf !== "--"){
       linha.title = "Abrir os leads de " + e.uf;
       linha.onclick = () => {
-        BASE.visao = "empresas"; BASE.rolar = true; BASE.mostrar = "disp";
+        BASE.visao = "empresas"; BASE.rolar = true; BASE.mostrar = "disp"; BASE.niveis = new Set(["Quente","Morno","Frio"]); BASE.pag = 0;
         u.selUf.value = e.uf;
         u.selCidade.value = "";
         BASE.filtro = { ramo: u.selRamo.value, uf: e.uf, cidade: "" };
@@ -16890,6 +16891,11 @@ async function baseListaEmpresas(){
     BASE.mostrar === "atu" ? emAt(r) :
     BASE.mostrar === "inc" ? (!emAt(r) && !contatoValido(r)) :
     transferivel(r));
+  if(!BASE.niveis || !BASE.niveis.size) BASE.niveis = new Set(["Quente","Morno","Frio"]);
+  const porNivel = { Quente:0, Morno:0, Frio:0 };
+  visiveis.forEach(r => { porNivel[scoreDe(r).nivel]++; });
+  const filtrandoNivel = BASE.niveis.size < 3;
+  if(filtrandoNivel) visiveis = visiveis.filter(r => BASE.niveis.has(scoreDe(r).nivel));
   if(BASE.ordem === "score") visiveis = visiveis.slice().sort((a, b) => scoreDe(b).pts - scoreDe(a).pts);
   const paginas = Math.max(1, Math.ceil(visiveis.length / BASE_POR_PAGINA));
   if(BASE.pag >= paginas) BASE.pag = paginas - 1;
@@ -16913,6 +16919,28 @@ async function baseListaEmpresas(){
     ord.append(b);
   });
   barra.append(ord);
+
+  /* filtro por nível de score: começa com todos; clique liga/desliga cada nível */
+  const fn = el("span","ltord");
+  fn.append(document.createTextNode("Score:"));
+  const bTodos = el("button","btn sm" + (filtrandoNivel ? " ghost" : " primary"), "Todos");
+  bTodos.onclick = () => { BASE.niveis = new Set(["Quente","Morno","Frio"]); BASE.pag = 0; baseListaEmpresas(); };
+  fn.append(bTodos);
+  [["Quente","q"],["Morno","m"],["Frio","f"]].forEach(([nv, c]) => {
+    const on = filtrandoNivel && BASE.niveis.has(nv);
+    const b = el("button","btn sm" + (on ? " primary" : " ghost"));
+    b.append(el("span","scorepill " + c, nv + "s · " + porNivel[nv].toLocaleString("pt-BR")));
+    b.title = on ? "Clique para tirar os " + nv.toLowerCase() + "s do filtro" : "Clique para listar os " + nv.toLowerCase() + "s";
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.onclick = () => {
+      if(!filtrandoNivel) BASE.niveis = new Set([nv]);          /* saindo de "Todos": começa só com este */
+      else if(BASE.niveis.has(nv)){ if(BASE.niveis.size === 1) BASE.niveis = new Set(["Quente","Morno","Frio"]); else BASE.niveis.delete(nv); }
+      else BASE.niveis.add(nv);
+      BASE.pag = 0; baseListaEmpresas();
+    };
+    fn.append(b);
+  });
+  barra.append(fn);
 
   let cont = null, btT = null;
   const atualizarSel = () => {
@@ -16960,7 +16988,7 @@ async function baseListaEmpresas(){
   if(BASE.mostrar === "atu" && ehAdm()) u.conteudo.append(painelTransferencias());
 
   if(!visiveis.length){
-    u.conteudo.append(el("p","leadshint",
+    u.conteudo.append(el("p","leadshint", filtrandoNivel ? "Nenhum lead com esse score neste recorte. Clique em Todos para ver a lista completa." :
       BASE.mostrar === "atu" ? "Nenhum lead deste recorte está em atuação." :
       BASE.mostrar === "inc" ? "Nenhum contato incompleto neste recorte: todos têm telefone." :
       "Nenhum contato válido disponível neste recorte. Os que sobraram estão sem telefone ou já em atuação."));
