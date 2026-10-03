@@ -16979,7 +16979,10 @@ async function baseListaEmpresas(){
     const btR = el("button","btn","Qualificar marcados");
     btR.title = "Consulta a Receita e o entorno, calcula o score e aplica os requisitos (LTDA e 6 meses de CNPJ)";
     btR.onclick = () => abrirConsultaRequisitos();
-    sel.append(q, bm, bl, cont, btR, btT);
+    const btRT = el("button","btn sm ghost","Qualificar todo o recorte");
+    btRT.title = "Atualiza o score de todos os contatos válidos do estado/cidade escolhido, sem precisar marcar";
+    btRT.onclick = () => abrirConsultaRequisitos(true);
+    sel.append(q, bm, bl, cont, btR, btT, btRT);
     barra.append(sel);
   }
   u.conteudo.append(barra);
@@ -17516,9 +17519,12 @@ function painelCotaDiaria(){
   return box;
 }
 
-function abrirConsultaRequisitos(){
-  const escolhidos = (BASE.lista || []).filter(r => BASE.sel.has(cnpjDig(r.cnpj)) && !atribDe(r) && contatoValido(r));
-  if(!escolhidos.length) return toast("Marque ao menos um contato válido para consultar.");
+function abrirConsultaRequisitos(todos){
+  const escolhidos = (BASE.lista || []).filter(r => (todos || BASE.sel.has(cnpjDig(r.cnpj))) && !atribDe(r) && contatoValido(r));
+  if(!escolhidos.length) return toast(todos ? "Nenhum contato válido neste recorte." : "Marque ao menos um contato válido para consultar.");
+  qualifTodos();
+  const semReceita = escolhidos.filter(r => !REQ.cache[cnpjDig(r.cnpj)]).length;
+  const semEntorno = escolhidos.filter(r => !(qualifDe(cnpjDig(r.cnpj)) || {}).entorno).length;
   const stFora = statusLista().find(foraReq), stCnpj = statusLista().find(pedeData);
   if(!stFora || !stCnpj) return toast("Faltam os status \"Lead fora do requisito\" ou \"Falta tempo de CNPJ aberto\" em Status dos leads.");
   const adm = (USR && ehAdm()) ? USR : (DB.usuarios || []).find(u => u.ativo !== false && (perfilDe(u) || {}).adm);
@@ -17531,8 +17537,16 @@ function abrirConsultaRequisitos(){
   const fechar = () => { if(rodando){ cancelar = true; return; } fundo.remove(); baseListaEmpresas(); };
   fundo.onclick = ev => { if(ev.target === fundo && !rodando) fechar(); };
 
-  caixa.append(el("h3",null,"Qualificar " + escolhidos.length + (escolhidos.length === 1 ? " lead marcado" : " leads marcados")));
-  caixa.append(el("p","sub","Busca na Receita a natureza, a abertura, o porte, o capital e os sócios de cada CNPJ, calcula o score de potencial e aplica os requisitos:"));
+  caixa.append(el("h3",null, todos
+    ? "Qualificar todo o recorte: " + escolhidos.length.toLocaleString("pt-BR") + " contatos válidos"
+    : "Qualificar " + escolhidos.length + (escolhidos.length === 1 ? " lead marcado" : " leads marcados")));
+  caixa.append(el("p","sub","Busca na Receita a natureza, a abertura, o porte, o capital e os sócios de cada CNPJ e calcula o score de potencial." +
+    " Faltam dados da Receita em " + semReceita.toLocaleString("pt-BR") + " e do entorno em " + semEntorno.toLocaleString("pt-BR") +
+    ". Os já consultados não são buscados de novo."));
+  const lbReq = el("label","tchk"), cbReq = el("input"); cbReq.type = "checkbox"; cbReq.checked = !todos;
+  lbReq.append(cbReq, document.createTextNode(" Aplicar os requisitos (os que não são LTDA ou têm menos de 6 meses vão para o ADM)"));
+  lbReq.style.cssText = "display:flex;gap:8px;align-items:flex-start;font-size:13px;margin:10px 0 4px";
+  caixa.append(lbReq);
   const regras = el("div","tconf");
   regras.innerHTML = "<b>Não é LTDA</b> → vai para " + esc(adm.nome) + " em <b>Lead fora do requisito</b>.<br>" +
     "<b>LTDA com menos de 6 meses</b> → vai para " + esc(adm.nome) + " em <b>Aguardando tempo de CNPJ</b>, com a data em que completa 6 meses.<br>" +
@@ -17548,10 +17562,19 @@ function abrirConsultaRequisitos(){
   });
   if(F && S) selR.value = F.id + "|" + S.id;
   caixa.append(el("div","trot","Ramo onde ficam os leads devolvidos"), selR);
-  const lbE = el("label","tchk"), cbE = el("input"); cbE.type = "checkbox"; cbE.checked = true;
+  const lbE = el("label","tchk"), cbE = el("input"); cbE.type = "checkbox"; cbE.checked = !todos;
   lbE.append(cbE, document.createTextNode(" Medir o movimento do entorno (transporte, shopping, supermercado, faculdade e hospital a até 600 m, pelo OpenStreetMap). Leva cerca de 3 segundos por lead."));
   lbE.style.cssText = "display:flex;gap:8px;align-items:flex-start;font-size:13px;margin:10px 0";
   caixa.append(lbE);
+  const estim = el("p","sub");
+  const atualizarEstim = () => {
+    const seg = semReceita * 1.2 + (cbE.checked ? semEntorno * 3.2 : 0);
+    estim.textContent = "Tempo estimado: " + (seg < 90 ? Math.max(1, Math.round(seg)) + " segundos" : seg < 5400 ? Math.round(seg / 60) + " minutos" : (seg / 3600).toFixed(1).replace(".", ",") + " horas") +
+      ". Deixe esta aba aberta. Se parar no meio, é só rodar de novo: continua de onde parou.";
+  };
+  cbE.onchange = atualizarEstim; atualizarEstim();
+  regras.hidden = !cbReq.checked; cbReq.onchange = () => { regras.hidden = !cbReq.checked; };
+  caixa.append(estim);
 
   const prog = el("p","sub"), barra = el("div","basebarra"), cheio = el("i");
   barra.style.cssText = "height:6px;background:var(--line-soft);border-radius:4px;overflow:hidden;margin:8px 0";
@@ -17567,18 +17590,34 @@ function abrirConsultaRequisitos(){
   document.body.append(fundo);
 
   bOk.onclick = async () => {
-    rodando = true; bOk.disabled = true; selR.disabled = true; cbE.disabled = true; bC.textContent = "Parar"; barra.hidden = false;
-    const comEntorno = cbE.checked, niveis = { Quente:0, Morno:0, Frio:0 }, frios = [];
+    rodando = true; bOk.disabled = true; selR.disabled = true; cbE.disabled = true; cbReq.disabled = true; bC.textContent = "Parar"; barra.hidden = false;
+    const comEntorno = cbE.checked, aplicarReq = cbReq.checked, niveis = { Quente:0, Morno:0, Frio:0 }, frios = [];
+    const t0 = Date.now();
     const [fid, rid] = selR.value.split("|");
     const cont = { ok:0, fora:0, aguarda:0, erro:0 };
     const lote = "rq" + Date.now().toString(36);
     for(let i = 0; i < escolhidos.length; i++){
       if(cancelar) break;
       const r = escolhidos[i], k = cnpjDig(r.cnpj);
-      prog.textContent = "Consultando " + (i + 1) + " de " + escolhidos.length + ": " + (r.razaoSocial || r.cnpj);
+      const resta = i > 3 ? Math.round((Date.now() - t0) / i * (escolhidos.length - i) / 60000) : null;
+      prog.textContent = "Consultando " + (i + 1).toLocaleString("pt-BR") + " de " + escolhidos.length.toLocaleString("pt-BR") + ": " +
+        (r.razaoSocial || r.cnpj) + (resta != null ? " · faltam ~" + (resta < 1 ? "menos de 1 min" : resta + " min") : "");
       cheio.style.width = Math.round(i / escolhidos.length * 100) + "%";
+      const jaTinha = !!REQ.cache[k];
       const x = await consultarCnpj(r.cnpj);
+      if(!jaTinha) await esperarMs(300);
       if(!x || x.naoEncontrado){ cont.erro++; continue; }
+      if(!aplicarReq){
+        cont.ok++;
+        if(comEntorno && !(qualifDe(k) || {}).entorno){
+          prog.textContent = "Medindo o entorno " + (i + 1).toLocaleString("pt-BR") + " de " + escolhidos.length.toLocaleString("pt-BR") + ": " + (r.razaoSocial || r.cnpj);
+          const g = await geocodificar(r);
+          if(g){ const en = await consultarEntorno(g.lat, g.lon); if(en) qualifGravar(k, { geo: g, entorno: en }); }
+          await esperarMs(1100);
+        }
+        const sc = scoreLead(r); niveis[sc.nivel]++; if(sc.nivel === "Frio") frios.push(k);
+        continue;
+      }
       const ltda = ehLtda(x, r), ab = (x.abertura || "").slice(0,10);
       const novo = !ltda ? stFora : (ab && maisSeisMeses(ab) > hojeISO() ? stCnpj : null);
       if(!novo){
@@ -17611,13 +17650,17 @@ function abrirConsultaRequisitos(){
     persist();
     rodando = false; bC.textContent = "Fechar"; bOk.hidden = true;
     prog.textContent = cancelar ? "Consulta interrompida." : "Consulta concluída.";
-    resumo.innerHTML = "<p class='sub'><b>" + cont.ok + "</b> dentro do requisito (continuam marcados): " +
+    resumo.innerHTML = !aplicarReq ? "<p class='sub'><b>" + cont.ok.toLocaleString("pt-BR") + "</b> leads com score atualizado: <b>" +
+      niveis.Quente + "</b> quentes, <b>" + niveis.Morno + "</b> mornos, <b>" + niveis.Frio + "</b> frios" +
+      (cont.erro ? "<br><b>" + cont.erro + "</b> não consultados (Receita fora do ar ou CNPJ não encontrado)" : "") +
+      "<br>Use o filtro Score da lista para ver só os quentes e mornos.</p>" :
+      "<p class='sub'><b>" + cont.ok + "</b> dentro do requisito (continuam marcados): " +
       "<b>" + niveis.Quente + "</b> quentes, <b>" + niveis.Morno + "</b> mornos, <b>" + niveis.Frio + "</b> frios<br>" +
       "<b>" + cont.aguarda + "</b> enviados para Aguardando tempo de CNPJ<br>" +
       "<b>" + cont.fora + "</b> enviados para Lead fora do requisito" +
       (cont.erro ? "<br><b>" + cont.erro + "</b> não consultados (Receita fora do ar ou sem data de abertura); continuam marcados" : "") + "</p>";
     cancelar = false;
-    if(frios.length){
+    if(frios.length && !todos){
       const bF = el("button","btn","Desmarcar os " + frios.length + " frios");
       bF.onclick = () => { frios.forEach(x => BASE.sel.delete(x)); bF.disabled = true; bF.textContent = "Frios desmarcados"; };
       ac.prepend(bF);
