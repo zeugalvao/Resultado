@@ -13403,6 +13403,7 @@ function pickFrentes(host){
     const m2 = el("div","mt"), nRet = totalRetornos(), nAg = totalAguardando(), nLib = totalLiberados();
     m2.append(nRet ? el("span","pill st-late", nRet + " para tratar") : el("span",null,"nenhum retorno pendente"));
     if(nAg) m2.append(el("span",null, nAg + " aguardando CNPJ" + (nLib ? " · " + nLib + " liberados" : "")));
+    const nFr = totalForaReq(); if(nFr) m2.append(el("span",null, nFr + " fora do requisito"));
     crt.append(m2);
     crt.onclick = () => { pickEtapa = "retornos"; desenhaPicker(); $("#picker").scrollTop = 0; };
     dupla.append(cst, crt);
@@ -16889,7 +16890,10 @@ async function baseListaEmpresas(){
     cont = el("span","ltcont");
     btT = el("button","btn primary","Transferir leads");
     btT.onclick = () => abrirTransferir();
-    sel.append(q, bm, bl, cont, btT);
+    const btR = el("button","btn","Consultar requisitos");
+    btR.title = "Confere se os marcados são LTDA e têm 6 meses ou mais de CNPJ; os que não atendem vão para o ADM";
+    btR.onclick = () => abrirConsultaRequisitos();
+    sel.append(q, bm, bl, cont, btR, btT);
     barra.append(sel);
   }
   u.conteudo.append(barra);
@@ -16955,6 +16959,7 @@ async function baseListaEmpresas(){
       ts.append(el("span","pill st-inc","INCOMPLETO"));
       ts.append(el("div","quem","sem telefone"));
     } else ts.append(el("span","pill st-ok","CONTATO VÁLIDO"));
+    if(!a && REQ.cache[k]) ts.append(el("div","quem", (ehLtda(REQ.cache[k], r) ? "✓ " : "") + textoReq(REQ.cache[k])));
     tr.append(ts);
     tab.append(tr);
   });
@@ -17155,6 +17160,147 @@ async function baseExcluirEstado(e, ramoEscolhido){
 }
 
 /* ---------- janela de transferência ---------- */
+/* ============================================================
+   CONSULTA DE REQUISITOS (LTDA + 6 meses de CNPJ)
+   ============================================================ */
+const REQ = { cache:{} };
+const esperarMs = ms => new Promise(r => setTimeout(r, ms));
+async function consultarCnpj(cnpj){
+  const d = cnpjDig(cnpj);
+  if(REQ.cache[d]) return REQ.cache[d];
+  const fontes = [
+    ["https://brasilapi.com.br/api/cnpj/v1/" + d, j => ({
+      natureza: j.natureza_juridica || "", codigo: String(j.codigo_natureza_juridica || "").replace(/\D/g,""),
+      abertura: j.data_inicio_atividade || "", situacao: j.descricao_situacao_cadastral || "", razao: j.razao_social || "" })],
+    ["https://publica.cnpj.ws/cnpj/" + d, j => ({
+      natureza: (j.natureza_juridica || {}).descricao || "", codigo: String((j.natureza_juridica || {}).id || "").replace(/\D/g,""),
+      abertura: (j.estabelecimento || {}).data_inicio_atividade || "", situacao: (j.estabelecimento || {}).situacao_cadastral || "",
+      razao: j.razao_social || "" })]
+  ];
+  for(let tent = 0; tent < 3; tent++){
+    for(const [url, conv] of fontes){
+      try{
+        const r = await fetch(url);
+        if(r.status === 404) return (REQ.cache[d] = { naoEncontrado:true });
+        if(!r.ok) continue;
+        const x = conv(await r.json());
+        if(x.natureza || x.abertura) return (REQ.cache[d] = x);
+      }catch(e){ /* tenta a próxima fonte */ }
+    }
+    await esperarMs(2500 * (tent + 1));
+  }
+  return null;
+}
+function ehLtda(x, r){
+  if(x && x.codigo) return x.codigo === "2062" || x.codigo === "2240";
+  if(x && x.natureza) return /limitada/i.test(x.natureza) && !/individual/i.test(x.natureza);
+  return /\bLTDA\b/i.test((r && r.razaoSocial) || "");
+}
+function maisSeisMeses(iso){
+  const [y, m, d] = String(iso).slice(0,10).split("-").map(Number);
+  const dt = new Date(y, m - 1 + 6, d);
+  return dt.getFullYear() + "-" + String(dt.getMonth()+1).padStart(2,"0") + "-" + String(dt.getDate()).padStart(2,"0");
+}
+function mesesDesde(iso){
+  const [y, m, d] = String(iso).slice(0,10).split("-").map(Number);
+  const h = new Date(); let n = (h.getFullYear() - y) * 12 + (h.getMonth() - (m - 1));
+  if(h.getDate() < d) n--;
+  return Math.max(0, n);
+}
+function textoReq(x){
+  if(!x) return "";
+  if(x.naoEncontrado) return "CNPJ não encontrado na Receita";
+  const n = x.abertura ? mesesDesde(x.abertura) : null;
+  return (x.natureza || "natureza não informada") + (x.abertura ? " · aberta em " + fmtDataISO(x.abertura.slice(0,10)) +
+    " (" + (n >= 12 ? Math.floor(n / 12) + (n >= 24 ? " anos" : " ano") : n + (n === 1 ? " mês" : " meses")) + ")" : "");
+}
+function abrirConsultaRequisitos(){
+  const escolhidos = (BASE.lista || []).filter(r => BASE.sel.has(cnpjDig(r.cnpj)) && !atribDe(r) && contatoValido(r));
+  if(!escolhidos.length) return toast("Marque ao menos um contato válido para consultar.");
+  const stFora = statusLista().find(foraReq), stCnpj = statusLista().find(pedeData);
+  if(!stFora || !stCnpj) return toast("Faltam os status \"Lead fora do requisito\" ou \"Falta tempo de CNPJ aberto\" em Status dos leads.");
+  const adm = (USR && ehAdm()) ? USR : (DB.usuarios || []).find(u => u.ativo !== false && (perfilDe(u) || {}).adm);
+  if(!adm) return toast("Cadastre um usuário ADM antes de consultar.");
+
+  const fundo = el("div","tmodal"), caixa = el("div","tcaixa");
+  caixa.setAttribute("role","dialog"); caixa.setAttribute("aria-modal","true");
+  fundo.append(caixa);
+  let rodando = false, cancelar = false;
+  const fechar = () => { if(rodando){ cancelar = true; return; } fundo.remove(); baseListaEmpresas(); };
+  fundo.onclick = ev => { if(ev.target === fundo && !rodando) fechar(); };
+
+  caixa.append(el("h3",null,"Consultar requisitos de " + escolhidos.length + (escolhidos.length === 1 ? " lead" : " leads")));
+  caixa.append(el("p","sub","Busca na Receita a natureza jurídica e a data de abertura de cada CNPJ marcado:"));
+  const regras = el("div","tconf");
+  regras.innerHTML = "<b>Não é LTDA</b> → vai para " + esc(adm.nome) + " em <b>Lead fora do requisito</b>.<br>" +
+    "<b>LTDA com menos de 6 meses</b> → vai para " + esc(adm.nome) + " em <b>Aguardando tempo de CNPJ</b>, com a data em que completa 6 meses.<br>" +
+    "<b>LTDA com 6 meses ou mais</b> → continua marcado, pronto para Transferir leads.";
+  caixa.append(regras);
+
+  const opcoes = [];
+  DB.frentes.forEach(f => (f.ramos || []).forEach(r => opcoes.push({ f, r })));
+  const selR = el("select"); let g = null, og = null;
+  opcoes.forEach(({ f, r }) => {
+    if(g !== f.id){ g = f.id; og = el("optgroup"); og.label = f.nome; selR.append(og); }
+    const o = el("option",null,r.nome); o.value = f.id + "|" + r.id; og.append(o);
+  });
+  if(F && S) selR.value = F.id + "|" + S.id;
+  caixa.append(el("div","trot","Ramo onde ficam os leads devolvidos"), selR);
+
+  const prog = el("p","sub"), barra = el("div","basebarra"), cheio = el("i");
+  barra.style.cssText = "height:6px;background:var(--line-soft);border-radius:4px;overflow:hidden;margin:8px 0";
+  cheio.style.cssText = "display:block;height:100%;width:0;background:var(--teal, #1f7a6c);transition:width .2s";
+  barra.append(cheio); barra.hidden = true;
+  const resumo = el("div");
+  caixa.append(prog, barra, resumo);
+
+  const ac = el("div","pickacoes");
+  const bOk = el("button","btn primary","Consultar agora"), bC = el("button","btn","Cancelar");
+  bC.onclick = fechar;
+  ac.append(bOk, bC); caixa.append(ac);
+  document.body.append(fundo);
+
+  bOk.onclick = async () => {
+    rodando = true; bOk.disabled = true; selR.disabled = true; bC.textContent = "Parar"; barra.hidden = false;
+    const [fid, rid] = selR.value.split("|");
+    const cont = { ok:0, fora:0, aguarda:0, erro:0 };
+    const lote = "rq" + Date.now().toString(36);
+    for(let i = 0; i < escolhidos.length; i++){
+      if(cancelar) break;
+      const r = escolhidos[i], k = cnpjDig(r.cnpj);
+      prog.textContent = "Consultando " + (i + 1) + " de " + escolhidos.length + ": " + (r.razaoSocial || r.cnpj);
+      cheio.style.width = Math.round(i / escolhidos.length * 100) + "%";
+      const x = await consultarCnpj(r.cnpj);
+      if(!x || x.naoEncontrado){ cont.erro++; continue; }
+      const ltda = ehLtda(x, r), ab = (x.abertura || "").slice(0,10);
+      const novo = !ltda ? stFora : (ab && maisSeisMeses(ab) > hojeISO() ? stCnpj : null);
+      if(!novo){ if(!ab) cont.erro++; else cont.ok++; continue; }
+      if(atribs()[k]) continue;
+      const agora = new Date().toISOString();
+      const lead = Object.assign(fotoDoLead(r), { natureza: x.natureza || "", abertura: ab });
+      const ref = { cnpj: r.cnpj, usuarioId: adm.id, frenteId: fid, ramoId: rid, status: "Em atuação",
+        andamento: novo.id, obs: textoReq(x), em: agora, por: USR ? USR.id : null, lead, lote,
+        retornoEm: agora, origemConsulta: true,
+        log: [{ t: agora, tipo:"entrada", status: novo.id, dono: adm.id, por: USR ? USR.id : null, consulta: true }] };
+      if(novo === stCnpj) ref.dataPrevista = maisSeisMeses(ab);
+      atribs()[k] = ref;
+      BASE.sel.delete(k);
+      novo === stFora ? cont.fora++ : cont.aguarda++;
+      if((cont.fora + cont.aguarda) % 10 === 0) persist();
+      await esperarMs(350);
+    }
+    cheio.style.width = "100%";
+    persist();
+    rodando = false; bC.textContent = "Fechar"; bOk.hidden = true;
+    prog.textContent = cancelar ? "Consulta interrompida." : "Consulta concluída.";
+    resumo.innerHTML = "<p class='sub'><b>" + cont.ok + "</b> dentro do requisito (continuam marcados para transferir)<br>" +
+      "<b>" + cont.aguarda + "</b> enviados para Aguardando tempo de CNPJ<br>" +
+      "<b>" + cont.fora + "</b> enviados para Lead fora do requisito" +
+      (cont.erro ? "<br><b>" + cont.erro + "</b> não consultados (Receita fora do ar ou sem data de abertura); continuam marcados" : "") + "</p>";
+    cancelar = false;
+  };
+}
+
 function abrirTransferir(){
   const escolhidos = (BASE.lista || []).filter(r => BASE.sel.has(cnpjDig(r.cnpj)) && !atribDe(r) && contatoValido(r));
   if(!escolhidos.length) return toast("Marque ao menos um contato válido (com telefone).");
@@ -17686,7 +17832,10 @@ function emRetorno(a){ return retornaAdm(statusPorId(a.andamento)); }
 /* status que pede data prevista (ex.: Falta tempo de CNPJ aberto): fica em "Aguardando tempo de CNPJ" */
 function pedeData(st){ return !!(st && st.pedeData); }
 function emAguardo(a){ return emRetorno(a) && pedeData(statusPorId(a.andamento)); }
-function emRetornoComum(a){ return emRetorno(a) && !pedeData(statusPorId(a.andamento)); }
+function foraReq(st){ return !!(st && st.foraReq); }
+function emForaReq(a){ return emRetorno(a) && foraReq(statusPorId(a.andamento)); }
+function emRetornoComum(a){ const st = statusPorId(a.andamento); return retornaAdm(st) && !pedeData(st) && !foraReq(st); }
+function quemClassificou(a){ return a.origemConsulta ? "consulta automática" : nomeUsuario(a.retornoPor || a.repassadoPor || a.usuarioId); }
 function hojeISO(){ const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0"); }
 function liberado(a){ return !!a.dataPrevista && a.dataPrevista <= hojeISO(); }
 function fmtDataISO(x){ const [y, m, d] = String(x).split("-"); return d + "/" + m + "/" + y; }
@@ -17780,6 +17929,7 @@ function leadForaSla(a){ const st = stDeLead(a), s = slaMs(st); return !!s && Da
 /* status de entrada: o lead chega "sem ação" para quem recebe (Base ou repasse) */
 function statusEntrada(){ return statusDeVolta(); }
 function totalRetornos(){ return Object.values(atribs()).filter(emRetornoComum).length; }
+function totalForaReq(){ return Object.values(atribs()).filter(emForaReq).length; }
 function totalAguardando(){ return Object.values(atribs()).filter(emAguardo).length; }
 function totalLiberados(){ return Object.values(atribs()).filter(a => emAguardo(a) && liberado(a)).length; }
 function encerrado(a){ const s = statusPorId(a.andamento); return !!s && s.tipo !== "aberto"; }
@@ -17821,6 +17971,11 @@ function migrarStatusLeads(){
     if(ja){ ja.pedeData = true; ja.retornaAdm = true; }
     else DB.statusLead.push({ id:"st_cnpj", nome:"Falta tempo de CNPJ aberto", sla:0, tipo:"aberto", repasse:false, retornaAdm:true, pedeData:true });
     sn.cnpjOk = true;
+  }
+  if(sn && !sn.foraOk){
+    if(!DB.statusLead.some(x => x.foraReq))
+      DB.statusLead.push({ id:"st_forareq", nome:"Lead fora do requisito", sla:0, tipo:"aberto", repasse:false, retornaAdm:true, pedeData:false, foraReq:true });
+    sn.foraOk = true;
   }
   const porNome = {};
   statusLista().forEach(s => { porNome[baseChave(s.nome)] = s.id; });
@@ -18024,7 +18179,7 @@ function linhasDoPainel(todos){
   if(!ordem.length) l2.append(chip(0, "Nenhum lead saiu da lista no período", ""));
   ordem.forEach(st => {
     const tipo = (statusPorId(st.id) || {}).tipo;
-    l2.append(chip(saiu[st.id], st.nome + (pedeData(statusPorId(st.id)) ? " · aguardando CNPJ" : retornaAdm(st) ? " · voltou ao ADM" : tipo === "ganho" ? " · ganho" : tipo === "perdido" ? " · perdido" : " · repassado"),
+    l2.append(chip(saiu[st.id], st.nome + (pedeData(statusPorId(st.id)) ? " · aguardando CNPJ" : foraReq(statusPorId(st.id)) ? " · fora do requisito" : retornaAdm(st) ? " · voltou ao ADM" : tipo === "ganho" ? " · ganho" : tipo === "perdido" ? " · perdido" : " · repassado"),
       tipo === "perdido" || retornaAdm(st) ? "ruim" : ""));
   });
   const tot = Object.values(saiu).reduce((x, y) => x + y, 0);
@@ -18067,6 +18222,8 @@ function renderLeadsTrab(host){
   if(ehAdm()){
     const nRet = todos.filter(emRetornoComum).length;
     sa.append(Object.assign(el("option",null,"↩ Retornos para tratar (" + nRet + ")"), {value:"__ret"}));
+    if(statusLista().some(foraReq))
+      sa.append(Object.assign(el("option",null,"⛔ Lead fora do requisito (" + todos.filter(emForaReq).length + ")"), {value:"__forareq"}));
     if(statusLista().some(pedeData)){
       const nAg = todos.filter(emAguardo).length, nLib = todos.filter(a => emAguardo(a) && liberado(a)).length;
       sa.append(Object.assign(el("option",null,"⏳ Aguardando tempo de CNPJ (" + nAg + (nLib ? " · " + nLib + " liberados" : "") + ")"), {value:"__cnpj"}));
@@ -18098,6 +18255,7 @@ function renderLeadsTrab(host){
       else if(LT.andamento === "__fora"){ if(!a.meu || !foraDoSla(a)) return false; }
       else if(LT.andamento === "__ret"){ if(!emRetornoComum(a)) return false; }
       else if(LT.andamento === "__cnpj"){ if(!emAguardo(a)) return false; }
+      else if(LT.andamento === "__forareq"){ if(!emForaReq(a)) return false; }
       else if(LT.andamento && (!a.meu || a.andamento !== LT.andamento)) return false;
       if(LT.usuario && a.usuarioId !== LT.usuario) return false;
       if(!q) return true;
@@ -18203,7 +18361,7 @@ function renderLeadsTrab(host){
       };
       td.append(s);
       if(retornaAdm(st)){
-        td.append(el("div","sub","↩ classificado por " + nomeUsuario(a.retornoPor || a.usuarioId) +
+        td.append(el("div","sub","↩ classificado por " + quemClassificou(a) +
           (a.retornoEm ? " em " + dataHora(a.retornoEm) : "")));
         tr.classList.add("retorno");
         if(pedeData(st)) td.append(pillAguardo(a, () => alterarDataPrevista(a)));
@@ -18670,7 +18828,7 @@ function pickRetornos(host){
   hd.append(el("h1",null,"Retornos para tratar"));
   hd.append(el("p",null,"Leads que voltaram para você porque o SDR escolheu um status marcado com \"Retorna para o ADM\". Abra o ramo, corrija o contato e: mude o status (o lead volta para o mesmo SDR), use Transferir para (vai para outro usuário) ou Devolver (volta para a Base)."));
   host.append(hd);
-  const sts = statusLista().filter(x => retornaAdm(x) && !pedeData(x));
+  const sts = statusLista().filter(x => retornaAdm(x) && !pedeData(x) && !foraReq(x));
   const abrir = (fid, rid, filtro) => {
     ativarFrente(fid, rid);
     LT.andamento = filtro; LT.usuario = ""; LT.busca = ""; LT.pag = 0;
@@ -18691,7 +18849,7 @@ function pickRetornos(host){
       const k = a.frenteId + "|" + a.ramoId;
       const g = grupos[k] || (grupos[k] = { f:a.frenteId, r:a.ramoId, n:0, por:{}, sdr:{} });
       g.n++; g.por[a.andamento] = (g.por[a.andamento] || 0) + 1;
-      const q = a.retornoPor || a.usuarioId; g.sdr[q] = (g.sdr[q] || 0) + 1;
+      const q = quemClassificou(a); g.sdr[q] = (g.sdr[q] || 0) + 1;
     });
     const lista = Object.values(grupos).map(g => Object.assign(g, { x: acharRamo(g.f, g.r) })).filter(g => g.x).sort((a, b) => b.n - a.n);
     if(!lista.length) b1.append(el("p","leadshint","Nenhum contato pendente. Tudo tratado! ✅"));
@@ -18705,7 +18863,7 @@ function pickRetornos(host){
         tr.append(el("td",null,g.x.f.nome), el("td",null,g.x.r.nome));
         sts.forEach(x => tr.append(el("td",g.por[x.id] ? null : "muted",String(g.por[x.id] || 0))));
         tr.append(tdNegrito(String(g.n)));
-        tr.append(el("td","muted",Object.entries(g.sdr).map(([u, n]) => nomeUsuario(u) + " (" + n + ")").join(", ")));
+        tr.append(el("td","muted",Object.entries(g.sdr).map(([u, n]) => u + " (" + n + ")").join(", ")));
         const tb = el("td"), b = el("button","btn primary sm","Tratar");
         b.onclick = () => abrir(g.f, g.r, "__ret");
         tb.append(b); tr.append(tb);
@@ -18735,7 +18893,7 @@ function pickRetornos(host){
         const l = a.lead || {}, tr = el("tr");
         const te = el("td"); te.append(el("b",null,l.razaoSocial || a.cnpj || "")); if(l.nomeFantasia) te.append(el("div","sub",l.nomeFantasia));
         tr.append(te, el("td",null,l.telefone || l.telefone1 || ""), el("td","muted",a.x.f.nome + " · " + a.x.r.nome),
-          el("td","muted",nomeUsuario(a.retornoPor || a.repassadoPor || a.usuarioId) + (a.retornoEm ? " em " + dataHora(a.retornoEm) : "")));
+          el("td","muted",quemClassificou(a) + (a.retornoEm ? " em " + dataHora(a.retornoEm) : "")));
         const tp = el("td"); tp.append(pillAguardo(a, () => alterarDataPrevista(a, desenhaPicker))); tr.append(tp);
         const tb = el("td"), b = el("button","btn " + (liberado(a) ? "primary" : "") + " sm","Tratar");
         b.onclick = () => abrir(a.frenteId, a.ramoId, "__cnpj");
@@ -18745,6 +18903,35 @@ function pickRetornos(host){
       tw.append(t); b2.append(tw);
     }
     host.append(b2);
+  }
+
+  /* ---- divisão 3: lead fora do requisito ---- */
+  if(statusLista().some(foraReq)){
+    const b3 = el("div","pickbloco");
+    const fr = Object.entries(atribs()).filter(([, a]) => emForaReq(a)).map(([chave, a]) => Object.assign({ chave }, a))
+      .map(a => Object.assign(a, { x: acharRamo(a.frenteId, a.ramoId) })).filter(a => a.x)
+      .sort((a, b) => String(b.retornoEm || b.em).localeCompare(String(a.retornoEm || a.em)));
+    b3.append(el("h2",null,"Lead fora do requisito · " + fr.length));
+    b3.append(el("p","leadshint","Empresas que não são LTDA, encontradas na consulta de requisitos da Base de Leads."));
+    if(!fr.length) b3.append(el("p","leadshint","Nenhum lead fora do requisito."));
+    else {
+      const tw = el("div","tablewrap"), t = el("table","leadlista gtab");
+      const h = el("tr");
+      ["Empresa","CNPJ","Natureza jurídica","Abertura","Vertical · ramo",""].forEach(x => h.append(el("th",null,x)));
+      t.append(h);
+      fr.forEach(a => {
+        const l = a.lead || {}, tr = el("tr");
+        const te = el("td"); te.append(el("b",null,l.razaoSocial || a.cnpj || "")); if(l.nomeFantasia) te.append(el("div","sub",l.nomeFantasia));
+        tr.append(te, el("td",null,a.cnpj || ""), el("td",null,l.natureza || "—"),
+          el("td","muted",l.abertura ? fmtDataISO(l.abertura) : "—"), el("td","muted",a.x.f.nome + " · " + a.x.r.nome));
+        const tb = el("td"), b = el("button","btn sm","Tratar");
+        b.onclick = () => abrir(a.frenteId, a.ramoId, "__forareq");
+        tb.append(b); tr.append(tb);
+        t.append(tr);
+      });
+      tw.append(t); b3.append(tw);
+    }
+    host.append(b3);
   }
 }
 
