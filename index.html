@@ -994,6 +994,19 @@ ol.logl em::before{content:"· "}
 .cotaitem .cs{font-size:11.5px;color:var(--muted)}
 .tuser .cota{font-size:11.5px;font-weight:600;margin-left:auto;white-space:nowrap}
 .tuser .cota.ok{color:var(--muted)}.tuser .cota.cheia{color:#1c6b3a}.tuser .cota.passou{color:#a3261d}
+table.leadlista tr.ltgrupo td{background:var(--surface);padding:0;border-top:2px solid var(--line)}
+.ltgbt{display:flex;align-items:center;gap:10px;width:100%;padding:12px 14px;background:none;border:0;font:inherit;color:inherit;cursor:pointer;text-align:left}
+.ltgbt:hover{background:var(--line-soft)}
+.ltgbt .mais{width:24px;height:24px;border-radius:6px;border:1px solid var(--line);display:inline-flex;align-items:center;justify-content:center;font-size:17px;font-weight:600;line-height:1;flex:0 0 auto}
+.ltgbt .nome{font-weight:600;font-size:13.5px;letter-spacing:.02em;text-transform:uppercase}
+.ltgbt .qt{font-variant-numeric:tabular-nums;font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;background:var(--line-soft)}
+.ltgbt .ds{font-size:12px;color:var(--muted)}
+tr.ltgrupo.g-atrasado .qt{background:#fbe4e2;color:#a3261d}
+tr.ltgrupo.g-atrasado .nome{color:#a3261d}
+tr.ltgrupo.g-nenhum .qt{background:#fdf0d5;color:#8a5a0b}
+tr.ltgrupo.g-curso .qt{background:#dcf1e3;color:#1c6b3a}
+tr.ltgrupo.vazio .ltgbt{opacity:.55;cursor:default}
+tr.ltmais td{text-align:center;padding:8px}
 .ltlinhas{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:0 0 20px;display:flex;flex-direction:column;gap:12px}
 .ltlinha{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap}
 .ltlinha .lttit{flex:0 0 170px;display:flex;flex-direction:column;justify-content:center}
@@ -18365,17 +18378,20 @@ function renderLeadsTrab(host){
     if(LT.pag >= paginas) LT.pag = paginas - 1;
     if(!lista.length){ area.append(el("p","leadshint","Nenhum lead com esses filtros.")); return; }
     const pag = lista.slice(LT.pag * LT_POR_PAGINA, (LT.pag + 1) * LT_POR_PAGINA);
+    /* sem filtro de status: a lista vira linhas que abrem com + (Atrasados, Nenhum contato, Contato em curso...) */
+    const agrupar = !LT.andamento;
+    const vis = agrupar ? lista : pag;
 
     const tw = el("div","tablewrap"), t = el("table","leadlista lt");
     const cab = el("tr");
-    const colRepasse = pag.some(a => a.meu && (stDeLead(a).repasse || (ehAdm() && retornaAdm(stDeLead(a))))) || pag.some(a => !a.meu);
+    const colRepasse = vis.some(a => a.meu && (stDeLead(a).repasse || (ehAdm() && retornaAdm(stDeLead(a))))) || vis.some(a => !a.meu);
     const cols = ["Empresa","CNPJ","Cidade","Telefone","Sócios"].concat(ehAdm() ? ["Responsável"] : [])
       .concat(["Status"]).concat(colRepasse ? ["Transferir para"] : [])
       .concat(["Observação","Recebido",""]);
     cols.forEach(x => cab.append(el("th",null,x)));
     t.append(cab);
 
-    pag.forEach(a => {
+    const linha = a => {
       const l = a.lead || {}, ref = atribs()[a.chave];
       const st = stDeLead(a);
       const tr = el("tr","lrow st-" + st.tipo + (a.meu && foraDoSla(a) ? " forasla" : ""));
@@ -18516,9 +18532,47 @@ function renderLeadsTrab(host){
       tb.append(bd); tr.append(tb);
       t.append(tr);
       t.append(linhaSla(a, cols.length));
-    });
+    };
+    if(!agrupar) pag.forEach(linha);
+    else {
+      const entradaId = statusEntrada().id;
+      const ativo = a => a.meu && !encerrado(a) && !emRetorno(a);
+      const grupos = [
+        ["atrasado","Atrasados","passaram do prazo (SLA) do status", a => ativo(a) && foraDoSla(a)],
+        ["nenhum","Nenhum contato","ainda sem nenhuma ação", a => ativo(a) && a.andamento === entradaId],
+        ["curso","Contato em curso","em andamento, dentro do prazo", a => ativo(a)]
+      ];
+      if(ehAdm()) grupos.push(["retorno","Retornos ao ADM","número incorreto, aguardando CNPJ, fora do requisito", a => emRetorno(a)]);
+      grupos.push(["encerrado","Encerrados","ganhos e perdidos", a => encerrado(a)]);
+      const caixas = {}; grupos.forEach(g => { caixas[g[0]] = []; });
+      lista.forEach(a => { const g = grupos.find(x => x[3](a)); if(g) caixas[g[0]].push(a); });
+      if(!LT.abertos) LT.abertos = {};
+      if(!LT.limite) LT.limite = {};
+      grupos.forEach(([k, nome, desc]) => {
+        const itens = caixas[k];
+        if(!itens.length && (k === "retorno" || k === "encerrado")) return;
+        const aberto = !!LT.abertos[k] && itens.length > 0;
+        const hr = el("tr","ltgrupo g-" + k + (itens.length ? "" : " vazio"));
+        const hc = el("td"); hc.colSpan = cols.length;
+        const bt = el("button","ltgbt"); bt.type = "button"; bt.dataset.livre = "1";
+        bt.setAttribute("aria-expanded", aberto ? "true" : "false");
+        bt.append(el("span","mais", aberto ? "−" : "+"), el("span","nome",nome), el("span","qt",String(itens.length)), el("span","ds",desc));
+        bt.onclick = () => { if(!itens.length) return; LT.abertos[k] = !LT.abertos[k]; desenha(); };
+        hc.append(bt); hr.append(hc); t.append(hr);
+        if(!aberto) return;
+        const lim = LT.limite[k] || LT_POR_PAGINA;
+        itens.slice(0, lim).forEach(linha);
+        if(itens.length > lim){
+          const mr = el("tr","ltmais"), mc = el("td"); mc.colSpan = cols.length;
+          const bm = el("button","btn sm","Mostrar mais " + Math.min(LT_POR_PAGINA, itens.length - lim) + " de " + (itens.length - lim) + " restantes");
+          bm.dataset.livre = "1";
+          bm.onclick = () => { LT.limite[k] = lim + LT_POR_PAGINA; desenha(); };
+          mc.append(bm); mr.append(mc); t.append(mr);
+        }
+      });
+    }
     tw.append(t); area.append(tw);
-    area.append(paginador(LT.pag, paginas, lista.length, p => { LT.pag = p; desenha(); }));
+    if(!agrupar) area.append(paginador(LT.pag, paginas, lista.length, p => { LT.pag = p; desenha(); }));
 
     const ac = el("div","leadsbotoes");
     const bx = el("button","btn","Baixar esta lista em Excel");
