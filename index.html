@@ -978,6 +978,22 @@ ol.logl em::before{content:"· "}
 .paguardo.verm{background:#fbe4e2;color:#a3261d}
 .paguardo.verde{background:#dcf1e3;color:#1c6b3a}
 .dtcampo{width:100%;font-size:15px;padding:8px 10px;margin-top:4px}
+.cotapainel{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0 0 14px}
+.cotapainel h4{margin:0 0 8px;font-size:13.5px;font-weight:600}
+.cotagrid{display:flex;flex-wrap:wrap;gap:8px}
+.cotaitem{flex:0 1 200px;border:1px solid var(--line-soft);border-radius:7px;padding:8px 10px;display:flex;flex-direction:column;gap:4px}
+.cotaitem .cn{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:13px}
+.cotaitem .cn b{font-variant-numeric:tabular-nums}
+.cotabar{height:5px;background:var(--line-soft);border-radius:4px;overflow:hidden}
+.cotabar i{display:block;height:100%;background:#2f8f5b}
+.cotaitem.cheia{border-color:#2f8f5b}
+.cotaitem.cheia .cs{color:#1c6b3a}
+.cotaitem.passou{border-color:#c0392b}
+.cotaitem.passou .cotabar i{background:#c0392b}
+.cotaitem.passou .cs{color:#a3261d}
+.cotaitem .cs{font-size:11.5px;color:var(--muted)}
+.tuser .cota{font-size:11.5px;font-weight:600;margin-left:auto;white-space:nowrap}
+.tuser .cota.ok{color:var(--muted)}.tuser .cota.cheia{color:#1c6b3a}.tuser .cota.passou{color:#a3261d}
 .ltlinhas{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:0 0 20px;display:flex;flex-direction:column;gap:12px}
 .ltlinha{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap}
 .ltlinha .lttit{flex:0 0 170px;display:flex;flex-direction:column;justify-content:center}
@@ -16897,6 +16913,7 @@ async function baseListaEmpresas(){
     barra.append(sel);
   }
   u.conteudo.append(barra);
+  if(podeTransf) u.conteudo.append(painelCotaDiaria());
   atualizarSel();
   if(BASE.mostrar === "atu" && ehAdm()) u.conteudo.append(painelTransferencias());
 
@@ -17214,6 +17231,58 @@ function textoReq(x){
   return (x.natureza || "natureza não informada") + (x.abertura ? " · aberta em " + fmtDataISO(x.abertura.slice(0,10)) +
     " (" + (n >= 12 ? Math.floor(n / 12) + (n >= 24 ? " anos" : " ano") : n + (n === 1 ? " mês" : " meses")) + ")" : "");
 }
+/* ============================================================
+   COTA DIÁRIA: quantos leads válidos cada usuário recebeu da Base hoje
+   ============================================================ */
+const COTA_PADRAO = 20;
+function cotaDe(u){ const n = parseInt(u && u.cotaDiaria, 10); return n > 0 ? n : COTA_PADRAO; }
+function inicioDeHoje(){ const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); }
+function recebidosHojeDaBase(uid){
+  const ini = inicioDeHoje();
+  let n = 0, exc = 0;
+  const ver = a => (a.log || []).forEach(e => {
+    if(e.tipo === "entrada" && !e.consulta && e.dono === uid && Date.parse(e.t) >= ini){ n++; if(e.excecao) exc++; }
+  });
+  Object.values(atribs()).forEach(ver);
+  Object.values(DB.logArquivo || {}).filter(a => !a.cancelado).forEach(ver);
+  return { n, exc };
+}
+function usuariosComCota(){
+  return (DB.usuarios || []).filter(u => u.ativo !== false && !(perfilDe(u) || {}).adm);
+}
+function painelCotaDiaria(){
+  const box = el("div","cotapainel");
+  const hoje = new Date().toLocaleDateString("pt-BR", { weekday:"long", day:"2-digit", month:"2-digit" });
+  box.append(el("h4",null,"Leads válidos transferidos hoje (" + hoje + ") · meta de " + COTA_PADRAO + " por pessoa"));
+  const g = el("div","cotagrid");
+  const us = usuariosComCota();
+  if(!us.length) g.append(el("span","leadshint","Nenhum usuário sem perfil ADM cadastrado."));
+  us.forEach(u => {
+    const { n, exc } = recebidosHojeDaBase(u.id), c = cotaDe(u);
+    const it = el("div","cotaitem" + (n > c ? " passou" : n === c ? " cheia" : ""));
+    const cn = el("div","cn");
+    cn.append(el("span",null,u.nome), el("b",null,n + " / " + c));
+    const bar = el("div","cotabar"), i = el("i"); i.style.width = Math.min(100, Math.round(n / c * 100)) + "%"; bar.append(i);
+    const st = el("div","cs", n > c ? "⚠ passou " + (n - c) + " da meta" + (exc ? " (exceção)" : "")
+                            : n === c ? "✓ meta do dia completa" : "faltam " + (c - n));
+    it.append(cn, bar, st);
+    if(ehAdm()){
+      it.title = "Clique para mudar a meta diária de " + u.nome;
+      it.style.cursor = "pointer";
+      it.onclick = () => {
+        const v = prompt("Meta diária de leads válidos para " + u.nome + ":", String(c));
+        if(v == null) return;
+        const nv = parseInt(v, 10);
+        if(!(nv > 0)) return toast("Informe um número maior que zero.");
+        u.cotaDiaria = nv; persist(); baseListaEmpresas();
+      };
+    }
+    g.append(it);
+  });
+  box.append(g);
+  return box;
+}
+
 function abrirConsultaRequisitos(){
   const escolhidos = (BASE.lista || []).filter(r => BASE.sel.has(cnpjDig(r.cnpj)) && !atribDe(r) && contatoValido(r));
   if(!escolhidos.length) return toast("Marque ao menos um contato válido para consultar.");
@@ -17337,10 +17406,15 @@ function abrirTransferir(){
     tx.append(el("b",null,u.nome));
     tx.append(el("span",null,(p ? p.nome : "sem perfil") + " · " + (contagem[u.id] || 0) + " em atuação"));
     lb.append(rd, tx);
+    if(!(p || {}).adm){
+      const { n } = recebidosHojeDaBase(u.id), c = cotaDe(u);
+      lb.append(el("span","cota " + (n > c ? "passou" : n === c ? "cheia" : "ok"), "hoje " + n + "/" + c));
+    }
     rd.onchange = () => {
       uSel = u;
       lu.querySelectorAll(".tuser").forEach(x => x.classList.toggle("on", x === lb));
       montaRamos();
+      avisoCota();
     };
     lu.append(lb);
   });
@@ -17382,11 +17456,30 @@ function abrirTransferir(){
     bOk.textContent = "Transferir para " + uSel.nome;
   }
 
+  const avisoC = el("div","tconf"); avisoC.hidden = true;
+  caixa.append(avisoC);
+  let passaDaCota = false;
+  function avisoCota(){
+    passaDaCota = false; avisoC.hidden = true;
+    if(!uSel || (perfilDe(uSel) || {}).adm) return;
+    const { n } = recebidosHojeDaBase(uSel.id), c = cotaDe(uSel), depois = n + escolhidos.length;
+    if(depois <= c){
+      avisoC.innerHTML = esc(uSel.nome) + " já recebeu <b>" + n + "</b> hoje. Com estes, fica com <b>" + depois + " de " + c + "</b>.";
+      avisoC.hidden = false; avisoC.style.borderColor = ""; return;
+    }
+    passaDaCota = true;
+    avisoC.innerHTML = "<b>⚠ Atenção: meta diária ultrapassada.</b> " + esc(uSel.nome) + " já recebeu <b>" + n + " de " + c +
+      "</b> leads válidos hoje. Com estes " + escolhidos.length + ", fica com <b>" + depois + "</b> (" + (depois - c) + " acima da meta)." +
+      (n < c ? " Para respeitar a meta, transfira só " + (c - n) + "." : "");
+    avisoC.style.borderColor = "#c0392b"; avisoC.hidden = false;
+    bOk.textContent = "Transferir mesmo assim (exceção)";
+  }
   const ac = el("div","pickacoes");
   const bC = el("button","btn","Cancelar");
   bC.onclick = fechar;
   bOk.onclick = () => {
     if(!uSel || !selR) return;
+    if(passaDaCota && !confirm("Confirmar a exceção? " + uSel.nome + " vai passar da meta de " + cotaDe(uSel) + " leads hoje.")) return;
     const [fid, rid] = selR.value.split("|");
     const at = atribs(), agora = new Date().toISOString();
     const lote = "lt" + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
@@ -17397,7 +17490,8 @@ function abrirTransferir(){
       const st0 = statusInicial().id;
       at[k] = { cnpj: r.cnpj, usuarioId: uSel.id, frenteId: fid, ramoId: rid, status: "Em atuação",
                 andamento: st0, obs: "", em: agora, por: USR ? USR.id : null, lead: fotoDoLead(r), lote,
-                log: [{ t: agora, tipo:"entrada", status: st0, dono: uSel.id, por: USR ? USR.id : null }] };
+                log: [{ t: agora, tipo:"entrada", status: st0, dono: uSel.id, por: USR ? USR.id : null,
+                        excecao: passaDaCota || undefined }] };
       n++;
     });
     const x = acharRamo(fid, rid);
