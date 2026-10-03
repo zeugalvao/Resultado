@@ -1007,6 +1007,15 @@ tr.ltgrupo.g-nenhum .qt{background:#fdf0d5;color:#8a5a0b}
 tr.ltgrupo.g-curso .qt{background:#dcf1e3;color:#1c6b3a}
 tr.ltgrupo.vazio .ltgbt{opacity:.55;cursor:default}
 tr.ltmais td{text-align:center;padding:8px}
+.scorepill{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums}
+.scorepill.q{background:#fbe4e2;color:#a3261d}
+.scorepill.m{background:#fdf0d5;color:#8a5a0b}
+.scorepill.f{background:#e6eef5;color:#3b5874}
+.scoremot{font-size:11px;color:var(--muted);line-height:1.35;margin-top:3px;max-width:240px}
+.scoremot i{font-style:normal;color:#b7791f}
+.ltord{display:inline-flex;gap:4px;align-items:center;font-size:12.5px;color:var(--muted);margin-left:8px}
+.parcin{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:11.5px;color:var(--muted)}
+.parcin input{width:84px;padding:4px 6px;font-size:12.5px}
 .ltlinhas{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:0 0 20px;display:flex;flex-direction:column;gap:12px}
 .ltlinha{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap}
 .ltlinha .lttit{flex:0 0 170px;display:flex;flex-direction:column;justify-content:center}
@@ -7306,7 +7315,9 @@ function baseIndices(header){
     ramo: acha("RAMO"), cnae: acha("CNAE"), telefone: acha("TELEFONE"),
     site: acha("SITE"), nota: acha("NOTA"), avaliacoes: acha("AVALIACOES"),
     categoria: acha("CATEGORIA"), horario: acha("HORARIO"), status: acha("STATUS"),
-    link: acha("LINK"), socios: acha("SOCIOS")
+    link: acha("LINK"), socios: acha("SOCIOS"),
+    porte: acha("PORTE"), abertura: acha("ABERTURA","DATA DE ABERTURA","INICIO ATIVIDADE"),
+    capital: acha("CAPITAL SOCIAL","CAPITAL"), latitude: acha("LATITUDE"), longitude: acha("LONGITUDE")
   };
 }
 
@@ -7318,7 +7329,11 @@ function baseDaLinha(idx, row){
     cidade: v(idx.cidade), uf: v(idx.uf), ramo: v(idx.ramo), cnae: v(idx.cnae),
     telefone: v(idx.telefone), site: v(idx.site), nota: v(idx.nota),
     avaliacoes: v(idx.avaliacoes), categoria: v(idx.categoria),
-    horario: v(idx.horario), statusEndereco: v(idx.status), link: v(idx.link)
+    horario: v(idx.horario), statusEndereco: v(idx.status), link: v(idx.link),
+    ...(idx.porte >= 0 && v(idx.porte) ? { porte: v(idx.porte) } : {}),
+    ...(idx.abertura >= 0 && v(idx.abertura) ? { abertura: v(idx.abertura) } : {}),
+    ...(idx.capital >= 0 && v(idx.capital) ? { capital: v(idx.capital) } : {}),
+    ...(idx.latitude >= 0 && v(idx.latitude) ? { latitude: v(idx.latitude), longitude: v(idx.longitude) } : {})
   };
 }
 
@@ -16865,11 +16880,17 @@ async function baseListaEmpresas(){
   const nEm = lista.filter(emAt).length;
   const nValidos = lista.filter(transferivel).length;
   const nIncomp = lista.filter(r => !emAt(r) && !contatoValido(r)).length;
-  const visiveis = lista.filter(r =>
+  BASE.raizes = {};
+  lista.forEach(r => { const z = baseRaiz(r.cnpj); if(z) BASE.raizes[z] = (BASE.raizes[z] || 0) + 1; });
+  qualifTodos();
+  const scores = new Map();
+  const scoreDe = r => { const k = cnpjDig(r.cnpj); if(!scores.has(k)) scores.set(k, scoreLead(r)); return scores.get(k); };
+  let visiveis = lista.filter(r =>
     BASE.mostrar === "todos" ? true :
     BASE.mostrar === "atu" ? emAt(r) :
     BASE.mostrar === "inc" ? (!emAt(r) && !contatoValido(r)) :
     transferivel(r));
+  if(BASE.ordem === "score") visiveis = visiveis.slice().sort((a, b) => scoreDe(b).pts - scoreDe(a).pts);
   const paginas = Math.max(1, Math.ceil(visiveis.length / BASE_POR_PAGINA));
   if(BASE.pag >= paginas) BASE.pag = paginas - 1;
 
@@ -16884,6 +16905,14 @@ async function baseListaEmpresas(){
     seg.append(b);
   });
   barra.append(seg);
+  const ord = el("span","ltord");
+  ord.append(document.createTextNode("Ordem:"));
+  [["","da lista"],["score","maior score"]].forEach(([v, rot]) => {
+    const b = el("button","btn sm" + ((BASE.ordem || "") === v ? " primary" : " ghost"), rot);
+    b.onclick = () => { BASE.ordem = v; BASE.pag = 0; baseListaEmpresas(); };
+    ord.append(b);
+  });
+  barra.append(ord);
 
   let cont = null, btT = null;
   const atualizarSel = () => {
@@ -16897,7 +16926,7 @@ async function baseListaEmpresas(){
     const q = el("input"); q.type = "number"; q.min = "1"; q.value = BASE.qtd; q.placeholder = "Qtd.";
     q.setAttribute("aria-label","Quantidade de leads para marcar");
     const bm = el("button","btn sm","contatos válidos");
-    bm.title = "Marca essa quantidade de contatos válidos (com telefone e sem responsável), na ordem da lista";
+    bm.title = "Marca essa quantidade de contatos válidos (com telefone e sem responsável), na ordem da lista. Com a ordem \"maior score\", marca os mais quentes primeiro";
     bm.onclick = () => {
       const n = parseInt(q.value, 10);
       if(!(n > 0)) return toast("Informe quantos leads quer marcar.");
@@ -16919,8 +16948,8 @@ async function baseListaEmpresas(){
     cont = el("span","ltcont");
     btT = el("button","btn primary","Transferir leads");
     btT.onclick = () => abrirTransferir();
-    const btR = el("button","btn","Consultar requisitos");
-    btR.title = "Confere se os marcados são LTDA e têm 6 meses ou mais de CNPJ; os que não atendem vão para o ADM";
+    const btR = el("button","btn","Qualificar marcados");
+    btR.title = "Consulta a Receita e o entorno, calcula o score e aplica os requisitos (LTDA e 6 meses de CNPJ)";
     btR.onclick = () => abrirConsultaRequisitos();
     sel.append(q, bm, bl, cont, btR, btT);
     barra.append(sel);
@@ -16959,7 +16988,7 @@ async function baseListaEmpresas(){
     };
     th.append(cbAll); cab.append(th);
   }
-  ["Empresa","CNPJ","Cidade","Ramo","Telefone","Sócios","Situação"].forEach(t => cab.append(el("th",null,t)));
+  ["Empresa","Score","CNPJ","Cidade","Ramo","Telefone","Sócios","Situação"].forEach(t => cab.append(el("th",null,t)));
   tab.append(cab);
 
   pagina.forEach(r => {
@@ -16978,9 +17007,15 @@ async function baseListaEmpresas(){
       };
       td.append(cb); tr.append(td);
     }
-    [r.razaoSocial || r.nomeFantasia || "", r.cnpj, [r.cidade, r.uf].filter(Boolean).join("/"),
+    tr.append(el("td",null,r.razaoSocial || r.nomeFantasia || ""));
+    const tsc = el("td"), sc = scoreDe(r);
+    tsc.append(pillScore(sc));
+    if(sc.motivos.length) tsc.append(el("div","scoremot", sc.motivos.slice(0, 3).join(" · ")));
+    if(sc.faltando.length) { const f = el("div","scoremot"); f.append(el("i",null,"parcial: falta " + sc.faltando.join(" e "))); tsc.append(f); }
+    tr.append(tsc);
+    [r.cnpj, [r.cidade, r.uf].filter(Boolean).join("/"),
      r.ramo || "", r.telefone || "", (r.socios || []).map(s => s.nome).join(", ")]
-      .forEach((v, i) => tr.append(el("td", i === 5 ? "muted" : null, v)));
+      .forEach((v, i) => tr.append(el("td", i === 4 ? "muted" : null, v)));
     const ts = el("td");
     if(a){
       ts.append(el("span","pill st-doing","EM ATUAÇÃO"));
@@ -17194,6 +17229,30 @@ async function baseExcluirEstado(e, ramoEscolhido){
    CONSULTA DE REQUISITOS (LTDA + 6 meses de CNPJ)
    ============================================================ */
 const REQ = { cache:{} };
+/* ficha de qualificação guardada neste navegador: Receita + entorno, por CNPJ */
+const QUALIF = { dados:null, chave:"elosgate_qualif_v1" };
+function qualifTodos(){
+  if(QUALIF.dados) return QUALIF.dados;
+  try{ QUALIF.dados = JSON.parse(localStorage.getItem(QUALIF.chave) || "{}") || {}; }catch(e){ QUALIF.dados = {}; }
+  Object.entries(QUALIF.dados).forEach(([k, q]) => { if(q && q.receita && !REQ.cache[k]) REQ.cache[k] = q.receita; });
+  return QUALIF.dados;
+}
+function qualifDe(k){ return qualifTodos()[k] || null; }
+let qualifTimer = null;
+function qualifGravar(k, parte){
+  const t = qualifTodos();
+  t[k] = Object.assign({}, t[k] || {}, parte, { em: new Date().toISOString() });
+  clearTimeout(qualifTimer);
+  qualifTimer = setTimeout(() => {
+    try{ localStorage.setItem(QUALIF.chave, JSON.stringify(t)); }
+    catch(e){ /* cheio: guarda só os 8 mil mais recentes */
+      try{
+        const ord = Object.entries(t).sort((a, b) => String(b[1].em).localeCompare(String(a[1].em))).slice(0, 8000);
+        QUALIF.dados = Object.fromEntries(ord); localStorage.setItem(QUALIF.chave, JSON.stringify(QUALIF.dados));
+      }catch(e2){}
+    }
+  }, 400);
+}
 const esperarMs = ms => new Promise(r => setTimeout(r, ms));
 async function consultarCnpj(cnpj){
   const d = cnpjDig(cnpj);
@@ -17201,11 +17260,22 @@ async function consultarCnpj(cnpj){
   const fontes = [
     ["https://brasilapi.com.br/api/cnpj/v1/" + d, j => ({
       natureza: j.natureza_juridica || "", codigo: String(j.codigo_natureza_juridica || "").replace(/\D/g,""),
-      abertura: j.data_inicio_atividade || "", situacao: j.descricao_situacao_cadastral || "", razao: j.razao_social || "" })],
-    ["https://publica.cnpj.ws/cnpj/" + d, j => ({
-      natureza: (j.natureza_juridica || {}).descricao || "", codigo: String((j.natureza_juridica || {}).id || "").replace(/\D/g,""),
-      abertura: (j.estabelecimento || {}).data_inicio_atividade || "", situacao: (j.estabelecimento || {}).situacao_cadastral || "",
-      razao: j.razao_social || "" })]
+      abertura: j.data_inicio_atividade || "", situacao: j.descricao_situacao_cadastral || "", razao: j.razao_social || "",
+      fantasia: j.nome_fantasia || "", porte: j.porte || "", capital: Number(j.capital_social) || 0,
+      simples: j.opcao_pelo_simples === true, mei: j.opcao_pelo_mei === true,
+      socios: (j.qsa || []).length, filial: Number(j.identificador_matriz_filial) === 2,
+      atividades: [j.cnae_fiscal_descricao].concat((j.cnaes_secundarios || []).map(c => c.descricao)).filter(Boolean).join(" | ") })],
+    ["https://publica.cnpj.ws/cnpj/" + d, j => {
+      const e = j.estabelecimento || {};
+      return {
+        natureza: (j.natureza_juridica || {}).descricao || "", codigo: String((j.natureza_juridica || {}).id || "").replace(/\D/g,""),
+        abertura: e.data_inicio_atividade || "", situacao: e.situacao_cadastral || "", razao: j.razao_social || "",
+        fantasia: e.nome_fantasia || "", porte: (j.porte || {}).descricao || "", capital: Number(j.capital_social) || 0,
+        simples: /sim/i.test((j.simples || {}).simples || ""), mei: /sim/i.test((j.simples || {}).mei || ""),
+        socios: (j.socios || []).length, filial: /filial/i.test(e.tipo || ""),
+        atividades: [(e.atividade_principal || {}).descricao].concat((e.atividades_secundarias || []).map(c => c.descricao)).filter(Boolean).join(" | ")
+      };
+    }]
   ];
   for(let tent = 0; tent < 3; tent++){
     for(const [url, conv] of fontes){
@@ -17214,13 +17284,135 @@ async function consultarCnpj(cnpj){
         if(r.status === 404) return (REQ.cache[d] = { naoEncontrado:true });
         if(!r.ok) continue;
         const x = conv(await r.json());
-        if(x.natureza || x.abertura) return (REQ.cache[d] = x);
+        if(x.natureza || x.abertura){ qualifGravar(d, { receita: x }); return (REQ.cache[d] = x); }
       }catch(e){ /* tenta a próxima fonte */ }
     }
     await esperarMs(2500 * (tent + 1));
   }
   return null;
 }
+/* ---------- entorno (OpenStreetMap, gratuito) ---------- */
+async function geocodificar(r){
+  const lat = parseFloat(String(r.latitude || "").replace(",", ".")), lon = parseFloat(String(r.longitude || "").replace(",", "."));
+  if(isFinite(lat) && isFinite(lon) && lat && lon) return { lat, lon, fonte:"maps" };
+  const tentativas = [];
+  if(r.endereco && r.cidade) tentativas.push("street=" + encodeURIComponent(String(r.endereco).replace(/\s*-\s*.*$/,"")) +
+    "&city=" + encodeURIComponent(r.cidade) + (r.uf ? "&state=" + encodeURIComponent(r.uf) : ""));
+  const cep = String(r.cep || "").replace(/\D/g,"");
+  if(cep.length === 8) tentativas.push("postalcode=" + cep.slice(0,5) + "-" + cep.slice(5));
+  for(const q of tentativas){
+    try{
+      const resp = await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&" + q,
+                               { headers:{ "Accept-Language":"pt-BR" } });
+      if(resp.ok){
+        const j = await resp.json();
+        if(j && j[0]) return { lat: parseFloat(j[0].lat), lon: parseFloat(j[0].lon), fonte:"osm" };
+      }
+    }catch(e){}
+    await esperarMs(1100);        /* regra do Nominatim: 1 consulta por segundo */
+  }
+  return null;
+}
+async function consultarEntorno(lat, lon){
+  const q = "[out:json][timeout:25];(" +
+    "nwr(around:600," + lat + "," + lon + ")[amenity~\"^(bus_station|marketplace|university|college|hospital)$\"];" +
+    "nwr(around:600," + lat + "," + lon + ")[public_transport=station];" +
+    "nwr(around:600," + lat + "," + lon + ")[railway~\"^(station|subway_entrance|tram_stop)$\"];" +
+    "nwr(around:600," + lat + "," + lon + ")[shop~\"^(mall|supermarket|department_store|wholesale)$\"];" +
+    "node(around:300," + lat + "," + lon + ")[highway=bus_stop];" +
+    ");out tags center 200;";
+  for(let t = 0; t < 2; t++){
+    try{
+      const resp = await fetch("https://overpass-api.de/api/interpreter", { method:"POST", body:"data=" + encodeURIComponent(q),
+        headers:{ "Content-Type":"application/x-www-form-urlencoded" } });
+      if(resp.ok){
+        const j = await resp.json();
+        const out = { transporte:0, comercio:0, ensinoSaude:0, pontosOnibus:0, nomes:[] };
+        (j.elements || []).forEach(e => {
+          const g = e.tags || {};
+          if(g.highway === "bus_stop"){ out.pontosOnibus++; return; }
+          let tipo = null;
+          if(g.amenity === "bus_station" || g.public_transport === "station" || g.railway) tipo = "transporte";
+          else if(g.shop || g.amenity === "marketplace") tipo = "comercio";
+          else if(g.amenity) tipo = "ensinoSaude";
+          if(!tipo) return;
+          out[tipo]++;
+          if(g.name && out.nomes.length < 6 && !out.nomes.includes(g.name)) out.nomes.push(g.name);
+        });
+        return out;
+      }
+    }catch(e){}
+    await esperarMs(3000);
+  }
+  return null;
+}
+
+/* ---------- score de potencial (0 a 100) ---------- */
+const FRANQUIAS = /SORRIDENTS|ODONTO ?COMPANY|ORAL ?SIN|ODONTO ?EXCELLENCE|ORTHODONTIC|ORTHOPRIDE|CLINICA ?SIM|AMOR ?SAUDE|DR\.? ?CONSULTA/;
+function numBR(v){ const n = parseFloat(String(v == null ? "" : v).replace(/[^\d,.-]/g,"").replace(/\.(?=\d{3}(\D|$))/g,"").replace(",", ".")); return isFinite(n) ? n : 0; }
+function scoreLead(r){
+  const k = cnpjDig(r.cnpj), q = qualifDe(k) || {}, x = q.receita || REQ.cache[k] || null, e = q.entorno || null;
+  const nome = baseChave([r.razaoSocial, r.nomeFantasia, x && x.fantasia].filter(Boolean).join(" "));
+  const textoAtiv = baseChave([r.categoria, r.ramo, x && x.atividades].filter(Boolean).join(" "));
+  const motivos = []; let pts = 0;
+  const soma = (n, txt) => { if(n > 0){ pts += n; motivos.push(txt); } };
+
+  /* rede / franquia */
+  const filiais = (BASE.raizes && BASE.raizes[baseRaiz(r.cnpj)]) || 1;
+  if(FRANQUIAS.test(nome)) soma(20, "franquia conhecida");
+  else if(filiais > 1 || (x && x.filial) || !baseEhMatriz(r.cnpj)) soma(15, filiais > 1 ? "rede com " + filiais + " unidades" : "é filial de uma rede");
+
+  /* especialidade que gera mensalidade */
+  if(/ORTO|ORTHO|APARELHO|IMPLANT|PROTESE/.test(nome + " " + textoAtiv)) soma(15, "ortodontia / implante");
+  else if(/POPULAR|SORRISO|FAMILIA|SAUDE/.test(nome)) soma(5, "nome de clínica popular");
+
+  /* volume no Google */
+  const av = numBR(r.avaliacoes), nota = numBR(r.nota);
+  if(av >= 300) soma(15, av + " avaliações no Google");
+  else if(av >= 100) soma(10, av + " avaliações no Google");
+  else if(av >= 30) soma(5, av + " avaliações no Google");
+  if(av >= 50 && nota >= 4.5) soma(5, "nota " + String(r.nota).replace(".", ","));
+
+  /* horário estendido */
+  const h = String(r.horario || "");
+  const sab = /s[aá]b[^;|\n]*\d{1,2}[:h]\d{2}/i.test(h) && !/s[aá]b[a-z\-]*\s*:?\s*fechad/i.test(h);
+  const noite = /[–-]\s*(19|2[0-3])[:h]\d{2}/.test(h);
+  if(sab || noite) soma(10, [sab && "abre sábado", noite && "atende à noite"].filter(Boolean).join(" e "));
+
+  /* Receita: porte, capital, sócios, idade */
+  const porte = baseChave((x && x.porte) || r.porte || "");
+  if(x && x.mei) {}
+  else if(/DEMAIS/.test(porte)) soma(10, "porte grande (Demais)");
+  else if(/PEQUENO|EPP/.test(porte)) soma(7, "Empresa de Pequeno Porte");
+  else if(/MICRO|\bME\b/.test(porte)) soma(3, "Microempresa");
+  const cap = (x && x.capital) || numBR(r.capital);
+  if(cap >= 100000) soma(5, "capital social de R$ " + Math.round(cap).toLocaleString("pt-BR"));
+  const nSoc = Math.max((x && x.socios) || 0, (r.socios || []).length);
+  if(nSoc >= 2) soma(5, nSoc + " sócios");
+  const ab = (x && x.abertura) || "";
+  if(ab && mesesDesde(ab) >= 60) soma(5, Math.floor(mesesDesde(ab) / 12) + " anos de CNPJ");
+
+  /* entorno movimentado */
+  if(e){
+    const anc = e.transporte + e.comercio + e.ensinoSaude;
+    const pe = Math.min(10, anc * 3 + (e.pontosOnibus >= 3 ? 2 : 0));
+    soma(pe, [e.transporte && e.transporte + " transporte", e.comercio && e.comercio + " comércio grande",
+              e.ensinoSaude && e.ensinoSaude + " ensino/saúde", e.pontosOnibus >= 3 && e.pontosOnibus + " pontos de ônibus"]
+              .filter(Boolean).join(", ") + " por perto");
+  }
+
+  pts = Math.min(100, pts);
+  const nivel = pts >= 60 ? "Quente" : pts >= 35 ? "Morno" : "Frio";
+  const faltando = [!x && "Receita", !e && "entorno"].filter(Boolean);
+  return { pts, nivel, motivos, faltando };
+}
+function pillScore(sc){
+  const p = el("span","scorepill " + (sc.nivel === "Quente" ? "q" : sc.nivel === "Morno" ? "m" : "f"), sc.pts + " · " + sc.nivel);
+  p.title = (sc.motivos.length ? "Pontos: " + sc.motivos.join("; ") : "Nenhum sinal encontrado") +
+            (sc.faltando && sc.faltando.length ? "\nAinda falta consultar: " + sc.faltando.join(" e ") : "");
+  return p;
+}
+
 function ehLtda(x, r){
   if(x && x.codigo) return x.codigo === "2062" || x.codigo === "2240";
   if(x && x.natureza) return /limitada/i.test(x.natureza) && !/individual/i.test(x.natureza);
@@ -17311,8 +17503,8 @@ function abrirConsultaRequisitos(){
   const fechar = () => { if(rodando){ cancelar = true; return; } fundo.remove(); baseListaEmpresas(); };
   fundo.onclick = ev => { if(ev.target === fundo && !rodando) fechar(); };
 
-  caixa.append(el("h3",null,"Consultar requisitos de " + escolhidos.length + (escolhidos.length === 1 ? " lead" : " leads")));
-  caixa.append(el("p","sub","Busca na Receita a natureza jurídica e a data de abertura de cada CNPJ marcado:"));
+  caixa.append(el("h3",null,"Qualificar " + escolhidos.length + (escolhidos.length === 1 ? " lead marcado" : " leads marcados")));
+  caixa.append(el("p","sub","Busca na Receita a natureza, a abertura, o porte, o capital e os sócios de cada CNPJ, calcula o score de potencial e aplica os requisitos:"));
   const regras = el("div","tconf");
   regras.innerHTML = "<b>Não é LTDA</b> → vai para " + esc(adm.nome) + " em <b>Lead fora do requisito</b>.<br>" +
     "<b>LTDA com menos de 6 meses</b> → vai para " + esc(adm.nome) + " em <b>Aguardando tempo de CNPJ</b>, com a data em que completa 6 meses.<br>" +
@@ -17328,6 +17520,10 @@ function abrirConsultaRequisitos(){
   });
   if(F && S) selR.value = F.id + "|" + S.id;
   caixa.append(el("div","trot","Ramo onde ficam os leads devolvidos"), selR);
+  const lbE = el("label","tchk"), cbE = el("input"); cbE.type = "checkbox"; cbE.checked = true;
+  lbE.append(cbE, document.createTextNode(" Medir o movimento do entorno (transporte, shopping, supermercado, faculdade e hospital a até 600 m, pelo OpenStreetMap). Leva cerca de 3 segundos por lead."));
+  lbE.style.cssText = "display:flex;gap:8px;align-items:flex-start;font-size:13px;margin:10px 0";
+  caixa.append(lbE);
 
   const prog = el("p","sub"), barra = el("div","basebarra"), cheio = el("i");
   barra.style.cssText = "height:6px;background:var(--line-soft);border-radius:4px;overflow:hidden;margin:8px 0";
@@ -17343,7 +17539,8 @@ function abrirConsultaRequisitos(){
   document.body.append(fundo);
 
   bOk.onclick = async () => {
-    rodando = true; bOk.disabled = true; selR.disabled = true; bC.textContent = "Parar"; barra.hidden = false;
+    rodando = true; bOk.disabled = true; selR.disabled = true; cbE.disabled = true; bC.textContent = "Parar"; barra.hidden = false;
+    const comEntorno = cbE.checked, niveis = { Quente:0, Morno:0, Frio:0 }, frios = [];
     const [fid, rid] = selR.value.split("|");
     const cont = { ok:0, fora:0, aguarda:0, erro:0 };
     const lote = "rq" + Date.now().toString(36);
@@ -17356,10 +17553,21 @@ function abrirConsultaRequisitos(){
       if(!x || x.naoEncontrado){ cont.erro++; continue; }
       const ltda = ehLtda(x, r), ab = (x.abertura || "").slice(0,10);
       const novo = !ltda ? stFora : (ab && maisSeisMeses(ab) > hojeISO() ? stCnpj : null);
-      if(!novo){ if(!ab) cont.erro++; else cont.ok++; continue; }
+      if(!novo){
+        if(!ab){ cont.erro++; continue; }
+        cont.ok++;
+        if(comEntorno && !(qualifDe(k) || {}).entorno){
+          prog.textContent = "Medindo o entorno " + (i + 1) + " de " + escolhidos.length + ": " + (r.razaoSocial || r.cnpj);
+          const g = await geocodificar(r);
+          if(g){ const en = await consultarEntorno(g.lat, g.lon); if(en) qualifGravar(k, { geo: g, entorno: en }); }
+          await esperarMs(1100);
+        }
+        const sc = scoreLead(r); niveis[sc.nivel]++; if(sc.nivel === "Frio") frios.push(k);
+        continue;
+      }
       if(atribs()[k]) continue;
       const agora = new Date().toISOString();
-      const lead = Object.assign(fotoDoLead(r), { natureza: x.natureza || "", abertura: ab });
+      const lead = Object.assign(fotoComScore(r), { natureza: x.natureza || "", abertura: ab });
       const ref = { cnpj: r.cnpj, usuarioId: adm.id, frenteId: fid, ramoId: rid, status: "Em atuação",
         andamento: novo.id, obs: textoReq(x), em: agora, por: USR ? USR.id : null, lead, lote,
         retornoEm: agora, origemConsulta: true,
@@ -17375,14 +17583,25 @@ function abrirConsultaRequisitos(){
     persist();
     rodando = false; bC.textContent = "Fechar"; bOk.hidden = true;
     prog.textContent = cancelar ? "Consulta interrompida." : "Consulta concluída.";
-    resumo.innerHTML = "<p class='sub'><b>" + cont.ok + "</b> dentro do requisito (continuam marcados para transferir)<br>" +
+    resumo.innerHTML = "<p class='sub'><b>" + cont.ok + "</b> dentro do requisito (continuam marcados): " +
+      "<b>" + niveis.Quente + "</b> quentes, <b>" + niveis.Morno + "</b> mornos, <b>" + niveis.Frio + "</b> frios<br>" +
       "<b>" + cont.aguarda + "</b> enviados para Aguardando tempo de CNPJ<br>" +
       "<b>" + cont.fora + "</b> enviados para Lead fora do requisito" +
       (cont.erro ? "<br><b>" + cont.erro + "</b> não consultados (Receita fora do ar ou sem data de abertura); continuam marcados" : "") + "</p>";
     cancelar = false;
+    if(frios.length){
+      const bF = el("button","btn","Desmarcar os " + frios.length + " frios");
+      bF.onclick = () => { frios.forEach(x => BASE.sel.delete(x)); bF.disabled = true; bF.textContent = "Frios desmarcados"; };
+      ac.prepend(bF);
+    }
   };
 }
 
+function fotoComScore(r){
+  const sc = scoreLead(r), x = REQ.cache[cnpjDig(r.cnpj)] || {};
+  return Object.assign(fotoDoLead(r), { score: sc.pts, scoreNivel: sc.nivel, scoreMotivos: sc.motivos,
+    porte: x.porte || r.porte || "", avaliacoes: r.avaliacoes || "", nota: r.nota || "" });
+}
 function abrirTransferir(){
   const escolhidos = (BASE.lista || []).filter(r => BASE.sel.has(cnpjDig(r.cnpj)) && !atribDe(r) && contatoValido(r));
   if(!escolhidos.length) return toast("Marque ao menos um contato válido (com telefone).");
@@ -17502,7 +17721,7 @@ function abrirTransferir(){
       if(!k || at[k]) return;
       const st0 = statusInicial().id;
       at[k] = { cnpj: r.cnpj, usuarioId: uSel.id, frenteId: fid, ramoId: rid, status: "Em atuação",
-                andamento: st0, obs: "", em: agora, por: USR ? USR.id : null, lead: fotoDoLead(r), lote,
+                andamento: st0, obs: "", em: agora, por: USR ? USR.id : null, lead: fotoComScore(r), lote,
                 log: [{ t: agora, tipo:"entrada", status: st0, dono: uSel.id, por: USR ? USR.id : null,
                         excecao: passaDaCota || undefined }] };
       n++;
@@ -18173,6 +18392,7 @@ function textoEvento(e){
   const quem = e.por ? nomeUsuario(e.por) : "Sistema";
   if(e.tipo === "entrada") return "Entrou para " + nomeUsuario(e.dono) + " como " + nomeStatus(e.status) + (e.aprox ? " (data aproximada)" : "");
   if(e.tipo === "status") return quem + " mudou de " + nomeStatus(e.anterior) + " para " + nomeStatus(e.status) + (e.aprox ? " (data aproximada)" : "");
+  if(e.tipo === "parcelados") return nomeUsuario(e.por) + " informou " + (e.para == null ? "(apagou)" : e.para) + " pacientes pagando parcelas";
   if(e.tipo === "data") return nomeUsuario(e.por) + " alterou a data prevista" + (e.de ? " de " + fmtDataISO(e.de) : "") + " para " + fmtDataISO(e.data);
   if(e.tipo === "repasse") return nomeUsuario(e.de) + (e.auto ? " classificou como " + nomeStatus(e.status) + " e o lead foi transferido automaticamente para " + nomeUsuario(e.dono)
                                                          : " repassou para " + nomeUsuario(e.dono) + (e.statusAnt ? " (entregou em " + nomeStatus(e.statusAnt) + "; chega como " + nomeStatus(e.status) + ")" : ", em " + nomeStatus(e.status)));
@@ -18298,6 +18518,12 @@ function linhasDoPainel(todos){
   return box;
 }
 
+/* campo "pacientes pagando parcelas": CLOSER e ADM */
+function veParcelados(){
+  if(ehAdm()) return true;
+  const p = USR ? perfilDe(USR) : null;
+  return !!(p && /closer/i.test(p.nome || ""));
+}
 function renderLeadsTrab(host){
   const todos = leadsDoRamo();
   const meus = todos.filter(a => a.meu), repassados = todos.filter(a => !a.meu);
@@ -18398,6 +18624,10 @@ function renderLeadsTrab(host){
       const tn = el("td");
       tn.append(el("b",null,l.razaoSocial || l.nomeFantasia || "—"));
       if(l.nomeFantasia && l.razaoSocial) tn.append(el("div","sub",l.nomeFantasia));
+      if(l.score != null){
+        const ps = pillScore({ pts:l.score, nivel:l.scoreNivel || "Frio", motivos:l.scoreMotivos || [], faltando:[] });
+        ps.style.marginTop = "4px"; tn.append(ps);
+      }
       tr.append(tn, el("td",null,l.cnpj || ""), el("td",null,[l.cidade, l.uf].filter(Boolean).join("/")));
       const tt = el("td");
       if(l.telefone) tt.append(celulaTelefones(l.telefone, ref, l));
@@ -18518,7 +18748,27 @@ function renderLeadsTrab(host){
       }
       const to = el("td"), io = el("input","obs"); io.value = a.obs || ""; io.placeholder = "Anotação do contato";
       io.onchange = () => { ref.obs = io.value; ref.atualizadoEm = new Date().toISOString(); persist(); };
-      to.append(io); tr.append(to);
+      to.append(io);
+      if(veParcelados()){
+        const pc = el("label","parcin");
+        pc.append(document.createTextNode("Pacientes pagando parcelas:"));
+        const ip = el("input"); ip.type = "number"; ip.min = "0"; ip.step = "1"; ip.placeholder = "qtd.";
+        ip.value = ref.qtdParcelados != null ? ref.qtdParcelados : "";
+        ip.title = "Quantos pacientes a clínica tem hoje pagando tratamento parcelado (boleto, carnê, crediário)";
+        ip.onchange = () => {
+          const v = ip.value === "" ? null : Math.max(0, parseInt(ip.value, 10) || 0);
+          const ant = ref.qtdParcelados == null ? null : ref.qtdParcelados;
+          if(v === ant) return;
+          if(v == null) delete ref.qtdParcelados; else ref.qtdParcelados = v;
+          ref.atualizadoEm = new Date().toISOString();
+          registrar(ref, { tipo:"parcelados", de: ant, para: v, status: ref.andamento, dono: ref.usuarioId });
+          persist();
+        };
+        pc.append(ip);
+        if(ref.qtdParcelados >= 180) pc.append(el("span","scorepill q","180+"));
+        to.append(pc);
+      }
+      tr.append(to);
       const trec = el("td","muted", a.em ? new Date(a.repassadoEm || a.em).toLocaleDateString("pt-BR") : "");
       if(a.repassadoPor && !ehAdm()) trec.append(el("div","sub","de " + nomeUsuario(a.repassadoPor)));
       tr.append(trec);
@@ -18578,16 +18828,17 @@ function renderLeadsTrab(host){
     const bx = el("button","btn","Baixar esta lista em Excel");
     bx.onclick = () => {
       const linhas = [["Razao Social","Nome Fantasia","CNPJ","Endereco","Bairro","CEP","Cidade","UF","Telefone","Site","Socios",
-                       "Responsavel","Status","No status desde","Tempo no status","SLA do status","Situacao do SLA","Observacao","Recebido em","Repassado por"]];
+                       "Responsavel","Status","No status desde","Tempo no status","SLA do status","Situacao do SLA","Observacao","Recebido em","Repassado por","Score","Pacientes parcelados"]];
       lista.forEach(a => {
         const l = a.lead || {}, st = stDeLead(a), sla = slaMs(st), dec = Date.now() - inicioAtual(a);
         linhas.push([l.razaoSocial, l.nomeFantasia, l.cnpj, l.endereco, l.bairro, l.cep, l.cidade, l.uf,
           l.telefone, l.site, (l.socios || []).join(" | "), nomeUsuario(a.usuarioId), st.nome,
           dataHora(inicioAtual(a)), fmtDur(dec), sla ? fmtHoras(st.sla) : "", st.tipo !== "aberto" ? "Encerrado" : (!sla ? "Sem prazo" : (dec > sla ? "Fora do SLA" : "Dentro do SLA")),
           a.obs || "", a.em ? new Date(a.repassadoEm || a.em).toLocaleDateString("pt-BR") : "",
-          a.repassadoPor ? nomeUsuario(a.repassadoPor) : ""].map(v => v == null ? "" : String(v)));
+          a.repassadoPor ? nomeUsuario(a.repassadoPor) : "", l.score != null ? l.score + " " + (l.scoreNivel || "") : "",
+          a.qtdParcelados != null ? a.qtdParcelados : ""].map(v => v == null ? "" : String(v)));
       });
-      baixarXlsx("leads_a_trabalhar_" + S.nome, linhas, [36,30,22,40,20,12,20,6,18,26,40,20,18,16,14,12,14,40,12,20])
+      baixarXlsx("leads_a_trabalhar_" + S.nome, linhas, [36,30,22,40,20,12,20,6,18,26,40,20,18,16,14,12,14,40,12,20,12,12])
         .then(() => toast(lista.length.toLocaleString("pt-BR") + " leads na planilha."));
     };
     ac.append(bx); area.append(ac);
