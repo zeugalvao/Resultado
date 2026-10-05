@@ -18322,7 +18322,7 @@ function repararRetornos(){
   });
   return n;
 }
-function leadForaSla(a){ const st = stDeLead(a), s = slaMs(st); return !!s && Date.now() - inicioAtual(a) > s; }
+function leadForaSla(a){ const st = stDeLead(a), s = slaMs(st); return !!s && decorridoSla(a) > s; }
 /* status de entrada: o lead chega "sem ação" para quem recebe (Base ou repasse) */
 function statusEntrada(){ return statusDeVolta(); }
 function totalRetornos(){ return Object.values(atribs()).filter(emRetornoComum).length; }
@@ -18343,8 +18343,30 @@ function fmtDur(ms){
 function fmtHoras(h){
   h = num(h);
   if(!h) return "sem prazo";
-  return h >= 24 && h % 24 === 0 ? (h/24) + (h/24 === 1 ? " dia" : " dias") : h + "h";
+  return h >= 24 && h % 24 === 0 ? (h/24) + (h/24 === 1 ? " dia útil" : " dias úteis") : h + "h úteis";
 }
+/* ---------- SLA em dias úteis: sábado e domingo não contam ---------- */
+const DIA_MS = 864e5;
+function ehDiaUtil(t){ const d = new Date(t).getDay(); return d !== 0 && d !== 6; }
+function msUteis(ini, fim){
+  if(!(fim > ini)) return 0;
+  let t = ini, tot = 0;
+  while(t < fim){
+    const d = new Date(t);
+    /* atalho para períodos longos: semanas inteiras valem 5 dias */
+    if(d.getDay() === 1 && d.getHours() === 0 && d.getMinutes() === 0 && fim - t >= 7 * DIA_MS){
+      const semanas = Math.floor((fim - t) / (7 * DIA_MS));
+      const pula = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7 * semanas).getTime();
+      tot += semanas * 5 * DIA_MS; t = pula; continue;
+    }
+    const prox = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+    const ate = Math.min(prox, fim);
+    if(ehDiaUtil(t)) tot += ate - t;
+    t = ate;
+  }
+  return tot;
+}
+function decorridoSla(a){ return msUteis(inicioAtual(a), Date.now()); }
 function dataHora(t){ return new Date(t).toLocaleString("pt-BR", {day:"2-digit", month:"2-digit", year:"2-digit", hour:"2-digit", minute:"2-digit"}); }
 
 function registrar(ref, ev){
@@ -18479,7 +18501,8 @@ function linhaSla(a, colunas){
   const td = el("td"); td.colSpan = colunas;
   const box = el("div","slabox");
   const st = stDeLead(a), sla = slaMs(st);
-  const decorrido = Date.now() - inicioAtual(a);
+  const decorrido = decorridoSla(a);
+  const pausa = !ehDiaUtil(Date.now()) ? " · ⏸ pausado no fim de semana" : "";
   if(st.tipo !== "aberto"){
     box.append(el("span","slatxt fim", "Encerrado como " + st.nome + " em " +
       new Date(inicioAtual(a)).toLocaleDateString("pt-BR")));
@@ -18493,8 +18516,8 @@ function linhaSla(a, colunas){
     bar.title = "SLA de " + st.nome + ": " + fmtHoras(st.sla);
     box.append(bar);
     box.append(el("span","slatxt" + (fora ? " fora" : ""),
-      st.nome + " há " + fmtDur(decorrido) + " · prazo " + fmtHoras(st.sla) + " · " +
-      (fora ? "passou " + fmtDur(decorrido - sla) : "faltam " + fmtDur(sla - decorrido))));
+      st.nome + " há " + fmtDur(decorrido) + " úteis · prazo " + fmtHoras(st.sla) + " · " +
+      (fora ? "passou " + fmtDur(decorrido - sla) : "faltam " + fmtDur(sla - decorrido)) + pausa));
   }
   controlesHistorico(a, box);
   td.append(box);
@@ -18648,7 +18671,7 @@ function renderLeadsTrab(host){
   const area = el("div");
   host.append(area);
 
-  const foraDoSla = a => { const st = stDeLead(a), s = slaMs(st); return !!s && Date.now() - inicioAtual(a) > s; };
+  const foraDoSla = a => leadForaSla(a);
   const filtrar = () => {
     const q = baseChave(LT.busca);
     return todos.filter(a => {
@@ -18901,7 +18924,7 @@ function renderLeadsTrab(host){
       const linhas = [["Razao Social","Nome Fantasia","CNPJ","Endereco","Bairro","CEP","Cidade","UF","Telefone","Site","Socios",
                        "Responsavel","Status","No status desde","Tempo no status","SLA do status","Situacao do SLA","Observacao","Recebido em","Repassado por","Score","Pacientes parcelados"]];
       lista.forEach(a => {
-        const l = a.lead || {}, st = stDeLead(a), sla = slaMs(st), dec = Date.now() - inicioAtual(a);
+        const l = a.lead || {}, st = stDeLead(a), sla = slaMs(st), dec = decorridoSla(a);
         linhas.push([l.razaoSocial, l.nomeFantasia, l.cnpj, l.endereco, l.bairro, l.cep, l.cidade, l.uf,
           l.telefone, l.site, (l.socios || []).join(" | "), nomeUsuario(a.usuarioId), st.nome,
           dataHora(inicioAtual(a)), fmtDur(dec), sla ? fmtHoras(st.sla) : "", st.tipo !== "aberto" ? "Encerrado" : (!sla ? "Sem prazo" : (dec > sla ? "Fora do SLA" : "Dentro do SLA")),
@@ -18951,7 +18974,7 @@ function intervalosDe(a, agora){
     const fim = nx ? Date.parse(nx.t) : (a.arquivado ? null : agora);
     if(fim == null || isNaN(ini) || isNaN(fim)) continue;
     out.push({ status:e.status, dono:e.dono, ini, fim, aberto: !nx && !a.arquivado,
-               saiuPara: nx && nx.tipo === "status" ? nx.status : null, dur: Math.max(0, fim - ini) });
+               saiuPara: nx && nx.tipo === "status" ? nx.status : null, dur: msUteis(ini, fim), durCorrido: Math.max(0, fim - ini) });
   }
   return out;
 }
