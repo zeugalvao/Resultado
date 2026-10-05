@@ -18438,9 +18438,15 @@ function migrarStatusLeads(){
     else DB.statusLead.push({ id:"st_cnpj", nome:"Falta tempo de CNPJ aberto", sla:0, tipo:"aberto", repasse:false, retornaAdm:true, pedeData:true });
     sn.cnpjOk = true;
   }
-  if(sn && !sn.religarOk){
-    const na = DB.statusLead.find(x => /^\s*n[aã]o\s*atend/i.test(x.nome || ""));
-    if(na){ na.religar = true; na.retornaAdm = false; if(!na.tentativas) na.tentativas = 2; sn.religarOk = true; }
+  /* só o status chamado exatamente "Não atende" (não confundir com "Nao Atende Requisitos") */
+  const ehNaoAtende = nome => /^\s*n[aã]o\s+atende(r)?\s*$/i.test(nome || "");
+  if(sn && !sn.religarOk2){
+    DB.statusLead.forEach(x => {
+      if(x.religar && !ehNaoAtende(x.nome)){ delete x.religar; delete x.tentativas; x.retornaAdm = true; }
+    });
+    const na = DB.statusLead.find(x => ehNaoAtende(x.nome));
+    if(na){ na.religar = true; na.retornaAdm = false; if(!na.tentativas) na.tentativas = 2; }
+    sn.religarOk2 = true;
   }
   if(sn && !sn.foraOk){
     if(!DB.statusLead.some(x => x.foraReq))
