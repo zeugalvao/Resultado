@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="elosgate-leads" content="1">
-<!-- VERSAO-CRM 2026.10.05-v14 -->
+<!-- VERSAO-CRM 2026.10.05-v15 -->
 <title>CRM de Frentes de Trabalho · Elosgate</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1018,6 +1018,10 @@ tr.ltmais td{text-align:center;padding:8px}
 .ltord{display:inline-flex;gap:4px;align-items:center;font-size:12.5px;color:var(--muted);margin-left:8px}
 .parcin{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:11.5px;color:var(--muted)}
 .parcin input{width:84px;padding:4px 6px;font-size:12.5px}
+.motlista{display:flex;flex-direction:column;gap:6px;margin:10px 0}
+.motlista label{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:7px;cursor:pointer;font-size:14px}
+.motlista label:has(input:checked){border-color:#a3261d;background:#fdf3f2}
+.motperda{font-size:11.5px;color:#a3261d;margin-top:4px}
 .ltlinhas{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:0 0 20px;display:flex;flex-direction:column;gap:12px}
 .ltlinha{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap}
 .ltlinha .lttit{flex:0 0 170px;display:flex;flex-direction:column;justify-content:center}
@@ -1169,7 +1173,7 @@ a.wa.fixo{color:var(--muted);background:#F1F4F6;border-color:var(--line)}
       <div class="row"><span>Banco local</span><b id="dbkind">—</b></div>
       <div class="row"><span>Arquivo</span><b id="dbfile">não conectado</b></div>
       <div class="row"><span>Conclusão geral</span><b id="globalpct">0%</b></div>
-      <div class="row"><span>Versão do CRM</span><b>2026.10.05-v14</b></div>
+      <div class="row"><span>Versão do CRM</span><b>2026.10.05-v15</b></div>
       <button class="btn sm" id="btnArquivo" style="width:100%;margin-top:7px">Conectar arquivo</button>
     </div>
   </aside>
@@ -18374,6 +18378,50 @@ function devolverPorTentativas(ref, l, statusId, n, jaRegistrado){
   if(adm && adm.id !== ref.usuarioId) moverLead(ref, adm, agora, true);
   toast(((l && l.razaoSocial) || "Lead") + " não atendeu " + n + (n === 1 ? " vez" : " vezes") + " e foi devolvido para " + (adm ? adm.nome : "o administrador") + ".");
 }
+/* ---------- motivo da perda ---------- */
+const MOTIVOS_PADRAO = ["Nunca respondeu","Nenhum número de contato válido"];
+function pedeMotivo(st){ return !!st && (st.tipo === "perdido" || /perdid/i.test(st.nome || "")); }
+function motivosDe(st){ return (Array.isArray(st && st.motivos) && st.motivos.length) ? st.motivos : MOTIVOS_PADRAO; }
+function pedirMotivo(st, empresa){
+  return new Promise(resolve => {
+    const fundo = el("div","tmodal"), caixa = el("div","tcaixa");
+    caixa.setAttribute("role","dialog"); caixa.setAttribute("aria-modal","true");
+    fundo.append(caixa);
+    let feito = false;
+    const fim = v => { if(feito) return; feito = true; fundo.remove(); document.removeEventListener("keydown", esc, true); resolve(v); };
+    const esc = ev => { if(ev.key === "Escape"){ ev.stopPropagation(); fim(null); } };
+    document.addEventListener("keydown", esc, true);
+    fundo.onclick = ev => { if(ev.target === fundo) fim(null); };
+    caixa.append(el("h3",null,"Qual o motivo da perda?"));
+    caixa.append(el("p","sub",(empresa || "Este lead") + " vai ficar como \"" + st.nome + "\". O motivo fica gravado no histórico."));
+    const box = el("div","motlista"), nome = "mot" + Date.now();
+    const opcoes = motivosDe(st).concat(["Outro motivo"]);
+    const outro = el("input"); outro.placeholder = "Descreva o motivo"; outro.hidden = true; outro.style.width = "100%";
+    opcoes.forEach((m, i) => {
+      const lb = el("label"), rd = el("input"); rd.type = "radio"; rd.name = nome; rd.value = m;
+      rd.onchange = () => { erro.textContent = ""; outro.hidden = m !== "Outro motivo"; if(!outro.hidden) outro.focus(); };
+      lb.append(rd, el("span",null,(i < opcoes.length - 1 ? (i + 1) + " - " : "") + m));
+      box.append(lb);
+    });
+    const erro = el("p","terro");
+    const ac = el("div","pickacoes"), ok = el("button","btn primary","Confirmar perda"), cc = el("button","btn","Cancelar");
+    ok.onclick = () => {
+      const r = box.querySelector("input:checked");
+      if(!r) return (erro.textContent = "Escolha um motivo para continuar.");
+      if(r.value === "Outro motivo"){
+        const t = outro.value.trim();
+        if(t.length < 3) return (erro.textContent = "Descreva o motivo.");
+        return fim("Outro: " + t);
+      }
+      fim(r.value);
+    };
+    cc.onclick = () => fim(null);
+    ac.append(ok, cc);
+    caixa.append(box, outro, erro, ac);
+    document.body.append(fundo);
+    setTimeout(() => { const f = box.querySelector("input"); if(f) f.focus(); }, 30);
+  });
+}
 function totalRetornos(){ return Object.values(atribs()).filter(emRetornoComum).length; }
 function totalForaReq(){ return Object.values(atribs()).filter(emForaReq).length; }
 function totalAguardando(){ return Object.values(atribs()).filter(emAguardo).length; }
@@ -18544,6 +18592,7 @@ function textoEvento(e){
   const quem = e.por ? nomeUsuario(e.por) : "Sistema";
   if(e.tipo === "entrada") return "Entrou para " + nomeUsuario(e.dono) + " como " + nomeStatus(e.status) + (e.aprox ? " (data aproximada)" : "");
   if(e.tipo === "status" && e.tentativa && e.anterior === e.status) return quem + ": " + nomeStatus(e.status) + " (tentativa " + e.tentativa + ")" + (e.retorno ? ", devolvido ao ADM" : "");
+  if(e.tipo === "status" && e.motivo) return quem + " mudou de " + nomeStatus(e.anterior) + " para " + nomeStatus(e.status) + " · motivo: " + e.motivo;
   if(e.tipo === "status") return quem + " mudou de " + nomeStatus(e.anterior) + " para " + nomeStatus(e.status) + (e.aprox ? " (data aproximada)" : "");
   if(e.tipo === "parcelados") return nomeUsuario(e.por) + " informou " + (e.para == null ? "(apagou)" : e.para) + " pacientes pagando parcelas";
   if(e.tipo === "data") return nomeUsuario(e.por) + " alterou a data prevista" + (e.de ? " de " + fmtDataISO(e.de) : "") + " para " + fmtDataISO(e.data);
@@ -18840,7 +18889,11 @@ function renderLeadsTrab(host){
           persist(); render(); return;
         }
         const novo = statusPorId(s.value), vinhaDeRetorno = emRetorno(ref);
-        let dataPrev = null;
+        let dataPrev = null, motivo = null;
+        if(pedeMotivo(novo)){
+          motivo = await pedirMotivo(novo, l.razaoSocial);
+          if(!motivo){ s.value = ant; return; }
+        }
         if(pedeData(novo)){
           dataPrev = await pedirData("Quando o CNPJ atinge o tempo mínimo?",
             (l.razaoSocial || "Este lead") + (ehAdm() ? "" : " vai para o administrador, na divisão Aguardando tempo de CNPJ, e sai da sua lista."));
@@ -18854,7 +18907,9 @@ function renderLeadsTrab(host){
         ref.andamento = s.value;
         ref.atualizadoEm = new Date().toISOString();
         registrar(ref, { t: ref.atualizadoEm, tipo:"status", anterior: ant, status: s.value, dono: ref.usuarioId,
-                         retorno: retornaAdm(novo) || undefined, data: dataPrev || undefined });
+                         retorno: retornaAdm(novo) || undefined, data: dataPrev || undefined, motivo: motivo || undefined });
+        if(motivo) ref.motivoPerda = { motivo, status: s.value, em: ref.atualizadoEm, por: USR ? USR.id : null };
+        else if(!pedeMotivo(novo)) delete ref.motivoPerda;
         if(religar(novo) && !retornaAdm(novo) && !vinhaDeRetorno){
           ref.naTentativas = 1;
           if(maxTentativas(novo) <= 1){ devolverPorTentativas(ref, l, s.value, 1, true); persist(); render(); return; }
@@ -18882,6 +18937,7 @@ function renderLeadsTrab(host){
       };
       td.append(s);
       if(emReligar(a)) td.append(pillReligar(a));
+      if(a.motivoPerda && pedeMotivo(st)) td.append(el("div","motperda","Motivo: " + a.motivoPerda.motivo));
       if(emRetorno(a)){
         td.append(el("div","sub","↩ classificado por " + quemClassificou(a) +
           (a.retornoEm ? " em " + dataHora(a.retornoEm) : "")));
@@ -19013,7 +19069,7 @@ function renderLeadsTrab(host){
     const bx = el("button","btn","Baixar esta lista em Excel");
     bx.onclick = () => {
       const linhas = [["Razao Social","Nome Fantasia","CNPJ","Endereco","Bairro","CEP","Cidade","UF","Telefone","Site","Socios",
-                       "Responsavel","Status","No status desde","Tempo no status","SLA do status","Situacao do SLA","Observacao","Recebido em","Repassado por","Score","Pacientes parcelados"]];
+                       "Responsavel","Status","No status desde","Tempo no status","SLA do status","Situacao do SLA","Observacao","Recebido em","Repassado por","Score","Pacientes parcelados","Motivo da perda"]];
       lista.forEach(a => {
         const l = a.lead || {}, st = stDeLead(a), sla = slaMs(st), dec = decorridoSla(a);
         linhas.push([l.razaoSocial, l.nomeFantasia, l.cnpj, l.endereco, l.bairro, l.cep, l.cidade, l.uf,
@@ -19021,9 +19077,9 @@ function renderLeadsTrab(host){
           dataHora(inicioAtual(a)), fmtDur(dec), sla ? fmtHoras(st.sla) : "", st.tipo !== "aberto" ? "Encerrado" : (!sla ? "Sem prazo" : (dec > sla ? "Fora do SLA" : "Dentro do SLA")),
           a.obs || "", a.em ? new Date(a.repassadoEm || a.em).toLocaleDateString("pt-BR") : "",
           a.repassadoPor ? nomeUsuario(a.repassadoPor) : "", l.score != null ? l.score + " " + (l.scoreNivel || "") : "",
-          a.qtdParcelados != null ? a.qtdParcelados : ""].map(v => v == null ? "" : String(v)));
+          a.qtdParcelados != null ? a.qtdParcelados : "", a.motivoPerda ? a.motivoPerda.motivo : ""].map(v => v == null ? "" : String(v)));
       });
-      baixarXlsx("leads_a_trabalhar_" + S.nome, linhas, [36,30,22,40,20,12,20,6,18,26,40,20,18,16,14,12,14,40,12,20,12,12])
+      baixarXlsx("leads_a_trabalhar_" + S.nome, linhas, [36,30,22,40,20,12,20,6,18,26,40,20,18,16,14,12,14,40,12,20,12,12,30])
         .then(() => toast(lista.length.toLocaleString("pt-BR") + " leads na planilha."));
     };
     ac.append(bx); area.append(ac);
@@ -19046,7 +19102,8 @@ const GRAFICOS = [
   ["transicoes","Tempo de um status até o outro","Ex.: de Proposta enviada até Ganho"],
   ["funil","Leads por status agora","Onde a carteira está hoje"],
   ["atrasados","Leads fora do SLA agora","Os que estão há mais tempo além do prazo"],
-  ["retornos","Retornos para o ADM por dia","Quantos contatos cada usuário classificou, por dia, em status que voltam para o ADM"]
+  ["retornos","Retornos para o ADM por dia","Quantos contatos cada usuário classificou, por dia, em status que voltam para o ADM"],
+  ["perdas","Motivos de perda","Quantos leads foram perdidos, por motivo e por usuário"]
 ];
 const DASH = { dias:"30", frente:"", ramo:"", usuario:"" };
 
@@ -19072,7 +19129,7 @@ function intervalosDe(a, agora){
 
 function calcDash(f){
   const agora = Date.now();
-  const R = { porStatus:{}, porUsuario:{}, trans:{}, atrasados:[], funil:{}, ciclo:[], ativos:0, mud:0, retornos:{}, retornosTot:0 };
+  const R = { porStatus:{}, porUsuario:{}, trans:{}, atrasados:[], funil:{}, ciclo:[], ativos:0, mud:0, retornos:{}, retornosTot:0, perdas:{}, perdasTot:0 };
   const U = id => R.porUsuario[id] || (R.porUsuario[id] = { mud:0, ganhos:0, perdidos:0, recebidos:0, repassados:0,
                                                            cumpridos:0, estourados:0, ativos:0, fora:0 });
   const SS = id => R.porStatus[id] || (R.porStatus[id] = { n:0, soma:0, cumpridos:0, estourados:0, foraAgora:0 });
@@ -19094,6 +19151,10 @@ function calcDash(f){
         const st = statusPorId(e.status);
         if(st && st.tipo === "ganho" && doUsuario(e.dono)) U(e.dono).ganhos++;
         if(st && st.tipo === "perdido" && doUsuario(e.dono)) U(e.dono).perdidos++;
+        if(e.motivo && doUsuario(quem)){
+          const x = R.perdas[e.motivo] || (R.perdas[e.motivo] = { total:0, por:{} });
+          x.total++; x.por[quem] = (x.por[quem] || 0) + 1; R.perdasTot++;
+        }
         if((retornaAdm(st) || e.retorno) && doUsuario(quem)){
           const d = new Date(t), dia = d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
           const k = dia + "|" + quem;
@@ -19300,8 +19361,27 @@ function graficoRetornos(R){
   if(linhas.length > 90) c.append(el("p","leadshint","Mostrando os 90 dias/usuários mais recentes de " + linhas.length + ". Use o filtro de período."));
   return c;
 }
+function graficoPerdas(R){
+  const c = gCard("Motivos de perda","Leads marcados como perdidos no período, pelo motivo escolhido e por quem classificou.");
+  const ms = Object.entries(R.perdas).sort((a, b) => b[1].total - a[1].total);
+  if(!ms.length) return gVazio(c, "Nenhum lead perdido com motivo no período.");
+  const quem = [...new Set(ms.flatMap(([, x]) => Object.keys(x.por)))];
+  const tw = el("div","tablewrap"), t = el("table","leadlista gtab");
+  const h = el("tr");
+  ["Motivo"].concat(quem.map(nomeUsuario)).concat(["Total","%"]).forEach(x => h.append(el("th",null,x)));
+  t.append(h);
+  ms.forEach(([m, x]) => {
+    const tr = el("tr");
+    tr.append(el("td",null,m));
+    quem.forEach(u => tr.append(el("td", x.por[u] ? null : "muted", String(x.por[u] || 0))));
+    tr.append(tdNegrito(String(x.total)), el("td","muted", Math.round(x.total / R.perdasTot * 100) + "%"));
+    t.append(tr);
+  });
+  tw.append(t); c.append(tw);
+  return c;
+}
 const DESENHA_GRAFICO = { produtividade:graficoProdutividade, slaUsuario:graficoSlaUsuario, slaStatus:graficoSlaStatus,
-  tempo:graficoTempo, transicoes:graficoTransicoes, funil:graficoFunil, atrasados:graficoAtrasados, retornos:graficoRetornos };
+  tempo:graficoTempo, transicoes:graficoTransicoes, funil:graficoFunil, atrasados:graficoAtrasados, retornos:graficoRetornos, perdas:graficoPerdas };
 
 function kpis(host, R){
   const tot = Object.values(R.porUsuario).reduce((s, u) => s + u.cumpridos + u.estourados, 0);
@@ -19604,6 +19684,19 @@ function blocoStatusSla(host){
 
     tr.append(el("td","muted", String(uso[s.id] || 0)));
     const tx = el("td"), bx = el("button","btn sm danger","Excluir");
+    if(pedeMotivo(s)){
+      const bm = el("button","btn sm","Motivos (" + motivosDe(s).length + ")");
+      bm.style.marginRight = "6px";
+      bm.title = "Motivos que aparecem quando alguém escolhe este status: " + motivosDe(s).join("; ");
+      bm.onclick = () => {
+        const v = prompt("Motivos de perda para \"" + s.nome + "\", separados por ponto e vírgula (;).\nA opção \"Outro motivo\" sempre aparece no final.", motivosDe(s).join("; "));
+        if(v == null) return;
+        const lst = v.split(";").map(x => x.trim()).filter(Boolean);
+        if(!lst.length) return toast("Informe ao menos um motivo.");
+        s.motivos = lst; persist(); redesenharPicker();
+      };
+      tx.append(bm);
+    }
     bx.onclick = () => {
       if(uso[s.id]) return toast("Há " + uso[s.id] + " leads neste status. Mude o status deles antes de excluir.");
       if(s.tipo === "aberto" && lista.filter(x => x.tipo === "aberto").length === 1) return toast("Mantenha ao menos um status em aberto.");
