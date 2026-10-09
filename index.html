@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="elosgate-leads" content="1">
-<!-- VERSAO-CRM 2026.10.05-v15 -->
+<!-- VERSAO-CRM 2026.10.05-v16 -->
 <title>CRM de Frentes de Trabalho · Elosgate</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1022,6 +1022,7 @@ tr.ltmais td{text-align:center;padding:8px}
 .motlista label{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:7px;cursor:pointer;font-size:14px}
 .motlista label:has(input:checked){border-color:#a3261d;background:#fdf3f2}
 .motperda{font-size:11.5px;color:#a3261d;margin-top:4px}
+.fonerep{display:inline-block;margin-top:4px;padding:2px 8px;border-radius:999px;background:#fdf0d5;color:#8a5a0b;font-size:11.5px;font-weight:600;cursor:help}
 .ltlinhas{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:0 0 20px;display:flex;flex-direction:column;gap:12px}
 .ltlinha{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap}
 .ltlinha .lttit{flex:0 0 170px;display:flex;flex-direction:column;justify-content:center}
@@ -1173,7 +1174,7 @@ a.wa.fixo{color:var(--muted);background:#F1F4F6;border-color:var(--line)}
       <div class="row"><span>Banco local</span><b id="dbkind">—</b></div>
       <div class="row"><span>Arquivo</span><b id="dbfile">não conectado</b></div>
       <div class="row"><span>Conclusão geral</span><b id="globalpct">0%</b></div>
-      <div class="row"><span>Versão do CRM</span><b>2026.10.05-v15</b></div>
+      <div class="row"><span>Versão do CRM</span><b>2026.10.05-v16</b></div>
       <button class="btn sm" id="btnArquivo" style="width:100%;margin-top:7px">Conectar arquivo</button>
     </div>
   </aside>
@@ -16826,6 +16827,32 @@ function contatoValido(r){
   return String((r && r.telefone) || "").split(/[,;\/|]+/).some(t => t.replace(/\D/g,"").length >= 8);
 }
 function atribDe(r){ return atribs()[cnpjDig(r.cnpj)] || null; }
+/* ---------- telefone repetido em várias empresas (quase sempre o telefone do contador na Receita) ---------- */
+const FONE_REP_MIN = 3;
+function foneChaves(txt){
+  return String(txt || "").split(/[,;\/|]+/).map(t => {
+    let d = t.replace(/\D/g,"");
+    if(d.length > 11 && d.startsWith("55")) d = d.slice(2);
+    if(d.length === 11 && d.startsWith("0")) d = d.slice(1);
+    return d.length >= 8 ? d.slice(-10) : "";
+  }).filter(Boolean);
+}
+/* conta em quantas empresas diferentes (raiz do CNPJ) cada telefone aparece */
+function mapaFones(lista, pegarFone, pegarCnpj){
+  const m = {};
+  lista.forEach(x => {
+    const raiz = baseRaiz(pegarCnpj(x)) || cnpjDig(pegarCnpj(x));
+    foneChaves(pegarFone(x)).forEach(k => { (m[k] || (m[k] = new Set())).add(raiz); });
+  });
+  const out = {}; Object.entries(m).forEach(([k, st]) => { out[k] = st.size; });
+  return out;
+}
+function vezesFone(txt, mapa){ return foneChaves(txt).reduce((mx, k) => Math.max(mx, (mapa && mapa[k]) || 0), 0); }
+function etiquetaFoneRep(n){
+  const e = el("span","fonerep","⚠ mesmo telefone em " + n + " empresas");
+  e.title = "Este número aparece em " + n + " empresas diferentes. Quase sempre é o telefone do escritório de contabilidade, cadastrado na Receita no lugar do telefone da clínica. Confirme o número da clínica no Google antes de ligar.";
+  return e;
+}
 function nomeUsuario(id){ const u = (DB.usuarios || []).find(x => x.id === id); return u ? u.nome : "usuário removido"; }
 function acharRamo(fid, rid){
   const f = DB.frentes.find(x => x.id === fid);
@@ -16890,6 +16917,7 @@ async function baseListaEmpresas(){
   const nIncomp = lista.filter(r => !emAt(r) && !contatoValido(r)).length;
   BASE.raizes = {};
   lista.forEach(r => { const z = baseRaiz(r.cnpj); if(z) BASE.raizes[z] = (BASE.raizes[z] || 0) + 1; });
+  BASE.fones = mapaFones(lista, r => r.telefone, r => r.cnpj);
   qualifTodos();
   const scores = new Map();
   const scoreDe = r => { const k = cnpjDig(r.cnpj); if(!scores.has(k)) scores.set(k, scoreLead(r)); return scores.get(k); };
@@ -16966,13 +16994,15 @@ async function baseListaEmpresas(){
       const n = parseInt(q.value, 10);
       if(!(n > 0)) return toast("Informe quantos leads quer marcar.");
       BASE.qtd = String(n);
-      let c = 0;
+      let c = 0, pulou = 0;
       for(const r of visiveis){
         if(c >= n) break;
         const k = cnpjDig(r.cnpj);
         if(!transferivel(r) || BASE.sel.has(k)) continue;
+        if(vezesFone(r.telefone, BASE.fones) >= FONE_REP_MIN){ pulou++; continue; }
         BASE.sel.add(k); c++;
       }
+      if(pulou) setTimeout(() => toast(pulou + " leads com telefone repetido em várias empresas foram pulados (provável telefone do contador)."), 600);
       if(c < n) toast("Só havia " + c + " contatos válidos disponíveis para marcar" +
         (BASE.mostrar === "todos" || BASE.mostrar === "disp" ? "." : " nesta visão. Use Contatos válidos ou Todos."));
       baseListaEmpresas();
@@ -17062,6 +17092,7 @@ async function baseListaEmpresas(){
       ts.append(el("span","pill st-inc","INCOMPLETO"));
       ts.append(el("div","quem","sem telefone"));
     } else ts.append(el("span","pill st-ok","CONTATO VÁLIDO"));
+    { const nr = vezesFone(r.telefone, BASE.fones); if(nr >= FONE_REP_MIN){ ts.append(el("br")); ts.append(etiquetaFoneRep(nr)); } }
     if(!a && REQ.cache[k]) ts.append(el("div","quem", (ehLtda(REQ.cache[k], r) ? "✓ " : "") + textoReq(REQ.cache[k])));
     tr.append(ts);
     tab.append(tr);
@@ -17439,7 +17470,9 @@ function scoreLead(r){
               .filter(Boolean).join(", ") + " por perto");
   }
 
-  pts = Math.min(100, pts);
+  const rep = vezesFone(r.telefone, BASE.fones);
+  if(rep >= FONE_REP_MIN){ pts -= 25; motivos.push("−25: telefone repetido em " + rep + " empresas (provável contador)"); }
+  pts = Math.max(0, Math.min(100, pts));
   const nivel = pts >= 60 ? "Quente" : pts >= 35 ? "Morno" : "Frio";
   const faltando = [!x && "Receita", !e && "entorno"].filter(Boolean);
   return { pts, nivel, motivos, faltando };
@@ -18746,6 +18779,8 @@ function renderLeadsTrab(host){
   host.append(painelPessoal());
   host.append(barraPastaConversas());
 
+  LT.fones = mapaFones(Object.values(atribs()), a => (a.lead || {}).telefone, a => a.cnpj);
+  const foneRep = a => vezesFone((a.lead || {}).telefone, LT.fones);
   const filtros = el("div","leadsform ltfiltros");
   const campo = (rot, e) => { const c = el("div","leadscampo"); c.append(el("label",null,rot), e); filtros.append(c); };
   const busca = el("input"); busca.type = "search"; busca.placeholder = "Empresa, CNPJ, cidade ou sócio"; busca.value = LT.busca;
@@ -18755,6 +18790,8 @@ function renderLeadsTrab(host){
   sa.append(Object.assign(el("option",null,"Fora do SLA"), {value:"__fora"}));
   statusLista().forEach(s => sa.append(Object.assign(el("option",null,s.nome), {value:s.id})));
   if(repassados.length) sa.append(Object.assign(el("option",null,"Repassados por mim"), {value:"__rep"}));
+  { const nf = todos.filter(a => a.meu && foneRep(a) >= FONE_REP_MIN).length;
+    if(nf) sa.append(Object.assign(el("option",null,"⚠ Telefone repetido em várias empresas (" + nf + ")"), {value:"__fonerep"})); }
   if(ehAdm()){
     const nRet = todos.filter(emRetornoComum).length;
     sa.append(Object.assign(el("option",null,"↩ Retornos para tratar (" + nRet + ")"), {value:"__ret"}));
@@ -18792,6 +18829,7 @@ function renderLeadsTrab(host){
       else if(LT.andamento === "__ret"){ if(!emRetornoComum(a)) return false; }
       else if(LT.andamento === "__cnpj"){ if(!emAguardo(a)) return false; }
       else if(LT.andamento === "__forareq"){ if(!emForaReq(a)) return false; }
+      else if(LT.andamento === "__fonerep"){ if(!a.meu || foneRep(a) < FONE_REP_MIN) return false; }
       else if(LT.andamento && (!a.meu || a.andamento !== LT.andamento)) return false;
       if(LT.usuario && a.usuarioId !== LT.usuario) return false;
       if(!q) return true;
@@ -18835,6 +18873,7 @@ function renderLeadsTrab(host){
       const tt = el("td");
       if(l.telefone) tt.append(celulaTelefones(l.telefone, ref, l));
       else tt.append(el("span","muted","—"));
+      { const nr = vezesFone(l.telefone, LT.fones); if(nr >= FONE_REP_MIN) tt.append(etiquetaFoneRep(nr)); }
       tr.append(tt);
       tr.append(el("td","muted",(l.socios || []).join(", ")));
       if(ehAdm()){
