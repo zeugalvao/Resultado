@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="elosgate-leads" content="1">
-<!-- VERSAO-CRM 2026.10.05-v16 -->
+<!-- VERSAO-CRM 2026.10.05-v17 -->
 <title>CRM de Frentes de Trabalho · Elosgate</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1023,6 +1023,15 @@ tr.ltmais td{text-align:center;padding:8px}
 .motlista label:has(input:checked){border-color:#a3261d;background:#fdf3f2}
 .motperda{font-size:11.5px;color:#a3261d;margin-top:4px}
 .fonerep{display:inline-block;margin-top:4px;padding:2px 8px;border-radius:999px;background:#fdf0d5;color:#8a5a0b;font-size:11.5px;font-weight:600;cursor:help}
+.ctextra{margin-top:6px;padding-top:6px;border-top:1px dashed var(--line-soft);display:flex;flex-direction:column;gap:4px}
+.ctextra .ctlin{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.ctextra .setor{font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#1f6f63;background:#e3f2ef;border-radius:4px;padding:1px 6px}
+.ctextra .ctx{border:0;background:none;color:var(--muted);cursor:pointer;font-size:14px;line-height:1;padding:0 2px}
+.ctextra .ctx:hover{color:#a3261d}
+.ctadd{margin-top:6px;font-size:12px;padding:3px 9px}
+.ctform{display:grid;grid-template-columns:1fr;gap:10px;margin:12px 0}
+.ctform label{display:flex;flex-direction:column;gap:4px;font-size:13px}
+.ctform input{font-size:15px;padding:8px 10px}
 .ltlinhas{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:0 0 20px;display:flex;flex-direction:column;gap:12px}
 .ltlinha{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap}
 .ltlinha .lttit{flex:0 0 170px;display:flex;flex-direction:column;justify-content:center}
@@ -1174,7 +1183,7 @@ a.wa.fixo{color:var(--muted);background:#F1F4F6;border-color:var(--line)}
       <div class="row"><span>Banco local</span><b id="dbkind">—</b></div>
       <div class="row"><span>Arquivo</span><b id="dbfile">não conectado</b></div>
       <div class="row"><span>Conclusão geral</span><b id="globalpct">0%</b></div>
-      <div class="row"><span>Versão do CRM</span><b>2026.10.05-v16</b></div>
+      <div class="row"><span>Versão do CRM</span><b>2026.10.05-v17</b></div>
       <button class="btn sm" id="btnArquivo" style="width:100%;margin-top:7px">Conectar arquivo</button>
     </div>
   </aside>
@@ -17866,6 +17875,97 @@ function numeroWhatsApp(t){
   return d;
 }
 function ehCelular(n){ return n.length === 13 && n[4] === "9"; }
+/* ---------- telefones adicionados pela equipe (setor + número com DDD) ---------- */
+const SETORES_SUGERIDOS = ["Financeiro","Recepção","Dono / sócio","Gerente","Administrativo","Comercial","WhatsApp da clínica","Dentista responsável"];
+function formatarFone(d){
+  d = String(d || "").replace(/\D/g,"");
+  if(d.length === 11) return "(" + d.slice(0,2) + ") " + d.slice(2,7) + "-" + d.slice(7);
+  if(d.length === 10) return "(" + d.slice(0,2) + ") " + d.slice(2,6) + "-" + d.slice(6);
+  return d;
+}
+function pedirContato(empresa){
+  return new Promise(resolve => {
+    const fundo = el("div","tmodal"), caixa = el("div","tcaixa");
+    caixa.setAttribute("role","dialog"); caixa.setAttribute("aria-modal","true");
+    fundo.append(caixa);
+    let feito = false;
+    const fim = v => { if(feito) return; feito = true; fundo.remove(); document.removeEventListener("keydown", esc, true); resolve(v); };
+    const esc = ev => { if(ev.key === "Escape"){ ev.stopPropagation(); fim(null); } };
+    document.addEventListener("keydown", esc, true);
+    fundo.onclick = ev => { if(ev.target === fundo) fim(null); };
+    caixa.append(el("h3",null,"Adicionar telefone"));
+    caixa.append(el("p","sub",empresa || ""));
+    const f = el("div","ctform");
+    const l1 = el("label",null,"Setor ou pessoa *"), iS = el("input");
+    const dl = el("datalist"); dl.id = "setores" + Date.now();
+    SETORES_SUGERIDOS.forEach(x => dl.append(Object.assign(el("option"), { value:x })));
+    iS.setAttribute("list", dl.id); iS.placeholder = "Ex.: Financeiro, Recepção, Dra. Ana";
+    l1.append(iS, dl);
+    const l2 = el("label",null,"Número com DDD *"), iN = el("input");
+    iN.type = "tel"; iN.inputMode = "numeric"; iN.placeholder = "(62) 99999-0000";
+    iN.oninput = () => { const d = iN.value.replace(/\D/g,"").slice(0,11); iN.value = d.length >= 10 ? formatarFone(d) : d; erro.textContent = ""; };
+    l2.append(iN);
+    f.append(l1, l2);
+    const erro = el("p","terro");
+    const ac = el("div","pickacoes"), ok = el("button","btn primary","Salvar telefone"), cc = el("button","btn","Cancelar");
+    ok.onclick = () => {
+      const setor = iS.value.trim(), d = iN.value.replace(/\D/g,"");
+      if(setor.length < 2) return (erro.textContent = "Informe o setor ou a pessoa (ex.: Financeiro).");
+      if(d.length < 10 || d.length > 11) return (erro.textContent = "Informe o número com DDD: 10 dígitos para fixo ou 11 para celular.");
+      if(+d.slice(0,2) < 11) return (erro.textContent = "DDD inválido.");
+      fim({ setor, numero: formatarFone(d) });
+    };
+    cc.onclick = () => fim(null);
+    iN.onkeydown = ev => { if(ev.key === "Enter") ok.click(); };
+    ac.append(ok, cc);
+    caixa.append(f, erro, ac);
+    document.body.append(fundo);
+    setTimeout(() => iS.focus(), 30);
+  });
+}
+function blocoContatosExtras(ref, empresa){
+  const box = el("div");
+  const lista = Array.isArray(ref.contatos) ? ref.contatos : [];
+  if(lista.length){
+    const ex = el("div","ctextra");
+    lista.forEach((c, i) => {
+      const lin = el("div","ctlin");
+      lin.append(el("span","setor",c.setor));
+      const tel = celulaTelefones(c.numero, ref);
+      tel.style.display = "inline-flex";
+      lin.append(tel);
+      lin.title = "Adicionado por " + nomeUsuario(c.por) + (c.em ? " em " + dataHora(c.em) : "");
+      if(ehAdm() || (USR && c.por === USR.id)){
+        const x = el("button","ctx","×"); x.type = "button"; x.dataset.livre = "1";
+        x.title = "Remover este telefone"; x.setAttribute("aria-label","Remover " + c.setor + " " + c.numero);
+        x.onclick = () => {
+          if(!confirm("Remover o telefone " + c.setor + " " + c.numero + "?")) return;
+          ref.contatos.splice(i, 1);
+          registrar(ref, { tipo:"contato", acao:"removeu", setor: c.setor, tel: c.numero, status: ref.andamento, dono: ref.usuarioId });
+          ref.atualizadoEm = new Date().toISOString(); persist(); render();
+        };
+        lin.append(x);
+      }
+      ex.append(lin);
+    });
+    box.append(ex);
+  }
+  const b = el("button","btn sm ctadd","+ telefone"); b.type = "button"; b.dataset.livre = "1";
+  b.title = "Adicionar um telefone novo com o setor (ex.: Financeiro)";
+  b.onclick = async () => {
+    const c = await pedirContato(empresa);
+    if(!c) return;
+    const dig = c.numero.replace(/\D/g,"");
+    if((ref.contatos || []).some(x => x.numero.replace(/\D/g,"") === dig)) return toast("Esse número já está cadastrado neste lead.");
+    const agora = new Date().toISOString();
+    ref.contatos = (ref.contatos || []).concat([{ setor: c.setor, numero: c.numero, por: USR ? USR.id : null, em: agora }]);
+    registrar(ref, { t: agora, tipo:"contato", acao:"adicionou", setor: c.setor, tel: c.numero, status: ref.andamento, dono: ref.usuarioId });
+    ref.atualizadoEm = agora; persist(); render();
+    toast("Telefone " + c.setor + " " + c.numero + " adicionado.");
+  };
+  box.append(b);
+  return box;
+}
 function celulaTelefones(txt, ref, lead){
   const box = el("div","tels");
   separarTelefones(txt).forEach(t => {
@@ -18627,6 +18727,7 @@ function textoEvento(e){
   if(e.tipo === "status" && e.tentativa && e.anterior === e.status) return quem + ": " + nomeStatus(e.status) + " (tentativa " + e.tentativa + ")" + (e.retorno ? ", devolvido ao ADM" : "");
   if(e.tipo === "status" && e.motivo) return quem + " mudou de " + nomeStatus(e.anterior) + " para " + nomeStatus(e.status) + " · motivo: " + e.motivo;
   if(e.tipo === "status") return quem + " mudou de " + nomeStatus(e.anterior) + " para " + nomeStatus(e.status) + (e.aprox ? " (data aproximada)" : "");
+  if(e.tipo === "contato") return nomeUsuario(e.por) + " " + (e.acao || "adicionou") + " o telefone " + (e.setor ? e.setor + " " : "") + (e.tel || "");
   if(e.tipo === "parcelados") return nomeUsuario(e.por) + " informou " + (e.para == null ? "(apagou)" : e.para) + " pacientes pagando parcelas";
   if(e.tipo === "data") return nomeUsuario(e.por) + " alterou a data prevista" + (e.de ? " de " + fmtDataISO(e.de) : "") + " para " + fmtDataISO(e.data);
   if(e.tipo === "repasse") return nomeUsuario(e.de) + (e.auto ? " classificou como " + nomeStatus(e.status) + " e o lead foi transferido automaticamente para " + nomeUsuario(e.dono)
@@ -18874,6 +18975,7 @@ function renderLeadsTrab(host){
       if(l.telefone) tt.append(celulaTelefones(l.telefone, ref, l));
       else tt.append(el("span","muted","—"));
       { const nr = vezesFone(l.telefone, LT.fones); if(nr >= FONE_REP_MIN) tt.append(etiquetaFoneRep(nr)); }
+      if(ref) tt.append(blocoContatosExtras(ref, l.razaoSocial || l.nomeFantasia));
       tr.append(tt);
       tr.append(el("td","muted",(l.socios || []).join(", ")));
       if(ehAdm()){
@@ -19108,7 +19210,7 @@ function renderLeadsTrab(host){
     const bx = el("button","btn","Baixar esta lista em Excel");
     bx.onclick = () => {
       const linhas = [["Razao Social","Nome Fantasia","CNPJ","Endereco","Bairro","CEP","Cidade","UF","Telefone","Site","Socios",
-                       "Responsavel","Status","No status desde","Tempo no status","SLA do status","Situacao do SLA","Observacao","Recebido em","Repassado por","Score","Pacientes parcelados","Motivo da perda"]];
+                       "Responsavel","Status","No status desde","Tempo no status","SLA do status","Situacao do SLA","Observacao","Recebido em","Repassado por","Score","Pacientes parcelados","Motivo da perda","Telefones adicionados"]];
       lista.forEach(a => {
         const l = a.lead || {}, st = stDeLead(a), sla = slaMs(st), dec = decorridoSla(a);
         linhas.push([l.razaoSocial, l.nomeFantasia, l.cnpj, l.endereco, l.bairro, l.cep, l.cidade, l.uf,
@@ -19116,9 +19218,10 @@ function renderLeadsTrab(host){
           dataHora(inicioAtual(a)), fmtDur(dec), sla ? fmtHoras(st.sla) : "", st.tipo !== "aberto" ? "Encerrado" : (!sla ? "Sem prazo" : (dec > sla ? "Fora do SLA" : "Dentro do SLA")),
           a.obs || "", a.em ? new Date(a.repassadoEm || a.em).toLocaleDateString("pt-BR") : "",
           a.repassadoPor ? nomeUsuario(a.repassadoPor) : "", l.score != null ? l.score + " " + (l.scoreNivel || "") : "",
-          a.qtdParcelados != null ? a.qtdParcelados : "", a.motivoPerda ? a.motivoPerda.motivo : ""].map(v => v == null ? "" : String(v)));
+          a.qtdParcelados != null ? a.qtdParcelados : "", a.motivoPerda ? a.motivoPerda.motivo : "",
+          (a.contatos || []).map(c => c.setor + ": " + c.numero).join(" | ")].map(v => v == null ? "" : String(v)));
       });
-      baixarXlsx("leads_a_trabalhar_" + S.nome, linhas, [36,30,22,40,20,12,20,6,18,26,40,20,18,16,14,12,14,40,12,20,12,12,30])
+      baixarXlsx("leads_a_trabalhar_" + S.nome, linhas, [36,30,22,40,20,12,20,6,18,26,40,20,18,16,14,12,14,40,12,20,12,12,30,40])
         .then(() => toast(lista.length.toLocaleString("pt-BR") + " leads na planilha."));
     };
     ac.append(bx); area.append(ac);
