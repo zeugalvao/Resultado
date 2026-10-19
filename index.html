@@ -1127,6 +1127,34 @@ a.wa:hover{background:#C9EDD7;border-color:#6FC495}
 a.wa:focus-visible{outline:2px solid #0B6B3A;outline-offset:1px}
 a.wa.fixo{color:var(--muted);background:#F1F4F6;border-color:var(--line)}
 
+/* ---------- Base: estado separado por score e tipo de telefone ---------- */
+.basegrupos{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:14px;margin:0 0 16px;align-items:start}
+@media(max-width:900px){ .basegrupos{grid-template-columns:1fr} }
+.bgtitulo{margin:0 0 8px;font-size:14px;font-weight:600}
+.bgtitulo span{font-weight:400;font-size:12px;color:var(--muted);margin-left:8px}
+.bgmatriz{border:1px solid var(--line);border-radius:8px;background:#fff;overflow-x:auto}
+.bgmatriz table{width:100%;border-collapse:collapse;font-size:13px}
+.bgmatriz th{font-weight:600;font-size:11.5px;color:var(--muted);text-align:right;padding:8px 12px;background:var(--surface);white-space:nowrap}
+.bgmatriz th:first-child{text-align:left}
+.bgmatriz th.cel{color:#0B6B3A}
+.bgmatriz td{border-top:1px solid var(--line);padding:0}
+.bgmatriz td.rot{padding:6px 12px;white-space:nowrap}
+.bgmatriz td.tot,.bgmatriz th.tot{border-left:1px solid var(--line)}
+.bgmatriz tr.tot td{background:#F7FAFC}
+.bgmatriz button.bgcel{display:block;width:100%;border:0;background:none;font:inherit;color:inherit;text-align:right;
+  padding:9px 12px;font-variant-numeric:tabular-nums;cursor:pointer}
+.bgmatriz button.bgcel:hover{background:var(--surface)}
+.bgmatriz button.bgcel:focus-visible{outline:2px solid var(--teal);outline-offset:-2px}
+.bgmatriz button.bgcel.zero{color:var(--muted)}
+.bgmatriz button.bgcel.on{background:#E6F4F2;box-shadow:inset 0 0 0 2px var(--teal);font-weight:600}
+.bgmatriz tr.tot button.bgcel,.bgmatriz td.tot button.bgcel{font-weight:600}
+.bgexport{border:1px solid var(--line);border-radius:8px;background:#fff;padding:14px 16px}
+.bgexport strong{display:block;font-size:13.5px}
+.bgexport p{margin:4px 0 12px;font-size:11.5px;color:var(--muted);line-height:1.45}
+.bgexport .bgacoes{display:flex;gap:8px;flex-wrap:wrap}
+table.leadlista tr.grupo td{background:var(--surface);font-weight:600;font-size:12.5px;padding:8px 10px}
+table.leadlista tr.grupo td small{font-weight:400;color:var(--muted);margin-left:8px;font-size:12px}
+
 /* ---------- conversas do WhatsApp no histórico ---------- */
 .convbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin:0 0 14px;
   padding:9px 12px;border:1px dashed var(--line);border-radius:7px;background:var(--surface)}
@@ -7750,6 +7778,7 @@ function basePintarEstados(resumo){
       linha.title = "Abrir os leads de " + e.uf;
       linha.onclick = () => {
         BASE.visao = "empresas"; BASE.rolar = true; BASE.mostrar = "disp"; BASE.niveis = new Set(["Quente","Morno","Frio"]); BASE.pag = 0;
+        BASE.tipos = new Set(TIPOS_FONE.map(t => t[0])); BASE.ordem = "grupo";
         u.selUf.value = e.uf;
         u.selCidade.value = "";
         BASE.filtro = { ramo: u.selRamo.value, uf: e.uf, cidade: "" };
@@ -16886,9 +16915,37 @@ function baixarXlsx(nome, linhas, larguras){
   });
 }
 
+/* ---------- tipo de telefone: celular (dá para chamar no WhatsApp), fixo ou sem telefone ---------- */
+const TIPOS_FONE = [["cel","Celular · WhatsApp"],["fixo","Telefone fixo"],["sem","Sem telefone"]];
+const NIVEIS_SCORE = ["Quente","Morno","Frio"];
+const PLURAL_NIVEL = { Quente:"Quentes", Morno:"Mornos", Frio:"Frios" };
+/* número de WhatsApp (55 + DDD + 9 dígitos) se o telefone for celular; null se for fixo */
+function foneCelular(t){
+  const n = numeroWhatsApp(t);
+  if(!n) return null;
+  if(ehCelular(n)) return n;
+  if(n.length === 12 && /[6-9]/.test(n[4])) return n.slice(0,4) + "9" + n.slice(4);   /* celular antigo, sem o 9 na frente */
+  return null;
+}
+function celularesDe(r){ return separarTelefones(r && r.telefone).filter(t => foneCelular(t)); }
+function fixosDe(r){ return separarTelefones(r && r.telefone).filter(t => !foneCelular(t)); }
+/* um lead com pelo menos um celular vai para o grupo do WhatsApp */
+function tipoFoneDe(r){
+  const tels = separarTelefones(r && r.telefone);
+  if(!tels.length) return contatoValido(r) ? "fixo" : "sem";
+  return tels.some(t => foneCelular(t)) ? "cel" : "fixo";
+}
+function rotuloGrupo(nivel, tipo){
+  return PLURAL_NIVEL[nivel] + " · " + (TIPOS_FONE.find(t => t[0] === tipo) || ["", tipo])[1];
+}
+function ordemGrupo(nivel, tipo){
+  return NIVEIS_SCORE.indexOf(nivel) * 10 + TIPOS_FONE.findIndex(t => t[0] === tipo);
+}
+
 /* ---------- Base de Leads: lista com seleção ---------- */
 BASE.lista = null; BASE.listaChave = ""; BASE.sel = new Set(); BASE.pag = 0;
 BASE.mostrar = "disp"; BASE.qtd = ""; BASE.rolar = false;
+BASE.tipos = new Set(["cel","fixo","sem"]);
 
 async function baseCarregarLista(){
   const chave = JSON.stringify(BASE.filtro);
@@ -16936,11 +16993,29 @@ async function baseListaEmpresas(){
     BASE.mostrar === "inc" ? (!emAt(r) && !contatoValido(r)) :
     transferivel(r));
   if(!BASE.niveis || !BASE.niveis.size) BASE.niveis = new Set(["Quente","Morno","Frio"]);
+  if(!BASE.tipos || !BASE.tipos.size) BASE.tipos = new Set(TIPOS_FONE.map(t => t[0]));
+  const tipos = new Map();
+  const tipoDe = r => { const k = cnpjDig(r.cnpj); if(!tipos.has(k)) tipos.set(k, tipoFoneDe(r)); return tipos.get(k); };
   const porNivel = { Quente:0, Morno:0, Frio:0 };
-  visiveis.forEach(r => { porNivel[scoreDe(r).nivel]++; });
+  const porTipo = { cel:0, fixo:0, sem:0 };
+  const matriz = {};
+  NIVEIS_SCORE.forEach(nv => { matriz[nv] = { cel:0, fixo:0, sem:0 }; });
+  visiveis.forEach(r => {
+    const nv = scoreDe(r).nivel, tp = tipoDe(r);
+    porNivel[nv]++; porTipo[tp]++; matriz[nv][tp]++;
+  });
+  const totalSituacao = visiveis.length;
   const filtrandoNivel = BASE.niveis.size < 3;
+  const filtrandoTipo = BASE.tipos.size < TIPOS_FONE.length;
   if(filtrandoNivel) visiveis = visiveis.filter(r => BASE.niveis.has(scoreDe(r).nivel));
+  if(filtrandoTipo) visiveis = visiveis.filter(r => BASE.tipos.has(tipoDe(r)));
   if(BASE.ordem === "score") visiveis = visiveis.slice().sort((a, b) => scoreDe(b).pts - scoreDe(a).pts);
+  const grupoDe = r => ordemGrupo(scoreDe(r).nivel, tipoDe(r));
+  const porGrupo = {};
+  if(BASE.ordem === "grupo"){
+    visiveis = visiveis.slice().sort((a, b) => (grupoDe(a) - grupoDe(b)) || (scoreDe(b).pts - scoreDe(a).pts));
+    visiveis.forEach(r => { const g = grupoDe(r); porGrupo[g] = (porGrupo[g] || 0) + 1; });
+  }
   const paginas = Math.max(1, Math.ceil(visiveis.length / BASE_POR_PAGINA));
   if(BASE.pag >= paginas) BASE.pag = paginas - 1;
 
@@ -16957,7 +17032,7 @@ async function baseListaEmpresas(){
   barra.append(seg);
   const ord = el("span","ltord");
   ord.append(document.createTextNode("Ordem:"));
-  [["","da lista"],["score","maior score"]].forEach(([v, rot]) => {
+  [["grupo","por grupo"],["","da lista"],["score","maior score"]].forEach(([v, rot]) => {
     const b = el("button","btn sm" + ((BASE.ordem || "") === v ? " primary" : " ghost"), rot);
     b.onclick = () => { BASE.ordem = v; BASE.pag = 0; baseListaEmpresas(); };
     ord.append(b);
@@ -16985,6 +17060,27 @@ async function baseListaEmpresas(){
     fn.append(b);
   });
   barra.append(fn);
+
+  /* filtro por tipo de telefone: celular (WhatsApp), fixo ou sem telefone */
+  const ft = el("span","ltord");
+  ft.append(document.createTextNode("Telefone:"));
+  const bTodosT = el("button","btn sm" + (filtrandoTipo ? " ghost" : " primary"), "Todos");
+  bTodosT.onclick = () => { BASE.tipos = new Set(TIPOS_FONE.map(t => t[0])); BASE.pag = 0; baseListaEmpresas(); };
+  ft.append(bTodosT);
+  TIPOS_FONE.forEach(([tp, rot]) => {
+    if(!porTipo[tp] && !(filtrandoTipo && BASE.tipos.has(tp))) return;
+    const on = filtrandoTipo && BASE.tipos.has(tp);
+    const b = el("button","btn sm" + (on ? " primary" : " ghost"), rot + " · " + porTipo[tp].toLocaleString("pt-BR"));
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.onclick = () => {
+      if(!filtrandoTipo) BASE.tipos = new Set([tp]);
+      else if(BASE.tipos.has(tp)){ if(BASE.tipos.size === 1) BASE.tipos = new Set(TIPOS_FONE.map(t => t[0])); else BASE.tipos.delete(tp); }
+      else BASE.tipos.add(tp);
+      BASE.pag = 0; baseListaEmpresas();
+    };
+    ft.append(b);
+  });
+  barra.append(ft);
 
   let cont = null, btT = null;
   const atualizarSel = () => {
@@ -17031,13 +17127,14 @@ async function baseListaEmpresas(){
     sel.append(q, bm, bl, cont, btR, btT, btRT);
     barra.append(sel);
   }
+  if(BASE.filtro.uf) u.conteudo.append(painelGruposEstado(BASE.filtro.uf, matriz, porNivel, porTipo, totalSituacao));
   u.conteudo.append(barra);
   if(podeTransf) u.conteudo.append(painelCotaDiaria());
   atualizarSel();
   if(BASE.mostrar === "atu" && ehAdm()) u.conteudo.append(painelTransferencias());
 
   if(!visiveis.length){
-    u.conteudo.append(el("p","leadshint", filtrandoNivel ? "Nenhum lead com esse score neste recorte. Clique em Todos para ver a lista completa." :
+    u.conteudo.append(el("p","leadshint", (filtrandoNivel || filtrandoTipo) ? "Nenhum lead neste grupo. Clique em Todos (score e telefone) para ver a lista completa." :
       BASE.mostrar === "atu" ? "Nenhum lead deste recorte está em atuação." :
       BASE.mostrar === "inc" ? "Nenhum contato incompleto neste recorte: todos têm telefone." :
       "Nenhum contato válido disponível neste recorte. Os que sobraram estão sem telefone ou já em atuação."));
@@ -17068,7 +17165,21 @@ async function baseListaEmpresas(){
   ["Empresa","Score","CNPJ","Cidade","Ramo","Telefone","Sócios","Situação"].forEach(t => cab.append(el("th",null,t)));
   tab.append(cab);
 
-  pagina.forEach(r => {
+  const nCols = (podeTransf ? 1 : 0) + 8;
+  let grupoAnt = null;
+  pagina.forEach((r, i) => {
+    if(BASE.ordem === "grupo"){
+      const g = grupoDe(r);
+      if(g !== grupoAnt){
+        const tg = el("tr","grupo"), td = el("td");
+        td.colSpan = nCols;
+        td.append(document.createTextNode(rotuloGrupo(scoreDe(r).nivel, tipoDe(r))));
+        td.append(el("small",null, porGrupo[g].toLocaleString("pt-BR") + (porGrupo[g] === 1 ? " lead" : " leads") +
+          (i === 0 && ini > 0 && grupoDe(visiveis[ini - 1]) === g ? " · continuação" : "")));
+        tg.append(td); tab.append(tg);
+        grupoAnt = g;
+      }
+    }
     const a = atribDe(r), k = cnpjDig(r.cnpj);
     const valido = contatoValido(r);
     const tr = el("tr", a ? "ematuacao" : (!valido ? "incompleto" : (BASE.sel.has(k) ? "marcado" : "")));
@@ -17090,9 +17201,11 @@ async function baseListaEmpresas(){
     if(sc.motivos.length) tsc.append(el("div","scoremot", sc.motivos.slice(0, 3).join(" · ")));
     if(sc.faltando.length) { const f = el("div","scoremot"); f.append(el("i",null,"parcial: falta " + sc.faltando.join(" e "))); tsc.append(f); }
     tr.append(tsc);
-    [r.cnpj, [r.cidade, r.uf].filter(Boolean).join("/"),
-     r.ramo || "", r.telefone || "", (r.socios || []).map(s => s.nome).join(", ")]
-      .forEach((v, i) => tr.append(el("td", i === 4 ? "muted" : null, v)));
+    [r.cnpj, [r.cidade, r.uf].filter(Boolean).join("/"), r.ramo || ""].forEach(v => tr.append(el("td", null, v)));
+    const tfone = el("td");
+    if(r.telefone) tfone.append(celulaTelefones(r.telefone, null));
+    tr.append(tfone);
+    tr.append(el("td","muted",(r.socios || []).map(s => s.nome).join(", ")));
     const ts = el("td");
     if(a){
       ts.append(el("span","pill st-doing","EM ATUAÇÃO"));
@@ -17113,6 +17226,164 @@ async function baseListaEmpresas(){
   if(BASE.rolar){
     BASE.rolar = false;
     u.abaEmpresas.scrollIntoView({ behavior:"smooth", block:"start" });
+  }
+}
+
+/* Painel do estado: quentes, mornos e frios cruzados com celular (WhatsApp), fixo e sem telefone.
+   Clicar num número lista só aquele grupo. Ao lado, a exportação do estado inteiro. */
+function painelGruposEstado(uf, matriz, porNivel, porTipo, total){
+  const box = el("div","basegrupos");
+  const esq = el("div");
+  const tt = el("p","bgtitulo","Leads de " + uf + " separados");
+  const situ = { todos:"todos", disp:"contatos válidos", inc:"incompletos", atu:"em atuação" }[BASE.mostrar] || "";
+  tt.append(el("span",null, total.toLocaleString("pt-BR") + " " + situ + " · clique num número para listar só esse grupo"));
+  esq.append(tt);
+
+  const tiposVis = TIPOS_FONE.filter(([tp]) => porTipo[tp] > 0 || tp !== "sem");
+  const todosN = new Set(NIVEIS_SCORE), todosT = new Set(TIPOS_FONE.map(t => t[0]));
+  const soN = BASE.niveis.size === 3 ? "*" : (BASE.niveis.size === 1 ? [...BASE.niveis][0] : null);
+  const soT = BASE.tipos.size === TIPOS_FONE.length ? "*" : (BASE.tipos.size === 1 ? [...BASE.tipos][0] : null);
+  const botao = (n, nv, tp, rotulo) => {
+    const b = el("button","bgcel" + (n ? "" : " zero") + (soN === nv && soT === tp ? " on" : ""), n.toLocaleString("pt-BR"));
+    b.type = "button";
+    b.title = rotulo + ": " + n.toLocaleString("pt-BR") + (n === 1 ? " lead" : " leads");
+    b.onclick = () => {
+      BASE.niveis = nv === "*" ? new Set(todosN) : new Set([nv]);
+      BASE.tipos = tp === "*" ? new Set(todosT) : new Set([tp]);
+      if(!BASE.ordem) BASE.ordem = "grupo";
+      BASE.pag = 0; baseListaEmpresas();
+    };
+    return b;
+  };
+
+  const mz = el("div","bgmatriz"), tab = el("table"), cab = el("tr");
+  cab.append(el("th",null,"Score"));
+  tiposVis.forEach(([tp, rot]) => cab.append(el("th", tp === "cel" ? "cel" : null, rot)));
+  cab.append(el("th","tot","Total"));
+  tab.append(cab);
+  NIVEIS_SCORE.forEach(nv => {
+    const tr = el("tr"), r0 = el("td","rot");
+    r0.append(el("span","scorepill " + ({Quente:"q",Morno:"m",Frio:"f"})[nv], PLURAL_NIVEL[nv]));
+    tr.append(r0);
+    tiposVis.forEach(([tp]) => { const td = el("td"); td.append(botao(matriz[nv][tp], nv, tp, rotuloGrupo(nv, tp))); tr.append(td); });
+    const tt2 = el("td","tot"); tt2.append(botao(porNivel[nv], nv, "*", PLURAL_NIVEL[nv])); tr.append(tt2);
+    tab.append(tr);
+  });
+  const trT = el("tr","tot");
+  trT.append(el("td","rot","Total"));
+  tiposVis.forEach(([tp, rot]) => { const td = el("td"); td.append(botao(porTipo[tp], "*", tp, rot)); trT.append(td); });
+  const tg = el("td","tot"); tg.append(botao(total, "*", "*", "Todos")); trT.append(tg);
+  tab.append(trT);
+  mz.append(tab); esq.append(mz);
+
+  const dir = el("div","bgexport");
+  dir.append(el("strong",null,"Exportar todos os leads de " + uf));
+  dir.append(el("p",null,(BASE.filtro.ramo ? "Ramo " + BASE.filtro.ramo + ", " : "") +
+    "todas as cidades e situações. No Excel, cada grupo vem numa aba; no CSV, as colunas Nível e Tipo de telefone separam os grupos."));
+  const ac = el("div","bgacoes");
+  const bx = el("button","btn primary","Excel (.xlsx)"), bc = el("button","btn","CSV");
+  bx.onclick = () => baseExportarEstado(uf, "xlsx", bx);
+  bc.onclick = () => baseExportarEstado(uf, "csv", bc);
+  ac.append(bx, bc); dir.append(ac);
+
+  box.append(esq, dir);
+  return box;
+}
+
+const BASE_COLUNAS_EXPORT = ["Nivel","Score","Tipo de telefone","Celular (WhatsApp)","Link WhatsApp","Telefone fixo",
+  "Razao Social","Nome Fantasia","CNPJ","Endereco","Bairro","CEP","Cidade","UF","Ramo","CNAE","Site","Nota","Avaliacoes",
+  "Categoria","Horario","Socios","Situacao","Responsavel","Motivos do score","Link"];
+const BASE_LARGURAS_EXPORT = [9,7,18,22,30,22,36,30,22,42,22,12,20,6,28,13,28,7,11,22,30,46,16,22,50,38];
+
+async function baseExportarEstado(uf, formato, bt){
+  const filtro = { ramo: BASE.filtro.ramo || "", uf, cidade:"" };
+  const chave = JSON.stringify(filtro);
+  const rotulo = bt.textContent;
+  bt.disabled = true;
+  try {
+    let lista;
+    if(BASE.lista && BASE.listaChave === chave) lista = BASE.lista;
+    else {
+      lista = [];
+      let pagina = 0;
+      while(true){
+        bt.textContent = "Trazendo… " + lista.length.toLocaleString("pt-BR");
+        const { resp, erro } = await pontEnviar("base", { type:"listar", filtro, pagina }, 25000);
+        if(erro || !resp) throw new Error("A extensão da base parou de responder.");
+        (resp.registros || []).forEach(r => lista.push(r));
+        if(resp.fim || !(resp.registros || []).length) break;
+        pagina++;
+      }
+    }
+    if(!lista.length) throw new Error("Não há leads de " + uf + " na base.");
+    bt.textContent = "Montando…";
+
+    /* score calculado com o estado inteiro como referência (redes e telefones repetidos) */
+    const antes = { raizes: BASE.raizes, fones: BASE.fones };
+    BASE.raizes = {};
+    lista.forEach(r => { const z = baseRaiz(r.cnpj); if(z) BASE.raizes[z] = (BASE.raizes[z] || 0) + 1; });
+    BASE.fones = mapaFones(lista, r => r.telefone, r => r.cnpj);
+    qualifTodos();
+    const itens = lista.map(r => ({ r, sc: scoreLead(r), tipo: tipoFoneDe(r) }));
+    BASE.raizes = antes.raizes; BASE.fones = antes.fones;
+    itens.sort((a, b) => (ordemGrupo(a.sc.nivel, a.tipo) - ordemGrupo(b.sc.nivel, b.tipo)) || (b.sc.pts - a.sc.pts));
+
+    const rotTipo = { cel:"Celular (WhatsApp)", fixo:"Fixo", sem:"Sem telefone" };
+    const linhaDe = ({ r, sc, tipo }) => {
+      const cels = celularesDe(r), a = atribDe(r);
+      return [
+        sc.nivel, String(sc.pts), rotTipo[tipo], cels.join(" | "),
+        cels.length ? "https://wa.me/" + foneCelular(cels[0]) : "", fixosDe(r).join(" | "),
+        r.razaoSocial || "", r.nomeFantasia || "", r.cnpj || "", r.endereco || "", r.bairro || "", r.cep || "",
+        r.cidade || "", r.uf || "", r.ramo || "", r.cnae || "", r.site || "", r.nota || "", r.avaliacoes || "",
+        r.categoria || "", r.horario || "", (r.socios || []).map(baseSocioEmTexto).join(" | "),
+        a ? "Em atuação" : (contatoValido(r) ? "Contato válido" : "Incompleto"),
+        a ? nomeUsuario(a.usuarioId) : "", sc.motivos.join("; "), r.link || ""
+      ];
+    };
+
+    const dia = new Date().toISOString().slice(0,10);
+    const nome = ["leads", uf, filtro.ramo, dia].filter(Boolean).join("_").replace(/[^\w\-.]/g,"-");
+    let blob;
+
+    if(formato === "csv"){
+      const cel = v => { const t = String(v == null ? "" : v); return /[";\r\n]/.test(t) ? '"' + t.replace(/"/g,'""') + '"' : t; };
+      const linhas = [BASE_COLUNAS_EXPORT].concat(itens.map(linhaDe)).map(l => l.map(cel).join(";"));
+      blob = new Blob(["\uFEFF" + linhas.join("\r\n")], { type:"text/csv;charset=utf-8" });
+    } else {
+      const grupos = new Map();
+      itens.forEach(it => {
+        const k = ordemGrupo(it.sc.nivel, it.tipo);
+        if(!grupos.has(k)) grupos.set(k, { nome: PLURAL_NIVEL[it.sc.nivel] + " - " + ({ cel:"WhatsApp", fixo:"Fixo", sem:"Sem telefone" })[it.tipo], itens: [] });
+        grupos.get(k).itens.push(it);
+      });
+      const resumo = [["Score"].concat(TIPOS_FONE.map(t => t[1].replace(" · ", " / "))).concat(["Total"])];
+      NIVEIS_SCORE.forEach(nv => {
+        const n = TIPOS_FONE.map(([tp]) => itens.filter(i => i.sc.nivel === nv && i.tipo === tp).length);
+        resumo.push([PLURAL_NIVEL[nv]].concat(n.map(String)).concat([String(n.reduce((a, b) => a + b, 0))]));
+      });
+      resumo.push(["Total"].concat(TIPOS_FONE.map(([tp]) => String(itens.filter(i => i.tipo === tp).length))).concat([String(itens.length)]));
+      const abas = [
+        { nome:"Resumo " + uf, linhas: resumo, larguras:[14,22,18,16,10] },
+        { nome:"Todos", linhas: [BASE_COLUNAS_EXPORT.slice()].concat(itens.map(linhaDe)), larguras: BASE_LARGURAS_EXPORT }
+      ];
+      [...grupos.entries()].sort((a, b) => a[0] - b[0]).forEach(([, g]) => abas.push({
+        nome: g.nome, linhas: [BASE_COLUNAS_EXPORT.slice()].concat(g.itens.map(linhaDe)), larguras: BASE_LARGURAS_EXPORT
+      }));
+      blob = await XlsxLite.buildAsync(abas);
+    }
+
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = nome + "." + formato;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    toast(itens.length.toLocaleString("pt-BR") + " leads de " + uf + " exportados em " + (formato === "csv" ? "CSV." : "Excel."));
+  } catch(e){
+    toast(e.message || "Não consegui exportar os leads.");
+  } finally {
+    bt.disabled = false;
+    bt.textContent = rotulo;
   }
 }
 
