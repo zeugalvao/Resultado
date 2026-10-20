@@ -898,6 +898,8 @@ table.pmat tbody tr:not(.g):hover td{background:#F6F9FA}
 .ltseg button:first-child{border-left:0}
 .ltseg button.on{background:var(--ink);color:#fff}
 .ltbusca{flex:1 1 260px;max-width:380px}
+.reppainel{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;padding:12px 14px;border:1px solid #f0d9a8;border-radius:8px;background:#fdf6e6;font-size:13px;color:#6b4708}
+.reppainel p{flex:1 1 360px;margin:0}
 .ltbusca input{width:100%;border:1px solid var(--line);border-radius:6px;padding:7px 10px;font-size:13px;background:var(--surface)}
 .ltbusca input:focus{outline:none;border-color:var(--teal);box-shadow:0 0 0 2px var(--teal-soft)}
 .ltsel{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px}
@@ -16952,7 +16954,8 @@ function ordemGrupo(nivel, tipo){
 
 /* ---------- Base de Leads: lista com seleção ---------- */
 BASE.lista = null; BASE.listaChave = ""; BASE.sel = new Set(); BASE.pag = 0;
-BASE.mostrar = "disp"; BASE.qtd = ""; BASE.rolar = false; BASE.busca = "";
+BASE.mostrar = "disp"; BASE.qtd = ""; BASE.rolar = false; BASE.busca = ""; BASE.soRep = false;
+const foneRepetido = r => vezesFone(r.telefone, BASE.fones) >= FONE_REP_MIN;
 /* busca por razão social / nome fantasia, CNPJ ou telefone (com ou sem pontuação) */
 function casaBuscaBase(r, termo){
   const txt = baseChave(termo), dig = String(termo || "").replace(/\D/g,"");
@@ -17033,6 +17036,9 @@ async function baseListaEmpresas(){
   const filtrandoTipo = BASE.tipos.size < TIPOS_FONE.length;
   if(filtrandoNivel) visiveis = visiveis.filter(r => BASE.niveis.has(scoreDe(r).nivel));
   if(filtrandoTipo) visiveis = visiveis.filter(r => BASE.tipos.has(tipoDe(r)));
+  const nRep = lista.filter(foneRepetido).length;
+  if(BASE.soRep && !nRep) BASE.soRep = false;
+  if(BASE.soRep) visiveis = lista.filter(foneRepetido);   /* mostra todas as repetidas do recorte, em qualquer situação */
   const buscando = !!String(BASE.busca || "").trim();
   if(buscando) visiveis = lista.filter(r => casaBuscaBase(r, BASE.busca));   /* a busca olha o recorte inteiro */
   if(BASE.ordem === "score") visiveis = visiveis.slice().sort((a, b) => scoreDe(b).pts - scoreDe(a).pts);
@@ -17131,6 +17137,13 @@ async function baseListaEmpresas(){
     };
     ft.append(b);
   });
+  if(nRep || BASE.soRep){
+    const br = el("button","btn sm" + (BASE.soRep ? " primary" : " ghost"), "⚠ Repetido em várias empresas · " + nRep.toLocaleString("pt-BR"));
+    br.setAttribute("aria-pressed", BASE.soRep ? "true" : "false");
+    br.title = "Número que aparece em " + FONE_REP_MIN + " ou mais empresas: quase sempre o telefone do contador cadastrado na Receita";
+    br.onclick = () => { BASE.soRep = !BASE.soRep; BASE.pag = 0; baseListaEmpresas(); };
+    ft.append(br);
+  }
   barra.append(ft);
 
   let cont = null, btT = null;
@@ -17184,6 +17197,17 @@ async function baseListaEmpresas(){
   atualizarSel();
   if(BASE.mostrar === "atu" && ehAdm()) u.conteudo.append(painelTransferencias());
 
+  if(BASE.soRep && !buscando){
+    const pr = el("div","reppainel");
+    pr.append(el("p",null, nRep.toLocaleString("pt-BR") + (nRep === 1 ? " empresa" : " empresas") + " deste recorte com telefone repetido em " + FONE_REP_MIN +
+      " ou mais empresas, em qualquer situação. Corrija uma a uma em Corrigir telefone, ou troque todas de uma vez pelo telefone oficial da Receita."));
+    const bc = el("button","btn primary","Corrigir pela Receita (" + nRep.toLocaleString("pt-BR") + ")");
+    bc.onclick = () => corrigirRepetidosPelaReceita(lista.filter(foneRepetido));
+    const bs = el("button","btn sm ghost","Ver todas as empresas");
+    bs.onclick = () => { BASE.soRep = false; BASE.pag = 0; baseListaEmpresas(); };
+    pr.append(bc, bs);
+    u.conteudo.append(pr);
+  }
   if(buscando){
     const aviso = el("p","leadshint");
     aviso.append(document.createTextNode(visiveis.length
@@ -18441,6 +18465,95 @@ function dialogoTelefone(o){
     }
   });
 }
+/* ---------- telefones repetidos: troca em lote pelo telefone da Receita ---------- */
+function foneComReceita(r, oficiais, mapa){
+  const ofK = new Set(oficiais.map(chaveFone));
+  const manter = separarTelefones(r.telefone).filter(t => ofK.has(chaveFone(t)) || vezesFone(t, mapa) < FONE_REP_MIN);
+  const novos = oficiais.filter(t => !manter.some(m => chaveFone(m) === chaveFone(t)));
+  return manter.concat(novos).join(" / ");
+}
+function corrigirRepetidosPelaReceita(alvos){
+  if(!alvos.length) return toast("Nenhuma empresa com telefone repetido neste recorte.");
+  const mapa = BASE.fones;
+  const fundo = el("div","tmodal"), caixa = el("div","tcaixa");
+  caixa.setAttribute("role","dialog"); caixa.setAttribute("aria-modal","true");
+  fundo.append(caixa);
+  let rodando = false, cancelar = false;
+  const fechar = () => { if(rodando){ cancelar = true; return; } fundo.remove(); baseListaEmpresas(); };
+  fundo.onclick = ev => { if(ev.target === fundo && !rodando) fechar(); };
+
+  const faltam = alvos.filter(r => !receitaCompleta(cnpjDig(r.cnpj))).length;
+  caixa.append(el("h3",null,"Corrigir " + alvos.length.toLocaleString("pt-BR") + (alvos.length === 1 ? " telefone repetido" : " telefones repetidos")));
+  caixa.append(el("p","sub","Consulta cada CNPJ na Receita e troca o número repetido pelo telefone oficial. Os outros números da empresa ficam como estão. " +
+    "Quando a Receita não tem telefone, ou tem o mesmo número repetido, a empresa fica na lista para você corrigir à mão." +
+    (faltam ? " Faltam consultar " + faltam.toLocaleString("pt-BR") + " CNPJs: cerca de " + Math.max(1, Math.round(faltam * 1.5 / 60)) + " min." : "")));
+  const prog = el("p","sub"), barra = el("div","basebarra"), cheio = el("i");
+  barra.style.cssText = "height:6px;background:var(--line-soft);border-radius:4px;overflow:hidden;margin:8px 0";
+  cheio.style.cssText = "display:block;height:100%;width:0;background:var(--teal, #1f7a6c);transition:width .2s";
+  barra.append(cheio); barra.hidden = true;
+  const resumo = el("div");
+  caixa.append(prog, barra, resumo);
+  const ac = el("div","pickacoes"), bOk = el("button","btn primary","Corrigir agora"), bC = el("button","btn","Cancelar");
+  bC.onclick = fechar; ac.append(bOk, bC); caixa.append(ac);
+  document.body.append(fundo);
+
+  bOk.onclick = async () => {
+    rodando = true; bOk.disabled = true; bC.textContent = "Parar"; barra.hidden = false;
+    const cont = { ok:0, semFone:0, mesmo:0, erro:0 }, mudados = [];
+    const agora = new Date().toISOString();
+    for(let i = 0; i < alvos.length; i++){
+      if(cancelar) break;
+      const r = alvos[i], k = cnpjDig(r.cnpj);
+      prog.textContent = "Consultando " + (i + 1).toLocaleString("pt-BR") + " de " + alvos.length.toLocaleString("pt-BR") + ": " + (r.razaoSocial || r.cnpj);
+      cheio.style.width = Math.round(i / alvos.length * 100) + "%";
+      const jaTinha = receitaCompleta(k);
+      const x = await consultarCnpj(r.cnpj);
+      if(!jaTinha) await esperarMs(300);
+      if(!x || x.naoEncontrado){ cont.erro++; continue; }
+      const oficiais = x.telefones || [];
+      if(!oficiais.length){ cont.semFone++; continue; }
+      const novo = foneComReceita(r, oficiais, mapa);
+      if(!novo || novo === r.telefone || separarTelefones(novo).some(t => vezesFone(t, mapa) >= FONE_REP_MIN)){
+        if(novo && novo !== r.telefone) aplicarNovo(r, k, novo);
+        cont.mesmo++; continue;
+      }
+      aplicarNovo(r, k, novo);
+      cont.ok++;
+    }
+    function aplicarNovo(r, k, novo){
+      const antes = r.telefone || "";
+      if(r._foneOrig == null) r._foneOrig = antes;
+      r.telefone = novo;
+      qualifGravar(k, { telefoneManual: novo });
+      const ref = atribs()[k];
+      if(ref){
+        ref.lead = ref.lead || {};
+        registrar(ref, { t: agora, tipo:"telefone", de: ref.lead.telefone || antes, para: novo, status: ref.andamento, dono: ref.usuarioId, receita: true });
+        ref.lead.telefone = novo; ref.atualizadoEm = agora;
+      }
+      const reg = Object.assign({}, r); delete reg._foneOrig;
+      mudados.push(reg);
+    }
+    cheio.style.width = "100%";
+    let erroBase = "";
+    if(mudados.length){
+      prog.textContent = "Gravando na Base…";
+      persist();
+      const { erro } = await baseGuardar(mudados, "busca");
+      erroBase = erro || "";
+    }
+    BASE.fones = mapaFones(BASE.lista || [], x => x.telefone, x => x.cnpj);
+    rodando = false; bC.textContent = "Fechar"; bOk.hidden = true;
+    prog.textContent = cancelar ? "Correção interrompida." : "Correção concluída.";
+    resumo.innerHTML = "<p class='sub'><b>" + cont.ok.toLocaleString("pt-BR") + "</b> corrigidos com o telefone da Receita" +
+      (cont.mesmo ? "<br><b>" + cont.mesmo + "</b> a Receita tem o mesmo número repetido: corrija à mão" : "") +
+      (cont.semFone ? "<br><b>" + cont.semFone + "</b> sem telefone na Receita: corrija à mão" : "") +
+      (cont.erro ? "<br><b>" + cont.erro + "</b> não consultados (Receita fora do ar ou CNPJ não encontrado); rode de novo depois" : "") +
+      (erroBase ? "<br>Os números foram salvos neste navegador, mas a Base não respondeu (" + esc(erroBase) + ")." : "") +
+      "<br>As que sobraram continuam no filtro Repetido em várias empresas.</p>";
+    cancelar = false;
+  };
+}
 /* lead em atuação (Leads a trabalhar) */
 function editarTelefone(ref){
   const l = ref.lead || (ref.lead = {}), k = cnpjDig(ref.cnpj || l.cnpj);
@@ -19240,6 +19353,7 @@ function textoEvento(e){
   if(e.tipo === "status" && e.tentativa && e.anterior === e.status) return quem + ": " + nomeStatus(e.status) + " (tentativa " + e.tentativa + ")" + (e.retorno ? ", devolvido ao ADM" : "");
   if(e.tipo === "status" && e.motivo) return quem + " mudou de " + nomeStatus(e.anterior) + " para " + nomeStatus(e.status) + " · motivo: " + e.motivo;
   if(e.tipo === "status") return quem + " mudou de " + nomeStatus(e.anterior) + " para " + nomeStatus(e.status) + (e.aprox ? " (data aproximada)" : "");
+  if(e.tipo === "telefone" && e.receita) return nomeUsuario(e.por) + " trocou o telefone repetido " + (e.de || "") + " pelo da Receita: " + (e.para || "");
   if(e.tipo === "telefone") return nomeUsuario(e.por) + " corrigiu o telefone de " + (e.de || "nenhum") + " para " + (e.para || "");
   if(e.tipo === "contato") return nomeUsuario(e.por) + " " + (e.acao || "adicionou") + " o telefone " + (e.setor ? e.setor + " " : "") + (e.tel || "");
   if(e.tipo === "parcelados") return nomeUsuario(e.por) + " informou " + (e.para == null ? "(apagou)" : e.para) + " pacientes pagando parcelas";
