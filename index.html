@@ -16987,7 +16987,8 @@ async function baseCarregarLista(){
     if(resp.fim || !(resp.registros || []).length) break;
     pagina++;
   }
-  qualifTodos(); lista.forEach(aplicarFoneReceita);
+  qualifTodos();
+  { const mapa = mapaFones(lista, r => r.telefone, r => r.cnpj); lista.forEach(r => aplicarFoneReceita(r, mapa)); }
   BASE.lista = lista; BASE.listaChave = chave; BASE.sel = new Set(); BASE.pag = 0;
   return lista;
 }
@@ -17266,9 +17267,17 @@ async function baseListaEmpresas(){
     const tfone = el("td");
     if(r.telefone) tfone.append(celulaTelefones(r.telefone, null));
     if(r._foneOrig != null && r._foneOrig !== r.telefone){
-      const nt = el("div","quem","conferido na Receita");
+      const q = qualifDe(cnpjDig(r.cnpj)) || {};
+      const nt = el("div","quem", q.telefoneManual === r.telefone ? "corrigido pela equipe" : "conferido na Receita");
       nt.title = "Número que estava na base: " + (r._foneOrig || "nenhum");
       tfone.append(nt);
+    }
+    if(podeTransf || ehAdm()){
+      const be = el("button","teled", r.telefone ? "Corrigir telefone" : "Informar telefone");
+      be.type = "button"; be.dataset.livre = "1";
+      be.title = "Trocar o número desta empresa, conferindo com o telefone oficial da Receita";
+      be.onclick = ev => { ev.stopPropagation(); editarTelefoneBase(r); };
+      tfone.append(be);
     }
     tr.append(tfone);
     tr.append(el("td","muted",(r.socios || []).map(s => s.nome).join(", ")));
@@ -17381,7 +17390,8 @@ async function baseExportarEstado(uf, formato, bt){
         pagina++;
       }
     }
-    qualifTodos(); lista.forEach(aplicarFoneReceita);
+    qualifTodos();
+    { const mapa = mapaFones(lista, r => r.telefone, r => r.cnpj); lista.forEach(r => aplicarFoneReceita(r, mapa)); }
     if(!lista.length) throw new Error("Não há leads de " + uf + " na base.");
     bt.textContent = "Montando…";
 
@@ -17691,21 +17701,24 @@ function receitaCompleta(k){
   return !!(x && (x.naoEncontrado || Array.isArray(x.telefones)));
 }
 function veioDoMaps(r){ return !!(r && (r.link || r.nota || r.avaliacoes)); }
-function telefoneConferido(r){
+function telefoneConferido(r, mapa){
   const k = cnpjDig(r && r.cnpj), q = qualifDe(k) || {}, rec = q.receita || REQ.cache[k] || {};
+  mapa = mapa || BASE.fones;
   const original = r._foneOrig != null ? r._foneOrig : (r.telefone || "");
   if(q.telefoneManual) return q.telefoneManual;
   const oficiais = Array.isArray(rec.telefones) ? rec.telefones : [];
   if(!oficiais.length) return original;
   const ofK = new Set(oficiais.map(chaveFone));
-  const manter = separarTelefones(original).filter(t => ofK.has(chaveFone(t)) || veioDoMaps(r));
+  /* fora da Receita, só fica o número do Maps que não se repete em várias empresas (o do contador se repete) */
+  const manter = separarTelefones(original).filter(t => ofK.has(chaveFone(t)) ||
+    (veioDoMaps(r) && vezesFone(t, mapa) < FONE_REP_MIN));
   const novos = oficiais.filter(t => !manter.some(m => chaveFone(m) === chaveFone(t)));
   return manter.concat(novos).join(" / ");
 }
-function aplicarFoneReceita(r){
+function aplicarFoneReceita(r, mapa){
   if(!r) return r;
   if(r._foneOrig == null) r._foneOrig = r.telefone || "";
-  r.telefone = telefoneConferido(r);
+  r.telefone = telefoneConferido(r, mapa);
   return r;
 }
 const esperarMs = ms => new Promise(r => setTimeout(r, ms));
@@ -18362,8 +18375,8 @@ function normalizarFones(txt){
   });
   return { ok, ruins };
 }
-function editarTelefone(ref){
-  const l = ref.lead || (ref.lead = {}), k = cnpjDig(ref.cnpj || l.cnpj), empresa = l.razaoSocial || l.nomeFantasia || "";
+/* janela de correção: serve para o lead em atuação e para a empresa da Base */
+function dialogoTelefone(o){
   const fundo = el("div","tmodal"), caixa = el("div","tcaixa");
   caixa.setAttribute("role","dialog"); caixa.setAttribute("aria-modal","true");
   fundo.append(caixa);
@@ -18373,12 +18386,12 @@ function editarTelefone(ref){
   fundo.onclick = ev => { if(ev.target === fundo) fechar(); };
 
   caixa.append(el("h3",null,"Corrigir telefone"));
-  caixa.append(el("p","sub",empresa));
+  caixa.append(el("p","sub",o.empresa || ""));
   const f = el("div","ctform");
-  const lb = el("label",null,"Telefone com DDD"), inp = el("input");
-  inp.type = "tel"; inp.value = l.telefone || ""; inp.placeholder = "(38) 3222-8874";
+  const lb = el("label",null,"Telefones com DDD"), inp = el("input");
+  inp.type = "tel"; inp.value = o.atual || ""; inp.placeholder = "(38) 3222-8874 / (38) 99999-0000";
   lb.append(inp);
-  f.append(lb, el("p","sub","Para mais de um número, separe com /. Os números do botão + telefone continuam como estão."));
+  f.append(lb, el("p","sub","Apague o número errado e digite o certo. Para mais de um número, separe com /."));
   caixa.append(f);
 
   const rec = el("div","telrec");
@@ -18395,33 +18408,29 @@ function editarTelefone(ref){
   cc.onclick = fechar;
   inp.onkeydown = ev => { if(ev.key === "Enter") ok.click(); };
 
-  ok.onclick = () => {
+  ok.onclick = async () => {
     const { ok: fones, ruins } = normalizarFones(inp.value);
     if(ruins.length) return (erro.textContent = "Número inválido: " + ruins.join(", ") + ". Use o DDD e 8 ou 9 dígitos.");
     if(!fones.length) return (erro.textContent = "Informe ao menos um número com DDD.");
-    const novo = fones.join(" / "), antes = l.telefone || "";
-    if(novo === antes){ fechar(); return; }
-    const agora = new Date().toISOString();
-    l.telefone = novo;
-    registrar(ref, { t: agora, tipo:"telefone", de: antes, para: novo, status: ref.andamento, dono: ref.usuarioId });
-    qualifGravar(k, { telefoneManual: novo });
-    ref.atualizadoEm = agora; persist(); fechar(); render();
-    toast("Telefone de " + (empresa || "lead") + " corrigido para " + novo + ".");
+    const novo = fones.join(" / ");
+    if(novo === (o.atual || "")){ fechar(); return; }
+    ok.disabled = true; ok.textContent = "Salvando…";
+    try{ await o.salvar(novo); fechar(); toast("Telefone de " + (o.empresa || "lead") + " corrigido para " + novo + "."); }
+    catch(e){ ok.disabled = false; ok.textContent = "Salvar telefone"; erro.textContent = (e && e.message) || "Não consegui salvar."; }
   };
 
   document.body.append(fundo);
   setTimeout(() => { inp.focus(); inp.select(); }, 30);
 
-  consultarCnpj(k).then(x => {
+  const atuaisK = () => new Set(normalizarFones(inp.value).ok.map(chaveFone));
+  consultarCnpj(o.cnpj).then(x => {
     recLista.innerHTML = "";
     const oficiais = (x && x.telefones) || [];
     if(!x || x.naoEncontrado){ recLista.append(el("span","muted", x ? "CNPJ não encontrado na Receita." : "A Receita não respondeu agora. Tente de novo em instantes.")); return; }
     if(!oficiais.length){ recLista.append(el("span","muted","A Receita não tem telefone cadastrado para este CNPJ.")); return; }
-    const atuais = new Set(separarTelefones(l.telefone).map(chaveFone));
     oficiais.forEach(t => {
-      const b = el("button","btn sm", (atuais.has(chaveFone(t)) ? "✓ " : "") + t);
-      b.type = "button";
-      b.title = atuais.has(chaveFone(t)) ? "Este número já está no lead" : "Usar este número";
+      const b = el("button","btn sm", (atuaisK().has(chaveFone(t)) ? "✓ " : "") + t);
+      b.type = "button"; b.title = "Usar este número no lugar do atual";
       b.onclick = () => { inp.value = t; erro.textContent = ""; inp.focus(); };
       recLista.append(b);
     });
@@ -18431,6 +18440,44 @@ function editarTelefone(ref){
       recLista.append(bt);
     }
   });
+}
+/* lead em atuação (Leads a trabalhar) */
+function editarTelefone(ref){
+  const l = ref.lead || (ref.lead = {}), k = cnpjDig(ref.cnpj || l.cnpj);
+  dialogoTelefone({ empresa: l.razaoSocial || l.nomeFantasia || "", cnpj: k, atual: l.telefone || "",
+    salvar: async novo => {
+      const agora = new Date().toISOString(), antes = l.telefone || "";
+      l.telefone = novo;
+      registrar(ref, { t: agora, tipo:"telefone", de: antes, para: novo, status: ref.andamento, dono: ref.usuarioId });
+      qualifGravar(k, { telefoneManual: novo });
+      const rb = (BASE.lista || []).find(r => cnpjDig(r.cnpj) === k);
+      if(rb){ if(rb._foneOrig == null) rb._foneOrig = rb.telefone || ""; rb.telefone = novo; }
+      ref.atualizadoEm = agora; persist(); render();
+    } });
+}
+/* empresa da Base de Leads: grava na base e, se já estiver em atuação, no lead também */
+function editarTelefoneBase(r){
+  const k = cnpjDig(r.cnpj);
+  dialogoTelefone({ empresa: r.razaoSocial || r.nomeFantasia || "", cnpj: k, atual: r.telefone || "",
+    salvar: async novo => {
+      const antes = r.telefone || "";
+      if(r._foneOrig == null) r._foneOrig = antes;
+      r.telefone = novo;
+      qualifGravar(k, { telefoneManual: novo });
+      const ref = atribs()[k];
+      if(ref){
+        const agora = new Date().toISOString();
+        ref.lead = ref.lead || {};
+        registrar(ref, { t: agora, tipo:"telefone", de: ref.lead.telefone || antes, para: novo, status: ref.andamento, dono: ref.usuarioId });
+        ref.lead.telefone = novo; ref.atualizadoEm = agora; persist();
+      }
+      /* grava na Base (extensão) para valer em todos os computadores */
+      const reg = Object.assign({}, r); delete reg._foneOrig;
+      const { erro } = await baseGuardar([reg], r.fases || r.fase || "busca");
+      if(erro) setTimeout(() => toast("Telefone salvo neste navegador, mas a Base não respondeu (" + erro + "). Tente Atualizar e salvar de novo."), 800);
+      BASE.fones = mapaFones(BASE.lista || [], x => x.telefone, x => x.cnpj);
+      baseListaEmpresas();
+    } });
 }
 function celulaTelefones(txt, ref, lead){
   const box = el("div","tels");
