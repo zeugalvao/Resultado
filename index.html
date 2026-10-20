@@ -897,6 +897,9 @@ table.pmat tbody tr:not(.g):hover td{background:#F6F9FA}
 .ltseg button{border:0;border-left:1px solid var(--line);background:none;padding:6px 12px;font-size:12.5px;color:var(--muted);cursor:pointer}
 .ltseg button:first-child{border-left:0}
 .ltseg button.on{background:var(--ink);color:#fff}
+.ltbusca{flex:1 1 260px;max-width:380px}
+.ltbusca input{width:100%;border:1px solid var(--line);border-radius:6px;padding:7px 10px;font-size:13px;background:var(--surface)}
+.ltbusca input:focus{outline:none;border-color:var(--teal);box-shadow:0 0 0 2px var(--teal-soft)}
 .ltsel{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px}
 .ltsel input{width:84px;border:1px solid var(--line);border-radius:5px;padding:5px 8px;font-size:13px}
 .ltsel input:focus{outline:none;border-color:var(--teal);box-shadow:0 0 0 2px var(--teal-soft)}
@@ -1029,6 +1032,11 @@ tr.ltmais td{text-align:center;padding:8px}
 .ctextra .ctx{border:0;background:none;color:var(--muted);cursor:pointer;font-size:14px;line-height:1;padding:0 2px}
 .ctextra .ctx:hover{color:#a3261d}
 .ctadd{margin-top:6px;font-size:12px;padding:3px 9px}
+.teled{display:block;border:0;background:none;padding:0;margin-top:4px;font:inherit;font-size:11.5px;color:var(--muted);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.teled:hover{color:inherit}
+.teled:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+.telrec{margin:4px 0 6px}
+.telrecl{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;font-size:13px}
 .ctform{display:grid;grid-template-columns:1fr;gap:10px;margin:12px 0}
 .ctform label{display:flex;flex-direction:column;gap:4px;font-size:13px}
 .ctform input{font-size:15px;padding:8px 10px}
@@ -16944,7 +16952,21 @@ function ordemGrupo(nivel, tipo){
 
 /* ---------- Base de Leads: lista com seleção ---------- */
 BASE.lista = null; BASE.listaChave = ""; BASE.sel = new Set(); BASE.pag = 0;
-BASE.mostrar = "disp"; BASE.qtd = ""; BASE.rolar = false;
+BASE.mostrar = "disp"; BASE.qtd = ""; BASE.rolar = false; BASE.busca = "";
+/* busca por razão social / nome fantasia, CNPJ ou telefone (com ou sem pontuação) */
+function casaBuscaBase(r, termo){
+  const txt = baseChave(termo), dig = String(termo || "").replace(/\D/g,"");
+  if(!txt) return true;
+  const nome = baseChave((r.razaoSocial || "") + " " + (r.nomeFantasia || ""));
+  if(txt.split(/\s+/).every(p => nome.indexOf(p) > -1)) return true;
+  if(dig.length >= 4){
+    if(cnpjDig(r.cnpj).indexOf(dig) > -1) return true;
+    const fones = [r.telefone, r._foneOrig].concat(((atribDe(r) || {}).contatos || []).map(c => c.numero))
+      .map(t => String(t || "").replace(/\D/g,"")).join(" ");
+    if(fones.indexOf(dig.replace(/^55(?=\d{10,11}$)/, "").replace(/^0+/, "")) > -1) return true;
+  }
+  return false;
+}
 BASE.tipos = new Set(["cel","fixo","sem"]);
 
 async function baseCarregarLista(){
@@ -16965,6 +16987,7 @@ async function baseCarregarLista(){
     if(resp.fim || !(resp.registros || []).length) break;
     pagina++;
   }
+  qualifTodos(); lista.forEach(aplicarFoneReceita);
   BASE.lista = lista; BASE.listaChave = chave; BASE.sel = new Set(); BASE.pag = 0;
   return lista;
 }
@@ -17009,6 +17032,8 @@ async function baseListaEmpresas(){
   const filtrandoTipo = BASE.tipos.size < TIPOS_FONE.length;
   if(filtrandoNivel) visiveis = visiveis.filter(r => BASE.niveis.has(scoreDe(r).nivel));
   if(filtrandoTipo) visiveis = visiveis.filter(r => BASE.tipos.has(tipoDe(r)));
+  const buscando = !!String(BASE.busca || "").trim();
+  if(buscando) visiveis = lista.filter(r => casaBuscaBase(r, BASE.busca));   /* a busca olha o recorte inteiro */
   if(BASE.ordem === "score") visiveis = visiveis.slice().sort((a, b) => scoreDe(b).pts - scoreDe(a).pts);
   const grupoDe = r => ordemGrupo(scoreDe(r).nivel, tipoDe(r));
   const porGrupo = {};
@@ -17030,6 +17055,31 @@ async function baseListaEmpresas(){
     seg.append(b);
   });
   barra.append(seg);
+
+  /* busca */
+  const cb = el("div","ltbusca");
+  const ib = el("input"); ib.type = "search"; ib.id = "basebusca"; ib.value = BASE.busca || "";
+  ib.placeholder = "Buscar por razão social, CNPJ ou telefone";
+  ib.setAttribute("aria-label","Buscar empresa por razão social, CNPJ ou telefone");
+  let tBusca = null;
+  const buscar = () => {
+    clearTimeout(tBusca);
+    tBusca = setTimeout(async () => {
+      if(ib.value === BASE.busca) return;
+      BASE.busca = ib.value; BASE.pag = 0;
+      await baseListaEmpresas();
+      const novo = document.getElementById("basebusca");
+      if(novo){ novo.focus(); const n = novo.value.length; try{ novo.setSelectionRange(n, n); }catch(e){} }
+    }, 300);
+  };
+  ib.oninput = buscar;
+  ib.onkeydown = ev => {
+    if(ev.key === "Enter"){ ev.preventDefault(); clearTimeout(tBusca); tBusca = null; ib.dispatchEvent(new Event("input")); }
+    if(ev.key === "Escape" && ib.value){ ev.stopPropagation(); ib.value = ""; buscar(); }
+  };
+  cb.append(ib);
+  barra.append(cb);
+
   const ord = el("span","ltord");
   ord.append(document.createTextNode("Ordem:"));
   [["grupo","por grupo"],["","da lista"],["score","maior score"]].forEach(([v, rot]) => {
@@ -17133,6 +17183,17 @@ async function baseListaEmpresas(){
   atualizarSel();
   if(BASE.mostrar === "atu" && ehAdm()) u.conteudo.append(painelTransferencias());
 
+  if(buscando){
+    const aviso = el("p","leadshint");
+    aviso.append(document.createTextNode(visiveis.length
+      ? visiveis.length.toLocaleString("pt-BR") + (visiveis.length === 1 ? " empresa encontrada" : " empresas encontradas") + " para “" + BASE.busca.trim() + "”. A busca ignora os filtros de situação, score e telefone. "
+      : "Nenhuma empresa deste recorte tem “" + BASE.busca.trim() + "” na razão social, no CNPJ ou no telefone. Se o cliente for de outro estado ou cidade, troque o recorte acima. "));
+    const lb = el("button","btn sm ghost","Limpar busca");
+    lb.onclick = () => { BASE.busca = ""; BASE.pag = 0; baseListaEmpresas(); };
+    aviso.append(lb);
+    u.conteudo.append(aviso);
+    if(!visiveis.length) return;
+  }
   if(!visiveis.length){
     u.conteudo.append(el("p","leadshint", (filtrandoNivel || filtrandoTipo) ? "Nenhum lead neste grupo. Clique em Todos (score e telefone) para ver a lista completa." :
       BASE.mostrar === "atu" ? "Nenhum lead deste recorte está em atuação." :
@@ -17204,6 +17265,11 @@ async function baseListaEmpresas(){
     [r.cnpj, [r.cidade, r.uf].filter(Boolean).join("/"), r.ramo || ""].forEach(v => tr.append(el("td", null, v)));
     const tfone = el("td");
     if(r.telefone) tfone.append(celulaTelefones(r.telefone, null));
+    if(r._foneOrig != null && r._foneOrig !== r.telefone){
+      const nt = el("div","quem","conferido na Receita");
+      nt.title = "Número que estava na base: " + (r._foneOrig || "nenhum");
+      tfone.append(nt);
+    }
     tr.append(tfone);
     tr.append(el("td","muted",(r.socios || []).map(s => s.nome).join(", ")));
     const ts = el("td");
@@ -17315,6 +17381,7 @@ async function baseExportarEstado(uf, formato, bt){
         pagina++;
       }
     }
+    qualifTodos(); lista.forEach(aplicarFoneReceita);
     if(!lista.length) throw new Error("Não há leads de " + uf + " na base.");
     bt.textContent = "Montando…";
 
@@ -17602,10 +17669,49 @@ function qualifGravar(k, parte){
     }
   }, 400);
 }
+
+/* ---------- telefone conferido na Receita ----------
+   A consulta do CNPJ traz o telefone oficial (o mesmo que aparece no cnpja.com).
+   Número que não está na Receita é descartado, a menos que tenha vindo do Google Maps;
+   correção feita à mão pela equipe sempre vale mais que as duas. */
+function fonesReceita(lista){
+  const out = [];
+  (lista || []).forEach(t => {
+    let d = String(t || "").replace(/\D/g,"").replace(/^0+/, "");
+    if(d.length < 10 || d.length > 11 || /^(\d)\1+$/.test(d) || +d.slice(0,2) < 11) return;
+    const f = formatarFone(d);
+    if(!out.some(x => chaveFone(x) === chaveFone(f))) out.push(f);
+  });
+  return out;
+}
+function chaveFone(t){ return String(t || "").replace(/\D/g,"").slice(-8); }
+/* já consultado na Receita, com os telefones (consultas antigas não traziam) */
+function receitaCompleta(k){
+  const x = REQ.cache[k];
+  return !!(x && (x.naoEncontrado || Array.isArray(x.telefones)));
+}
+function veioDoMaps(r){ return !!(r && (r.link || r.nota || r.avaliacoes)); }
+function telefoneConferido(r){
+  const k = cnpjDig(r && r.cnpj), q = qualifDe(k) || {}, rec = q.receita || REQ.cache[k] || {};
+  const original = r._foneOrig != null ? r._foneOrig : (r.telefone || "");
+  if(q.telefoneManual) return q.telefoneManual;
+  const oficiais = Array.isArray(rec.telefones) ? rec.telefones : [];
+  if(!oficiais.length) return original;
+  const ofK = new Set(oficiais.map(chaveFone));
+  const manter = separarTelefones(original).filter(t => ofK.has(chaveFone(t)) || veioDoMaps(r));
+  const novos = oficiais.filter(t => !manter.some(m => chaveFone(m) === chaveFone(t)));
+  return manter.concat(novos).join(" / ");
+}
+function aplicarFoneReceita(r){
+  if(!r) return r;
+  if(r._foneOrig == null) r._foneOrig = r.telefone || "";
+  r.telefone = telefoneConferido(r);
+  return r;
+}
 const esperarMs = ms => new Promise(r => setTimeout(r, ms));
 async function consultarCnpj(cnpj){
   const d = cnpjDig(cnpj);
-  if(REQ.cache[d]) return REQ.cache[d];
+  if(receitaCompleta(d)) return REQ.cache[d];
   const fontes = [
     ["https://brasilapi.com.br/api/cnpj/v1/" + d, j => ({
       natureza: j.natureza_juridica || "", codigo: String(j.codigo_natureza_juridica || "").replace(/\D/g,""),
@@ -17613,6 +17719,7 @@ async function consultarCnpj(cnpj){
       fantasia: j.nome_fantasia || "", porte: j.porte || "", capital: Number(j.capital_social) || 0,
       simples: j.opcao_pelo_simples === true, mei: j.opcao_pelo_mei === true,
       socios: (j.qsa || []).length, filial: Number(j.identificador_matriz_filial) === 2,
+      telefones: fonesReceita([j.ddd_telefone_1, j.ddd_telefone_2]), email: String(j.email || "").toLowerCase(),
       atividades: [j.cnae_fiscal_descricao].concat((j.cnaes_secundarios || []).map(c => c.descricao)).filter(Boolean).join(" | ") })],
     ["https://publica.cnpj.ws/cnpj/" + d, j => {
       const e = j.estabelecimento || {};
@@ -17622,6 +17729,8 @@ async function consultarCnpj(cnpj){
         fantasia: e.nome_fantasia || "", porte: (j.porte || {}).descricao || "", capital: Number(j.capital_social) || 0,
         simples: /sim/i.test((j.simples || {}).simples || ""), mei: /sim/i.test((j.simples || {}).mei || ""),
         socios: (j.socios || []).length, filial: /filial/i.test(e.tipo || ""),
+        telefones: fonesReceita([String(e.ddd1 || "") + String(e.telefone1 || ""), String(e.ddd2 || "") + String(e.telefone2 || "")]),
+        email: String(e.email || "").toLowerCase(),
         atividades: [(e.atividade_principal || {}).descricao].concat((e.atividades_secundarias || []).map(c => c.descricao)).filter(Boolean).join(" | ")
       };
     }]
@@ -17843,7 +17952,7 @@ function abrirConsultaRequisitos(todos){
   const escolhidos = (BASE.lista || []).filter(r => (todos || BASE.sel.has(cnpjDig(r.cnpj))) && !atribDe(r) && contatoValido(r));
   if(!escolhidos.length) return toast(todos ? "Nenhum contato válido neste recorte." : "Marque ao menos um contato válido para consultar.");
   qualifTodos();
-  const semReceita = escolhidos.filter(r => !REQ.cache[cnpjDig(r.cnpj)]).length;
+  const semReceita = escolhidos.filter(r => !receitaCompleta(cnpjDig(r.cnpj))).length;
   const semEntorno = escolhidos.filter(r => !(qualifDe(cnpjDig(r.cnpj)) || {}).entorno).length;
   const stFora = statusLista().find(foraReq), stCnpj = statusLista().find(pedeData);
   if(!stFora || !stCnpj) return toast("Faltam os status \"Lead fora do requisito\" ou \"Falta tempo de CNPJ aberto\" em Status dos leads.");
@@ -17860,7 +17969,8 @@ function abrirConsultaRequisitos(todos){
   caixa.append(el("h3",null, todos
     ? "Qualificar todo o recorte: " + escolhidos.length.toLocaleString("pt-BR") + " contatos válidos"
     : "Qualificar " + escolhidos.length + (escolhidos.length === 1 ? " lead marcado" : " leads marcados")));
-  caixa.append(el("p","sub","Busca na Receita a natureza, a abertura, o porte, o capital e os sócios de cada CNPJ e calcula o score de potencial." +
+  caixa.append(el("p","sub","Busca na Receita a natureza, a abertura, o porte, o capital, os sócios e o telefone oficial de cada CNPJ e calcula o score de potencial." +
+    " Telefone que não está na Receita nem veio do Google Maps é trocado pelo da Receita." +
     " Faltam dados da Receita em " + semReceita.toLocaleString("pt-BR") + " e do entorno em " + semEntorno.toLocaleString("pt-BR") +
     ". Os já consultados não são buscados de novo."));
   const lbReq = el("label","tchk"), cbReq = el("input"); cbReq.type = "checkbox"; cbReq.checked = !todos;
@@ -17914,7 +18024,7 @@ function abrirConsultaRequisitos(todos){
     const comEntorno = cbE.checked, aplicarReq = cbReq.checked, niveis = { Quente:0, Morno:0, Frio:0 }, frios = [];
     const t0 = Date.now();
     const [fid, rid] = selR.value.split("|");
-    const cont = { ok:0, fora:0, aguarda:0, erro:0 };
+    const cont = { ok:0, fora:0, aguarda:0, erro:0, fone:0 };
     const lote = "rq" + Date.now().toString(36);
     for(let i = 0; i < escolhidos.length; i++){
       if(cancelar) break;
@@ -17923,10 +18033,11 @@ function abrirConsultaRequisitos(todos){
       prog.textContent = "Consultando " + (i + 1).toLocaleString("pt-BR") + " de " + escolhidos.length.toLocaleString("pt-BR") + ": " +
         (r.razaoSocial || r.cnpj) + (resta != null ? " · faltam ~" + (resta < 1 ? "menos de 1 min" : resta + " min") : "");
       cheio.style.width = Math.round(i / escolhidos.length * 100) + "%";
-      const jaTinha = !!REQ.cache[k];
+      const jaTinha = receitaCompleta(k);
       const x = await consultarCnpj(r.cnpj);
       if(!jaTinha) await esperarMs(300);
       if(!x || x.naoEncontrado){ cont.erro++; continue; }
+      { const antes = r.telefone; aplicarFoneReceita(r); if(antes !== r.telefone) cont.fone = (cont.fone || 0) + 1; }
       if(!aplicarReq){
         cont.ok++;
         if(comEntorno && !(qualifDe(k) || {}).entorno){
@@ -17979,6 +18090,8 @@ function abrirConsultaRequisitos(todos){
       "<b>" + cont.aguarda + "</b> enviados para Aguardando tempo de CNPJ<br>" +
       "<b>" + cont.fora + "</b> enviados para Lead fora do requisito" +
       (cont.erro ? "<br><b>" + cont.erro + "</b> não consultados (Receita fora do ar ou sem data de abertura); continuam marcados" : "") + "</p>";
+    if(cont.fone) resumo.append(el("p","sub", cont.fone.toLocaleString("pt-BR") + (cont.fone === 1 ? " telefone corrigido" : " telefones corrigidos") +
+      " com o número oficial da Receita."));
     cancelar = false;
     if(frios.length && !todos){
       const bF = el("button","btn","Desmarcar os " + frios.length + " frios");
@@ -18236,6 +18349,88 @@ function blocoContatosExtras(ref, empresa){
   };
   box.append(b);
   return box;
+}
+/* ---------- corrigir o telefone principal do lead ---------- */
+function normalizarFones(txt){
+  const ok = [], ruins = [];
+  String(txt || "").split(/[,;\/|\n]+/).map(t => t.trim()).filter(Boolean).forEach(t => {
+    let d = t.replace(/\D/g,"").replace(/^0+/, "");
+    if((d.length === 12 || d.length === 13) && d.startsWith("55")) d = d.slice(2);
+    if(d.length < 10 || d.length > 11 || +d.slice(0,2) < 11) return ruins.push(t);
+    const f = formatarFone(d);
+    if(!ok.some(x => chaveFone(x) === chaveFone(f))) ok.push(f);
+  });
+  return { ok, ruins };
+}
+function editarTelefone(ref){
+  const l = ref.lead || (ref.lead = {}), k = cnpjDig(ref.cnpj || l.cnpj), empresa = l.razaoSocial || l.nomeFantasia || "";
+  const fundo = el("div","tmodal"), caixa = el("div","tcaixa");
+  caixa.setAttribute("role","dialog"); caixa.setAttribute("aria-modal","true");
+  fundo.append(caixa);
+  const fechar = () => { fundo.remove(); document.removeEventListener("keydown", escF, true); };
+  const escF = ev => { if(ev.key === "Escape"){ ev.stopPropagation(); fechar(); } };
+  document.addEventListener("keydown", escF, true);
+  fundo.onclick = ev => { if(ev.target === fundo) fechar(); };
+
+  caixa.append(el("h3",null,"Corrigir telefone"));
+  caixa.append(el("p","sub",empresa));
+  const f = el("div","ctform");
+  const lb = el("label",null,"Telefone com DDD"), inp = el("input");
+  inp.type = "tel"; inp.value = l.telefone || ""; inp.placeholder = "(38) 3222-8874";
+  lb.append(inp);
+  f.append(lb, el("p","sub","Para mais de um número, separe com /. Os números do botão + telefone continuam como estão."));
+  caixa.append(f);
+
+  const rec = el("div","telrec");
+  rec.append(el("div","trot","Telefone oficial na Receita Federal"));
+  const recLista = el("div","telrecl");
+  recLista.append(el("span","muted","Consultando o CNPJ…"));
+  rec.append(recLista);
+  caixa.append(rec);
+
+  const erro = el("p","terro");
+  inp.oninput = () => { erro.textContent = ""; };
+  const ac = el("div","pickacoes"), ok = el("button","btn primary","Salvar telefone"), cc = el("button","btn","Cancelar");
+  ac.append(ok, cc); caixa.append(erro, ac);
+  cc.onclick = fechar;
+  inp.onkeydown = ev => { if(ev.key === "Enter") ok.click(); };
+
+  ok.onclick = () => {
+    const { ok: fones, ruins } = normalizarFones(inp.value);
+    if(ruins.length) return (erro.textContent = "Número inválido: " + ruins.join(", ") + ". Use o DDD e 8 ou 9 dígitos.");
+    if(!fones.length) return (erro.textContent = "Informe ao menos um número com DDD.");
+    const novo = fones.join(" / "), antes = l.telefone || "";
+    if(novo === antes){ fechar(); return; }
+    const agora = new Date().toISOString();
+    l.telefone = novo;
+    registrar(ref, { t: agora, tipo:"telefone", de: antes, para: novo, status: ref.andamento, dono: ref.usuarioId });
+    qualifGravar(k, { telefoneManual: novo });
+    ref.atualizadoEm = agora; persist(); fechar(); render();
+    toast("Telefone de " + (empresa || "lead") + " corrigido para " + novo + ".");
+  };
+
+  document.body.append(fundo);
+  setTimeout(() => { inp.focus(); inp.select(); }, 30);
+
+  consultarCnpj(k).then(x => {
+    recLista.innerHTML = "";
+    const oficiais = (x && x.telefones) || [];
+    if(!x || x.naoEncontrado){ recLista.append(el("span","muted", x ? "CNPJ não encontrado na Receita." : "A Receita não respondeu agora. Tente de novo em instantes.")); return; }
+    if(!oficiais.length){ recLista.append(el("span","muted","A Receita não tem telefone cadastrado para este CNPJ.")); return; }
+    const atuais = new Set(separarTelefones(l.telefone).map(chaveFone));
+    oficiais.forEach(t => {
+      const b = el("button","btn sm", (atuais.has(chaveFone(t)) ? "✓ " : "") + t);
+      b.type = "button";
+      b.title = atuais.has(chaveFone(t)) ? "Este número já está no lead" : "Usar este número";
+      b.onclick = () => { inp.value = t; erro.textContent = ""; inp.focus(); };
+      recLista.append(b);
+    });
+    if(oficiais.length > 1){
+      const bt = el("button","btn sm ghost","Usar os " + oficiais.length);
+      bt.type = "button"; bt.onclick = () => { inp.value = oficiais.join(" / "); inp.focus(); };
+      recLista.append(bt);
+    }
+  });
 }
 function celulaTelefones(txt, ref, lead){
   const box = el("div","tels");
@@ -18998,6 +19193,7 @@ function textoEvento(e){
   if(e.tipo === "status" && e.tentativa && e.anterior === e.status) return quem + ": " + nomeStatus(e.status) + " (tentativa " + e.tentativa + ")" + (e.retorno ? ", devolvido ao ADM" : "");
   if(e.tipo === "status" && e.motivo) return quem + " mudou de " + nomeStatus(e.anterior) + " para " + nomeStatus(e.status) + " · motivo: " + e.motivo;
   if(e.tipo === "status") return quem + " mudou de " + nomeStatus(e.anterior) + " para " + nomeStatus(e.status) + (e.aprox ? " (data aproximada)" : "");
+  if(e.tipo === "telefone") return nomeUsuario(e.por) + " corrigiu o telefone de " + (e.de || "nenhum") + " para " + (e.para || "");
   if(e.tipo === "contato") return nomeUsuario(e.por) + " " + (e.acao || "adicionou") + " o telefone " + (e.setor ? e.setor + " " : "") + (e.tel || "");
   if(e.tipo === "parcelados") return nomeUsuario(e.por) + " informou " + (e.para == null ? "(apagou)" : e.para) + " pacientes pagando parcelas";
   if(e.tipo === "data") return nomeUsuario(e.por) + " alterou a data prevista" + (e.de ? " de " + fmtDataISO(e.de) : "") + " para " + fmtDataISO(e.data);
@@ -19245,6 +19441,13 @@ function renderLeadsTrab(host){
       const tt = el("td");
       if(l.telefone) tt.append(celulaTelefones(l.telefone, ref, l));
       else tt.append(el("span","muted","—"));
+      if(ref && a.meu){
+        const be = el("button","teled", l.telefone ? "Corrigir telefone" : "Informar telefone");
+        be.type = "button"; be.dataset.livre = "1";
+        be.title = "Trocar o número que veio da base, conferindo com o telefone oficial da Receita";
+        be.onclick = () => editarTelefone(ref);
+        tt.append(be);
+      }
       { const nr = vezesFone(l.telefone, LT.fones); if(nr >= FONE_REP_MIN) tt.append(etiquetaFoneRep(nr)); }
       if(ref) tt.append(blocoContatosExtras(ref, l.razaoSocial || l.nomeFantasia));
       tr.append(tt);
