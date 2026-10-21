@@ -1026,6 +1026,14 @@ tr.ltmais td{text-align:center;padding:8px}
 .motlista{display:flex;flex-direction:column;gap:6px;margin:10px 0}
 .motlista label{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:7px;cursor:pointer;font-size:14px}
 .motlista label:has(input:checked){border-color:#a3261d;background:#fdf3f2}
+.motobs-rot{display:block;font-size:12.5px;font-weight:600;color:var(--muted);margin:12px 0 4px}
+.motobs{width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font:inherit;font-size:13.5px;resize:vertical}
+.motperda-obs{font-size:11.5px;color:var(--muted);margin-top:2px;max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.motedit{display:flex;flex-direction:column;gap:6px;margin:6px 0}
+.motedit-lin{display:flex;align-items:center;gap:6px}
+.motedit-lin input{flex:1;min-width:0;padding:7px 9px;border:1px solid var(--line);border-radius:6px;font:inherit;font-size:13.5px}
+.motedit-n{font-size:12.5px;color:var(--muted);width:24px;text-align:right}
+.motedit-novo{margin-top:10px;padding-left:30px}
 .motperda{font-size:11.5px;color:#a3261d;margin-top:4px}
 .fonerep{display:inline-block;margin-top:4px;padding:2px 8px;border-radius:999px;background:#fdf0d5;color:#8a5a0b;font-size:11.5px;font-weight:600;cursor:help}
 .ctextra{margin-top:6px;padding-top:6px;border-top:1px dashed var(--line-soft);display:flex;flex-direction:column;gap:4px}
@@ -19878,7 +19886,29 @@ function devolverPorTentativas(ref, l, statusId, n, jaRegistrado){
   toast(((l && l.razaoSocial) || "Lead") + " não atendeu " + n + (n === 1 ? " vez" : " vezes") + " e foi devolvido para " + (adm ? adm.nome : "o administrador") + ".");
 }
 /* ---------- motivo da perda ---------- */
-const MOTIVOS_PADRAO = ["Nunca respondeu","Nenhum número de contato válido"];
+const MOTIVOS_PADRAO = [
+  "Cliente já possui sistema de Pix automático",
+  "Cliente não se interessou no primeiro contato",
+  "Nunca respondeu",
+  "Após apresentação cliente não se interessou",
+  "Cliente achou valores altos"
+];
+const MOTIVOS_ANTIGOS = ["Nunca respondeu","Nenhum número de contato válido"];
+/* uma vez só: os status de perda passam a usar a lista nova; motivos que o ADM já tinha criado ficam no fim */
+function migrarMotivosPerda(){
+  if(DB.motivosPerdaV2) return;
+  const chave = x => String(x || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  statusLista().forEach(st => {
+    if(!pedeMotivo(st)) return;
+    const novos = MOTIVOS_PADRAO.slice(), ja = new Set(novos.map(chave));
+    (Array.isArray(st.motivos) ? st.motivos : []).forEach(m => {
+      if(MOTIVOS_ANTIGOS.map(chave).includes(chave(m)) || ja.has(chave(m))) return;
+      novos.push(m); ja.add(chave(m));
+    });
+    st.motivos = novos;
+  });
+  DB.motivosPerdaV2 = true;
+}
 function pedeMotivo(st){ return !!st && (st.tipo === "perdido" || /perdid/i.test(st.nome || "")); }
 function motivosDe(st){ return (Array.isArray(st && st.motivos) && st.motivos.length) ? st.motivos : MOTIVOS_PADRAO; }
 function pedirMotivo(st, empresa){
@@ -19903,23 +19933,87 @@ function pedirMotivo(st, empresa){
       box.append(lb);
     });
     const erro = el("p","terro");
+    const lbObs = el("label","motobs-rot","Observação (opcional)");
+    const obs = el("textarea","motobs"); obs.rows = 3; obs.maxLength = 1000;
+    obs.placeholder = "Ex.: usa o Pix automático do banco X; pediu para falar de novo em março";
     const ac = el("div","pickacoes"), ok = el("button","btn primary","Confirmar perda"), cc = el("button","btn","Cancelar");
     ok.onclick = () => {
       const r = box.querySelector("input:checked");
       if(!r) return (erro.textContent = "Escolha um motivo para continuar.");
+      const o = obs.value.trim();
       if(r.value === "Outro motivo"){
         const t = outro.value.trim();
         if(t.length < 3) return (erro.textContent = "Descreva o motivo.");
-        return fim("Outro: " + t);
+        return fim({ motivo: "Outro: " + t, obs: o });
       }
-      fim(r.value);
+      fim({ motivo: r.value, obs: o });
     };
     cc.onclick = () => fim(null);
     ac.append(ok, cc);
-    caixa.append(box, outro, erro, ac);
+    caixa.append(box, outro, lbObs, obs, erro, ac);
     document.body.append(fundo);
     setTimeout(() => { const f = box.querySelector("input"); if(f) f.focus(); }, 30);
   });
+}
+/* ADM: cadastra, renomeia, reordena e exclui os motivos de um status de perda */
+function editarMotivosPerda(st){
+  const fundo = el("div","tmodal"), caixa = el("div","tcaixa");
+  caixa.setAttribute("role","dialog"); caixa.setAttribute("aria-modal","true");
+  fundo.append(caixa);
+  const fechar = () => { fundo.remove(); document.removeEventListener("keydown", esc, true); };
+  const esc = ev => { if(ev.key === "Escape"){ ev.stopPropagation(); fechar(); } };
+  document.addEventListener("keydown", esc, true);
+  fundo.onclick = ev => { if(ev.target === fundo) fechar(); };
+  caixa.append(el("h3",null,"Motivos de perda · " + st.nome));
+  caixa.append(el("p","sub","Estes motivos aparecem para o SDR quando ele escolhe \"" + st.nome + "\". A opção \"Outro motivo\" e o campo de observação sempre aparecem. " +
+    "Renomear ou excluir um motivo não muda o histórico dos leads que já foram perdidos com ele."));
+  let lst = motivosDe(st).slice();
+  const box = el("div","motedit");
+  const erro = el("p","terro");
+  const desenhar = () => {
+    box.innerHTML = "";
+    lst.forEach((m, i) => {
+      const lin = el("div","motedit-lin");
+      lin.append(el("span","motedit-n",(i + 1) + " -"));
+      const ip = el("input"); ip.value = m; ip.maxLength = 120;
+      ip.oninput = () => { lst[i] = ip.value; };
+      const up = el("button","btn sm","↑"), dn = el("button","btn sm","↓"), x = el("button","btn sm danger","Excluir");
+      up.title = "Subir"; dn.title = "Descer";
+      up.disabled = i === 0; dn.disabled = i === lst.length - 1;
+      up.onclick = () => { [lst[i - 1], lst[i]] = [lst[i], lst[i - 1]]; desenhar(); };
+      dn.onclick = () => { [lst[i + 1], lst[i]] = [lst[i], lst[i + 1]]; desenhar(); };
+      x.onclick = () => { lst.splice(i, 1); desenhar(); };
+      lin.append(ip, up, dn, x);
+      box.append(lin);
+    });
+  };
+  desenhar();
+  const novoLin = el("div","motedit-lin motedit-novo");
+  const ipN = el("input"); ipN.placeholder = "Novo motivo"; ipN.maxLength = 120;
+  const btA = el("button","btn sm","+ Adicionar");
+  const adicionar = () => {
+    const v = ipN.value.trim();
+    if(!v) return;
+    if(lst.some(m => m.trim().toLowerCase() === v.toLowerCase())) return (erro.textContent = "Esse motivo já está na lista.");
+    lst.push(v); ipN.value = ""; erro.textContent = ""; desenhar(); ipN.focus();
+  };
+  btA.onclick = adicionar;
+  ipN.onkeydown = ev => { if(ev.key === "Enter"){ ev.preventDefault(); adicionar(); } };
+  novoLin.append(ipN, btA);
+  const ac = el("div","pickacoes"), ok = el("button","btn primary","Salvar motivos"), cc = el("button","btn","Cancelar");
+  ok.onclick = () => {
+    if(ipN.value.trim()) adicionar();
+    const limpos = [];
+    lst.map(m => m.trim()).filter(Boolean).forEach(m => { if(!limpos.some(x => x.toLowerCase() === m.toLowerCase())) limpos.push(m); });
+    if(!limpos.length) return (erro.textContent = "Deixe ao menos um motivo.");
+    st.motivos = limpos; persist(); fechar(); redesenharPicker();
+    toast(limpos.length + (limpos.length === 1 ? " motivo salvo." : " motivos salvos."));
+  };
+  cc.onclick = fechar;
+  ac.append(ok, cc);
+  caixa.append(box, novoLin, erro, ac);
+  document.body.append(fundo);
+  setTimeout(() => ipN.focus(), 30);
 }
 function totalRetornos(){ return Object.values(atribs()).filter(emRetornoComum).length; }
 function totalForaReq(){ return Object.values(atribs()).filter(emForaReq).length; }
@@ -20091,7 +20185,7 @@ function textoEvento(e){
   const quem = e.por ? nomeUsuario(e.por) : "Sistema";
   if(e.tipo === "entrada") return "Entrou para " + nomeUsuario(e.dono) + " como " + nomeStatus(e.status) + (e.aprox ? " (data aproximada)" : "");
   if(e.tipo === "status" && e.tentativa && e.anterior === e.status) return quem + ": " + nomeStatus(e.status) + " (tentativa " + e.tentativa + ")" + (e.retorno ? ", devolvido ao ADM" : "");
-  if(e.tipo === "status" && e.motivo) return quem + " mudou de " + nomeStatus(e.anterior) + " para " + nomeStatus(e.status) + " · motivo: " + e.motivo;
+  if(e.tipo === "status" && e.motivo) return quem + " mudou de " + nomeStatus(e.anterior) + " para " + nomeStatus(e.status) + " · motivo: " + e.motivo + (e.obsMotivo ? " · obs.: " + e.obsMotivo : "");
   if(e.tipo === "status") return quem + " mudou de " + nomeStatus(e.anterior) + " para " + nomeStatus(e.status) + (e.aprox ? " (data aproximada)" : "");
   if(e.tipo === "telefone" && e.receita) return nomeUsuario(e.por) + " trocou o telefone repetido " + (e.de || "") + " pelo da Receita: " + (e.para || "");
   if(e.tipo === "telefone") return nomeUsuario(e.por) + " corrigiu o telefone de " + (e.de || "nenhum") + " para " + (e.para || "");
@@ -20521,10 +20615,11 @@ function renderLeadsTrab(host){
           persist(); render(); return;
         }
         const novo = statusPorId(s.value), vinhaDeRetorno = emRetorno(ref);
-        let dataPrev = null, motivo = null;
+        let dataPrev = null, motivo = null, obsPerda = "";
         if(pedeMotivo(novo)){
-          motivo = await pedirMotivo(novo, l.razaoSocial);
-          if(!motivo){ s.value = ant; return; }
+          const rm = await pedirMotivo(novo, l.razaoSocial);
+          if(!rm){ s.value = ant; return; }
+          motivo = rm.motivo; obsPerda = rm.obs || "";
         }
         if(pedeData(novo)){
           dataPrev = await pedirData("Quando o CNPJ atinge o tempo mínimo?",
@@ -20539,8 +20634,9 @@ function renderLeadsTrab(host){
         ref.andamento = s.value;
         ref.atualizadoEm = new Date().toISOString();
         registrar(ref, { t: ref.atualizadoEm, tipo:"status", anterior: ant, status: s.value, dono: ref.usuarioId,
-                         retorno: retornaAdm(novo) || undefined, data: dataPrev || undefined, motivo: motivo || undefined });
-        if(motivo) ref.motivoPerda = { motivo, status: s.value, em: ref.atualizadoEm, por: USR ? USR.id : null };
+                         retorno: retornaAdm(novo) || undefined, data: dataPrev || undefined, motivo: motivo || undefined,
+                         obsMotivo: obsPerda || undefined });
+        if(motivo) ref.motivoPerda = { motivo, obs: obsPerda || undefined, status: s.value, em: ref.atualizadoEm, por: USR ? USR.id : null };
         else if(!pedeMotivo(novo)) delete ref.motivoPerda;
         if(religar(novo) && !retornaAdm(novo) && !vinhaDeRetorno){
           ref.naTentativas = 1;
@@ -20569,7 +20665,10 @@ function renderLeadsTrab(host){
       };
       td.append(s);
       if(emReligar(a)) td.append(pillReligar(a));
-      if(a.motivoPerda && pedeMotivo(st)) td.append(el("div","motperda","Motivo: " + a.motivoPerda.motivo));
+      if(a.motivoPerda && pedeMotivo(st)){
+        td.append(el("div","motperda","Motivo: " + a.motivoPerda.motivo));
+        if(a.motivoPerda.obs){ const o = el("div","motperda-obs","Obs.: " + a.motivoPerda.obs); o.title = a.motivoPerda.obs; td.append(o); }
+      }
       if(emRetorno(a)){
         td.append(el("div","sub","↩ classificado por " + quemClassificou(a) +
           (a.retornoEm ? " em " + dataHora(a.retornoEm) : "")));
@@ -20709,7 +20808,7 @@ function renderLeadsTrab(host){
           dataHora(inicioAtual(a)), fmtDur(dec), sla ? fmtHoras(st.sla) : "", st.tipo !== "aberto" ? "Encerrado" : (!sla ? "Sem prazo" : (dec > sla ? "Fora do SLA" : "Dentro do SLA")),
           a.obs || "", a.em ? new Date(a.repassadoEm || a.em).toLocaleDateString("pt-BR") : "",
           a.repassadoPor ? nomeUsuario(a.repassadoPor) : "", l.score != null ? l.score + " " + (l.scoreNivel || "") : "",
-          a.qtdParcelados != null ? a.qtdParcelados : "", a.motivoPerda ? a.motivoPerda.motivo : "",
+          a.qtdParcelados != null ? a.qtdParcelados : "", a.motivoPerda ? a.motivoPerda.motivo + (a.motivoPerda.obs ? " | Obs.: " + a.motivoPerda.obs : "") : "",
           (a.contatos || []).map(c => c.setor + ": " + c.numero).join(" | "),
           toquesDe(a).length, toquesDe(a).map((x, i) => (i + 1) + "º " + textoCanais(x.canais)).join(" > ")].map(v => v == null ? "" : String(v)));
       });
@@ -21958,13 +22057,7 @@ function blocoStatusSla(host){
       const bm = el("button","btn sm","Motivos (" + motivosDe(s).length + ")");
       bm.style.marginRight = "6px";
       bm.title = "Motivos que aparecem quando alguém escolhe este status: " + motivosDe(s).join("; ");
-      bm.onclick = () => {
-        const v = prompt("Motivos de perda para \"" + s.nome + "\", separados por ponto e vírgula (;).\nA opção \"Outro motivo\" sempre aparece no final.", motivosDe(s).join("; "));
-        if(v == null) return;
-        const lst = v.split(";").map(x => x.trim()).filter(Boolean);
-        if(!lst.length) return toast("Informe ao menos um motivo.");
-        s.motivos = lst; persist(); redesenharPicker();
-      };
+      bm.onclick = () => editarMotivosPerda(s);
       tx.append(bm);
     }
     bx.onclick = () => {
@@ -22091,6 +22184,7 @@ function mesclarCom(atual){
   if(veio){
     garantirPerfis();
     migrarStatusLeads();
+    migrarMotivosPerda();
     if(!Array.isArray(DB.equipe)) DB.equipe = [];
     const fA = DB.frentes.find(x => F && x.id === F.id);
     if(fA){
@@ -22449,6 +22543,7 @@ function carregarDB(bruto){
   DB.frentes.forEach(migrarFrente);
   garantirPerfis();
   migrarStatusLeads();
+  migrarMotivosPerda();
   DB.v = SEED.v;
   ativarFrente(DB.ativa || DB.frentes[0].id, DB.ativoRamo);
   fotografarBase();
