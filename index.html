@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="elosgate-leads" content="1">
-<!-- VERSAO-CRM 2026.10.05-v17 -->
+<!-- VERSAO-CRM 2026.10.21-v18 · meios de contato -->
 <title>CRM de Frentes de Trabalho · Elosgate</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1175,6 +1175,37 @@ table.leadlista tr.grupo td small{font-weight:400;color:var(--muted);margin-left
 .histbtn:hover{border-color:var(--teal)}
 .histbtn.on{background:var(--teal-soft);border-color:var(--teal)}
 .slabox .convimp{padding:3px 10px;font-size:12px}
+/* ---------- meios de contato (WhatsApp, ligação, e-mail) ---------- */
+.toqbox{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px;font-size:12px}
+.toqrot{font-weight:600;color:var(--ink);margin-right:2px}
+.toqvazio{color:var(--muted)}
+.toq{display:inline-flex;align-items:center;gap:3px;border:1px solid var(--line);border-radius:5px;background:var(--surface);padding:2px 6px 2px 5px;cursor:default}
+.toq b{font-weight:600;color:var(--muted);margin-right:2px;font-size:11.5px}
+.toqsep{color:var(--line);font-size:11px}
+.cn{font-style:normal;font-size:11.5px;font-weight:600;padding:0 5px;border-radius:3px;line-height:18px}
+.cn-wa{background:#DDF2E4;color:#16683A}
+.cn-tel{background:#DCE8F3;color:#1E4C73}
+.cn-email{background:var(--amber-soft);color:#7E5609}
+.toqdel{font-size:11.5px;color:var(--muted)}
+.toqbox [hidden]{display:none!important}
+.glegenda i.neutro{background:var(--teal)}
+.toqform{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;border:1px dashed var(--teal);border-radius:6px;padding:4px 8px;background:var(--teal-soft)}
+.toqform .q{font-weight:600}
+.toqcanal{border:1px solid var(--line);background:var(--surface);border-radius:5px;padding:2px 9px;font-size:12px;cursor:pointer;color:var(--ink)}
+.toqcanal[aria-pressed="true"]{border-color:var(--teal-deep);background:var(--teal);color:#fff}
+.toqform input[type="datetime-local"]{font-size:12px;padding:2px 5px;border:1px solid var(--line);border-radius:5px;background:#fff}
+.toqform .btn.sm{padding:2px 9px;font-size:12px}
+.gmeta{width:64px;padding:2px 5px;border:1px solid var(--line);border-radius:4px;font-size:12px}
+.gcard details{margin-top:12px;font-size:12px}
+.gcard details summary{cursor:pointer;color:var(--teal-deep);font-weight:600}
+td.acima{color:var(--brick);font-weight:600}
+.gtag{display:inline-block;font-size:11px;font-weight:600;padding:0 6px;border-radius:3px;line-height:18px;white-space:nowrap}
+.gtag.ruim{background:var(--brick-soft);color:var(--brick)}
+.gtag.bom{background:var(--teal-soft);color:var(--teal-deep)}
+.gtag.neutro{background:#EEF2F4;color:var(--muted)}
+.gbtrk i.cn-wa,.glegenda i.cn-wa{background:#2E9E5B}
+.gbtrk i.cn-tel,.glegenda i.cn-tel{background:#2F6A9E}
+.gbtrk i.cn-email,.glegenda i.cn-email{background:#C9921C}
 .histpanel{margin:9px 0 3px;border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow:hidden;max-width:980px}
 .histabas{display:flex;border-bottom:1px solid var(--line);background:#F6F9FA}
 .histabas button{border:0;background:none;padding:8px 14px;font-size:12.5px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
@@ -19362,8 +19393,122 @@ function textoEvento(e){
                                                          : " repassou para " + nomeUsuario(e.dono) + (e.statusAnt ? " (entregou em " + nomeStatus(e.statusAnt) + "; chega como " + nomeStatus(e.status) + ")" : ", em " + nomeStatus(e.status)));
   if(e.tipo === "devolucao") return quem + " devolveu para a Base";
   if(e.tipo === "whatsapp") return quem + " abriu conversa no WhatsApp com " + (e.tel || "o contato");
+  if(e.tipo === "toque") return quem + " registrou o " + (e.n || "") + "º contato: " + textoCanais(e.canais);
+  if(e.tipo === "toque_x") return quem + " apagou o " + (e.n || "") + "º contato (" + textoCanais(e.canais) + ")";
   if(e.tipo === "conversa") return quem + " importou a conversa do WhatsApp (" + (e.novas || 0) + " mensagens novas, arquivo " + (e.arquivo || "") + ")";
   return e.tipo;
+}
+
+/* ---------- meios de contato: cada contato registra quais canais foram usados ---------- */
+const CANAIS = [
+  { id:"wa",    nome:"WhatsApp" },
+  { id:"tel",   nome:"Ligação" },
+  { id:"email", nome:"E-mail" }
+];
+const META_CONTATOS_PADRAO = 40;   /* contatos por dia útil, quando o ADM não definiu a meta do usuário */
+function canalNome(id){ const c = CANAIS.find(x => x.id === id); return c ? c.nome : id; }
+function textoCanais(cs){ return (cs || []).map(canalNome).join(" + "); }
+function toquesDe(a){ return (a.toques || []).filter(x => x && Array.isArray(x.canais) && x.canais.length); }
+function metaContatos(uid){
+  const u = (DB.usuarios || []).find(x => x.id === uid);
+  const n = u ? parseInt(u.metaContatosDia, 10) : NaN;
+  return n > 0 ? n : META_CONTATOS_PADRAO;
+}
+function paraLocalInput(d){
+  const z = n => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()) + "T" + z(d.getHours()) + ":" + z(d.getMinutes());
+}
+function salvarToque(a, canais, quando){
+  const ref = atribs()[a.chave];
+  if(!ref) return;
+  const t = quando || new Date().toISOString();
+  if(!Array.isArray(ref.toques)) ref.toques = [];
+  const id = "tq" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  ref.toques.push({ id, t, canais: canais.slice(), por: USR ? USR.id : null });
+  ref.toques.sort((x, y) => String(x.t).localeCompare(String(y.t)));
+  const n = ref.toques.findIndex(x => x.id === id) + 1;
+  ref.atualizadoEm = new Date().toISOString();
+  /* sem campo status: não mexe no relógio do SLA */
+  registrar(ref, { t, tipo:"toque", id, n, canais: canais.slice(), dono: ref.usuarioId });
+  persist(); render();
+  const l = ref.lead || {};
+  toast((l.razaoSocial || "Lead") + ": " + n + "º contato registrado (" + textoCanais(canais) + ")." +
+    (n === 1 && ref.andamento === statusEntrada().id ? " Lembre de mudar o status do lead." : ""));
+}
+function desfazerToque(a){
+  const ref = atribs()[a.chave];
+  const lst = ref && toquesDe(ref);
+  if(!lst || !lst.length) return;
+  const ult = lst[lst.length - 1];
+  if(!ehAdm() && !(USR && ult.por === USR.id)) return toast("Só quem registrou o contato (ou o ADM) pode apagá-lo.");
+  if(!confirm("Apagar o " + lst.length + "º contato (" + textoCanais(ult.canais) + ", " + dataHora(ult.t) + ")?")) return;
+  ref.toques = ref.toques.filter(x => x.id !== ult.id);
+  ref.atualizadoEm = new Date().toISOString();
+  registrar(ref, { tipo:"toque_x", id: ult.id, n: lst.length, canais: ult.canais, dono: ref.usuarioId });
+  persist(); render();
+}
+/* a faixa "Contatos: 1º WhatsApp · 2º WhatsApp + Ligação + E-mail ... [+ Registrar contato]" */
+function blocoToques(a){
+  const ref = atribs()[a.chave];
+  const lst = toquesDe(a);
+  const box = el("div","toqbox");
+  box.append(el("span","toqrot","Contatos:"));
+  if(!lst.length) box.append(el("span","toqvazio","nenhum registrado"));
+  lst.forEach((tq, i) => {
+    const c = el("span","toq");
+    c.append(el("b",null,(i + 1) + "º"));
+    tq.canais.forEach((id, j) => {
+      if(j) c.append(el("span","toqsep","+"));
+      c.append(el("i","cn cn-" + id, canalNome(id)));
+    });
+    c.title = (i + 1) + "º contato em " + dataHora(tq.t) + " por " + (tq.por ? nomeUsuario(tq.por) : "—");
+    box.append(c);
+  });
+  const ult = lst[lst.length - 1];
+  if(a.meu && ref && ult && (ehAdm() || (USR && ult.por === USR.id))){
+    const bx = el("button","linkbtn toqdel","desfazer último");
+    bx.type = "button"; bx.dataset.livre = "1";
+    bx.title = "Apaga o último contato registrado (fica anotado nas movimentações)";
+    bx.onclick = () => desfazerToque(a);
+    box.append(bx);
+  }
+  if(!a.meu || !ref) return box;
+
+  const abrir = el("button","btn sm","+ Registrar contato");
+  abrir.type = "button"; abrir.dataset.livre = "1";
+  const form = el("span","toqform"); form.hidden = true;
+  const escolhidos = new Set();
+  form.append(el("span","q", (lst.length + 1) + "º contato por:"));
+  const salvar = el("button","btn sm primary","Salvar");
+  salvar.type = "button"; salvar.dataset.livre = "1"; salvar.disabled = true;
+  CANAIS.forEach(cn => {
+    const b = el("button","toqcanal", cn.nome);
+    b.type = "button"; b.dataset.livre = "1"; b.setAttribute("aria-pressed","false");
+    b.onclick = () => {
+      if(escolhidos.has(cn.id)) escolhidos.delete(cn.id); else escolhidos.add(cn.id);
+      b.setAttribute("aria-pressed", escolhidos.has(cn.id) ? "true" : "false");
+      salvar.disabled = !escolhidos.size;
+    };
+    form.append(b);
+  });
+  const quando = el("input"); quando.type = "datetime-local"; quando.dataset.livre = "1";
+  quando.title = "Quando o contato foi feito (troque se estiver registrando depois)";
+  const cancelar = el("button","linkbtn","cancelar");
+  cancelar.type = "button"; cancelar.dataset.livre = "1";
+  form.append(quando, salvar, cancelar);
+  abrir.onclick = () => {
+    quando.value = paraLocalInput(new Date()); quando.max = quando.value;
+    abrir.hidden = true; form.hidden = false;
+  };
+  cancelar.onclick = () => { form.hidden = true; abrir.hidden = false; };
+  salvar.onclick = () => {
+    if(!escolhidos.size) return;
+    let t = quando.value ? new Date(quando.value) : new Date();
+    if(isNaN(t) || t > new Date()) t = new Date();
+    salvarToque(a, CANAIS.map(c => c.id).filter(id => escolhidos.has(id)), t.toISOString());
+  };
+  box.append(abrir, form);
+  return box;
 }
 
 /* barra do SLA + histórico, numa linha logo abaixo do lead */
@@ -19392,6 +19537,7 @@ function linhaSla(a, colunas){
   }
   controlesHistorico(a, box);
   td.append(box);
+  td.append(blocoToques(a));
   if(LT.hist.has(a.chave)) td.append(painelHistorico(a));
   tr.append(td);
   return tr;
@@ -19403,6 +19549,7 @@ function linhaSoHistorico(a, colunas){
   const box = el("div","slabox");
   controlesHistorico(a, box);
   td.append(box);
+  td.append(blocoToques(a));
   if(LT.hist.has(a.chave)) td.append(painelHistorico(a));
   tr.append(td);
   return tr;
@@ -19845,7 +19992,7 @@ function renderLeadsTrab(host){
     const bx = el("button","btn","Baixar esta lista em Excel");
     bx.onclick = () => {
       const linhas = [["Razao Social","Nome Fantasia","CNPJ","Endereco","Bairro","CEP","Cidade","UF","Telefone","Site","Socios",
-                       "Responsavel","Status","No status desde","Tempo no status","SLA do status","Situacao do SLA","Observacao","Recebido em","Repassado por","Score","Pacientes parcelados","Motivo da perda","Telefones adicionados"]];
+                       "Responsavel","Status","No status desde","Tempo no status","SLA do status","Situacao do SLA","Observacao","Recebido em","Repassado por","Score","Pacientes parcelados","Motivo da perda","Telefones adicionados","Qtd. contatos","Sequencia de contatos"]];
       lista.forEach(a => {
         const l = a.lead || {}, st = stDeLead(a), sla = slaMs(st), dec = decorridoSla(a);
         linhas.push([l.razaoSocial, l.nomeFantasia, l.cnpj, l.endereco, l.bairro, l.cep, l.cidade, l.uf,
@@ -19854,9 +20001,10 @@ function renderLeadsTrab(host){
           a.obs || "", a.em ? new Date(a.repassadoEm || a.em).toLocaleDateString("pt-BR") : "",
           a.repassadoPor ? nomeUsuario(a.repassadoPor) : "", l.score != null ? l.score + " " + (l.scoreNivel || "") : "",
           a.qtdParcelados != null ? a.qtdParcelados : "", a.motivoPerda ? a.motivoPerda.motivo : "",
-          (a.contatos || []).map(c => c.setor + ": " + c.numero).join(" | ")].map(v => v == null ? "" : String(v)));
+          (a.contatos || []).map(c => c.setor + ": " + c.numero).join(" | "),
+          toquesDe(a).length, toquesDe(a).map((x, i) => (i + 1) + "º " + textoCanais(x.canais)).join(" > ")].map(v => v == null ? "" : String(v)));
       });
-      baixarXlsx("leads_a_trabalhar_" + S.nome, linhas, [36,30,22,40,20,12,20,6,18,26,40,20,18,16,14,12,14,40,12,20,12,12,30,40])
+      baixarXlsx("leads_a_trabalhar_" + S.nome, linhas, [36,30,22,40,20,12,20,6,18,26,40,20,18,16,14,12,14,40,12,20,12,12,30,40,10,60])
         .then(() => toast(lista.length.toLocaleString("pt-BR") + " leads na planilha."));
     };
     ac.append(bx); area.append(ac);
@@ -19880,7 +20028,12 @@ const GRAFICOS = [
   ["funil","Leads por status agora","Onde a carteira está hoje"],
   ["atrasados","Leads fora do SLA agora","Os que estão há mais tempo além do prazo"],
   ["retornos","Retornos para o ADM por dia","Quantos contatos cada usuário classificou, por dia, em status que voltam para o ADM"],
-  ["perdas","Motivos de perda","Quantos leads foram perdidos, por motivo e por usuário"]
+  ["perdas","Motivos de perda","Quantos leads foram perdidos, por motivo e por usuário"],
+  ["canais","Meios de comunicação usados","Quantos contatos foram por WhatsApp, ligação e e-mail, e as combinações"],
+  ["canaisUsuario","Contatos por usuário e canal","Volume de cada SDR por canal, contatos por lead e por avanço"],
+  ["capacidade","Carga do SDR contra a capacidade","Média de contatos por dia útil contra a meta diária de cada um"],
+  ["toquesDia","Contatos por dia","Contatos de cada usuário em cada dia, destacando os dias acima da meta"],
+  ["sequencias","Cadências mais usadas","Sequências de canais mais comuns (ex.: WhatsApp, WhatsApp, Ligação + E-mail)"]
 ];
 const DASH = { dias:"30", frente:"", ramo:"", usuario:"" };
 
@@ -19906,9 +20059,12 @@ function intervalosDe(a, agora){
 
 function calcDash(f){
   const agora = Date.now();
-  const R = { porStatus:{}, porUsuario:{}, trans:{}, atrasados:[], funil:{}, ciclo:[], ativos:0, mud:0, retornos:{}, retornosTot:0, perdas:{}, perdasTot:0 };
+  const R = { porStatus:{}, porUsuario:{}, trans:{}, atrasados:[], funil:{}, ciclo:[], ativos:0, mud:0, retornos:{}, retornosTot:0, perdas:{}, perdasTot:0,
+              toqTot:0, toqCanal:{}, toqCombo:{}, toqDia:{}, seqs:{}, desde:f.desde, primeiroToque:null };
   const U = id => R.porUsuario[id] || (R.porUsuario[id] = { mud:0, ganhos:0, perdidos:0, recebidos:0, repassados:0,
-                                                           cumpridos:0, estourados:0, ativos:0, fora:0 });
+                                                           cumpridos:0, estourados:0, ativos:0, fora:0,
+                                                           toq:0, toqCanal:{}, leadsToq:new Set(), avancos:0, dias:{} });
+  const diaDe = t => { const d = new Date(t); return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0"); };
   const SS = id => R.porStatus[id] || (R.porStatus[id] = { n:0, soma:0, cumpridos:0, estourados:0, foraAgora:0 });
   const ativos = Object.entries(atribs()).map(([k, a]) => Object.assign({ chave:k }, a));
   const arq = Object.entries(DB.logArquivo || {}).filter(([, a]) => !a.cancelado)
@@ -19919,6 +20075,25 @@ function calcDash(f){
 
   leads.forEach(a => {
     const log = a.log || [];
+    /* contatos registrados (WhatsApp, ligação, e-mail), sem os que foram desfeitos */
+    const desfeitos = new Set(log.filter(e => e.tipo === "toque_x").map(e => e.id));
+    const seq = [];
+    log.filter(e => e.tipo === "toque" && !desfeitos.has(e.id) && Array.isArray(e.canais) && e.canais.length)
+      .sort((x, y) => String(x.t).localeCompare(String(y.t)))
+      .forEach(e => {
+        const t = Date.parse(e.t), quem = e.por || e.dono;
+        if(isNaN(t) || t < f.desde || !doUsuario(quem)) return;
+        const u = U(quem), combo = CANAIS.map(c => c.id).filter(id => e.canais.includes(id));
+        R.toqTot++; u.toq++; u.leadsToq.add(a.chave.split("@")[0]);
+        combo.forEach(id => { R.toqCanal[id] = (R.toqCanal[id] || 0) + 1; u.toqCanal[id] = (u.toqCanal[id] || 0) + 1; });
+        const ck = combo.join("+"); R.toqCombo[ck] = (R.toqCombo[ck] || 0) + 1;
+        const dia = diaDe(t);
+        u.dias[dia] = (u.dias[dia] || 0) + 1;
+        (R.toqDia[dia] || (R.toqDia[dia] = {}))[quem] = (R.toqDia[dia][quem] || 0) + 1;
+        if(R.primeiroToque == null || t < R.primeiroToque) R.primeiroToque = t;
+        seq.push(ck);
+      });
+    if(seq.length){ const k = seq.join(">"); R.seqs[k] = (R.seqs[k] || 0) + 1; }
     log.forEach(e => {
       const t = Date.parse(e.t);
       if(isNaN(t) || t < f.desde) return;
@@ -19928,6 +20103,7 @@ function calcDash(f){
         const st = statusPorId(e.status);
         if(st && st.tipo === "ganho" && doUsuario(e.dono)) U(e.dono).ganhos++;
         if(st && st.tipo === "perdido" && doUsuario(e.dono)) U(e.dono).perdidos++;
+        if(st && (st.tipo === "ganho" || st.repasse) && e.anterior !== e.status && doUsuario(quem)) U(quem).avancos++;
         if(e.motivo && doUsuario(quem)){
           const x = R.perdas[e.motivo] || (R.perdas[e.motivo] = { total:0, por:{} });
           x.total++; x.por[quem] = (x.por[quem] || 0) + 1; R.perdasTot++;
@@ -20157,7 +20333,141 @@ function graficoPerdas(R){
   tw.append(t); c.append(tw);
   return c;
 }
-const DESENHA_GRAFICO = { produtividade:graficoProdutividade, slaUsuario:graficoSlaUsuario, slaStatus:graficoSlaStatus,
+/* ---------- meios de contato no painel ---------- */
+const nomeCombo = ck => ck.split("+").map(canalNome).join(" + ");
+function diasUteisEntre(ini, fim){
+  let n = 0; const d = new Date(ini); d.setHours(12, 0, 0, 0);
+  const f = new Date(fim); f.setHours(12, 0, 0, 0);
+  while(d <= f){ if(ehDiaUtil(d.getTime())) n++; d.setDate(d.getDate() + 1); }
+  return Math.max(1, n);
+}
+function graficoCanais(R){
+  const c = gCard("Meios de comunicação usados","Em quantos contatos registrados cada canal foi usado. Um contato pode usar mais de um canal (ex.: ligação + e-mail).");
+  if(!R.toqTot) return gVazio(c, "Nenhum contato registrado no período. O SDR registra em + Registrar contato, na linha de cada lead.");
+  gBarras(c, CANAIS.map(cn => {
+    const n = R.toqCanal[cn.id] || 0;
+    return { rot: cn.nome, det: Math.round(n / R.toqTot * 100) + "% dos contatos", valor: n, txt: String(n), cls: "cn-" + cn.id };
+  }), R.toqTot);
+  const combos = Object.entries(R.toqCombo).sort((x, y) => y[1] - x[1]);
+  if(combos.length > 1){
+    c.append(el("p","sub","Combinações usadas num mesmo contato"));
+    c.lastChild.style.margin = "16px 0 8px";
+    gBarras(c, combos.slice(0, 7).map(([k, n]) => ({ rot: nomeCombo(k), valor: n,
+      txt: n + " (" + Math.round(n / R.toqTot * 100) + "%)", cls: "neutro" })));
+  }
+  return c;
+}
+function graficoCanaisUsuario(R){
+  const c = gCard("Contatos por usuário e canal","Volume de contatos de cada um, por canal, e quantos contatos foram precisos para cada avanço (reunião marcada, repasse ou ganho).");
+  const lst = Object.entries(R.porUsuario).filter(([id, u]) => id && id !== "null" && u.toq).sort((x, y) => y[1].toq - x[1].toq);
+  if(!lst.length) return gVazio(c, "Nenhum contato registrado no período.");
+  const tw = el("div","tablewrap"), t = el("table","leadlista gtab");
+  const h = el("tr");
+  ["Usuário"].concat(CANAIS.map(x => x.nome)).concat(["Contatos","Leads","Contatos por lead","Avanços","Contatos por avanço"])
+    .forEach(x => h.append(el("th",null,x)));
+  t.append(h);
+  lst.forEach(([id, u]) => {
+    const tr = el("tr");
+    tr.append(tdNegrito(nomeUsuario(id)));
+    CANAIS.forEach(cn => { const n = u.toqCanal[cn.id] || 0; tr.append(el("td", n ? null : "muted", n + (n ? " (" + Math.round(n / u.toq * 100) + "%)" : ""))); });
+    const nl = u.leadsToq.size;
+    tr.append(tdNegrito(String(u.toq)), el("td",null,String(nl)), el("td",null,(u.toq / Math.max(1, nl)).toFixed(1).replace(".", ",")),
+              el("td",null,String(u.avancos)), el("td", u.avancos ? null : "muted", u.avancos ? (u.toq / u.avancos).toFixed(1).replace(".", ",") : "—"));
+    t.append(tr);
+  });
+  tw.append(t); c.append(tw);
+  return c;
+}
+function graficoCapacidade(R){
+  const c = gCard("Carga do SDR contra a capacidade","Média de contatos por dia útil no período, comparada com a meta diária de cada um (o traço). O pico é o dia com mais contatos.");
+  const agora = Date.now();
+  /* conta a partir do 1º contato registrado no período, para não diluir a média antes de o time começar a registrar */
+  const ini = R.primeiroToque || agora;
+  const du = diasUteisEntre(ini, agora);
+  const lst = Object.entries(R.porUsuario).filter(([id, u]) => id && id !== "null" && u.toq).map(([id, u]) => {
+    const meta = metaContatos(id), media = u.toq / du;
+    const dias = Object.values(u.dias), pico = Math.max(0, ...dias), acima = dias.filter(n => n > meta).length;
+    const pct = media / meta;
+    return { id, u, meta, media, pico, acima, pct };
+  }).sort((x, y) => y.pct - x.pct);
+  if(!lst.length) return gVazio(c, "Nenhum contato registrado no período.");
+  gBarras(c, lst.map(x => ({
+    rot: nomeUsuario(x.id),
+    det: "pico " + x.pico + "/dia · " + x.acima + (x.acima === 1 ? " dia" : " dias") + " acima da meta · " + x.u.ativos + (x.u.ativos === 1 ? " lead em aberto" : " leads em aberto"),
+    valor: x.media, marcaValor: x.meta, marcaTit: "Meta " + x.meta + " contatos/dia",
+    cls: x.pct > 1.1 ? "ruim" : x.pct >= .7 ? "bom" : "neutro",
+    txt: x.media.toFixed(1).replace(".", ",") + "/dia · " + Math.round(x.pct * 100) + "%"
+  })));
+  gLegenda(c, [["bom","70% a 110% da meta"],["ruim","acima de 110%: sobrecarga"],["neutro","abaixo de 70%"],["marca","meta diária"]]);
+  c.append(el("p","sub","Média sobre " + du + (du === 1 ? " dia útil" : " dias úteis") + ", contados a partir do 1º contato registrado no período. Dias sem nenhum contato também entram na média."));
+  c.lastChild.style.margin = "10px 0 0";
+  if(ehAdm()){
+    const dt = el("details"), sm = el("summary",null,"Ajustar a meta diária de cada usuário");
+    dt.append(sm);
+    const tw = el("div","tablewrap"), t = el("table","leadlista gtab");
+    const h = el("tr"); ["Usuário","Contatos por dia útil"].forEach(x => h.append(el("th",null,x))); t.append(h);
+    (DB.usuarios || []).filter(u => u.ativo !== false).forEach(u => {
+      const tr = el("tr"), td = el("td"), ip = el("input","gmeta");
+      ip.type = "number"; ip.min = "1"; ip.step = "1"; ip.dataset.livre = "1";
+      ip.value = u.metaContatosDia || ""; ip.placeholder = String(META_CONTATOS_PADRAO);
+      ip.onchange = () => {
+        const v = parseInt(ip.value, 10);
+        if(v > 0) u.metaContatosDia = v; else delete u.metaContatosDia;
+        persist(); redesenharPicker();
+      };
+      td.append(ip); tr.append(el("td",null,u.nome), td); t.append(tr);
+    });
+    tw.append(t); dt.append(tw);
+    dt.append(el("p","sub","Em branco usa o padrão de " + META_CONTATOS_PADRAO + " contatos por dia útil."));
+    c.append(dt);
+  }
+  return c;
+}
+function graficoToquesDia(R){
+  const c = gCard("Contatos por dia","Quantos contatos cada usuário registrou em cada dia. Em vermelho, os dias acima da meta diária.");
+  const dias = Object.keys(R.toqDia).sort().reverse();
+  if(!dias.length) return gVazio(c, "Nenhum contato registrado no período.");
+  const quem = Object.entries(R.porUsuario).filter(([id, u]) => id && id !== "null" && u.toq).map(([id]) => id)
+    .sort((x, y) => nomeUsuario(x).localeCompare(nomeUsuario(y)));
+  const tw = el("div","tablewrap"), t = el("table","leadlista gtab");
+  const h = el("tr"); ["Dia"].concat(quem.map(nomeUsuario)).concat(["Total"]).forEach(x => h.append(el("th",null,x))); t.append(h);
+  dias.slice(0, 31).forEach(d => {
+    const tr = el("tr"), [a, m, dd] = d.split("-");
+    const sem = new Date(+a, +m - 1, +dd).toLocaleDateString("pt-BR", { weekday:"short" });
+    tr.append(el("td",null,dd + "/" + m + " " + sem));
+    let tot = 0;
+    quem.forEach(id => { const n = R.toqDia[d][id] || 0; tot += n; tr.append(el("td", !n ? "muted" : n > metaContatos(id) ? "acima" : null, String(n))); });
+    tr.append(tdNegrito(String(tot)));
+    t.append(tr);
+  });
+  tw.append(t); c.append(tw);
+  if(dias.length > 31) c.append(el("p","leadshint","Mostrando os 31 dias mais recentes de " + dias.length + "."));
+  return c;
+}
+function graficoSequencias(R){
+  const c = gCard("Cadências mais usadas","A sequência de canais de cada lead, do 1º contato ao último no período. Mostra o caminho que o time realmente segue.");
+  const lst = Object.entries(R.seqs).sort((x, y) => y[1] - x[1]);
+  if(!lst.length) return gVazio(c, "Nenhum contato registrado no período.");
+  const tot = lst.reduce((s, [, n]) => s + n, 0);
+  const tw = el("div","tablewrap"), t = el("table","leadlista gtab");
+  const h = el("tr"); ["Sequência","Contatos","Leads","%"].forEach(x => h.append(el("th",null,x))); t.append(h);
+  lst.slice(0, 12).forEach(([k, n]) => {
+    const passos = k.split(">");
+    const tr = el("tr"), td = el("td");
+    passos.forEach((p, i) => {
+      const s = el("span","toq"); s.append(el("b",null,(i + 1) + "º"));
+      p.split("+").forEach((id, j) => { if(j) s.append(el("span","toqsep","+")); s.append(el("i","cn cn-" + id, canalNome(id))); });
+      td.append(s, document.createTextNode(" "));
+    });
+    tr.append(td, el("td",null,String(passos.length)), tdNegrito(String(n)), el("td","muted",Math.round(n / tot * 100) + "%"));
+    t.append(tr);
+  });
+  tw.append(t); c.append(tw);
+  if(lst.length > 12) c.append(el("p","leadshint","Mostrando as 12 sequências mais comuns de " + lst.length + "."));
+  return c;
+}
+const DESENHA_GRAFICO = { canais:graficoCanais, canaisUsuario:graficoCanaisUsuario, capacidade:graficoCapacidade,
+  toquesDia:graficoToquesDia, sequencias:graficoSequencias, produtividade:graficoProdutividade, slaUsuario:graficoSlaUsuario, slaStatus:graficoSlaStatus,
   tempo:graficoTempo, transicoes:graficoTransicoes, funil:graficoFunil, atrasados:graficoAtrasados, retornos:graficoRetornos, perdas:graficoPerdas };
 
 function kpis(host, R){
@@ -20170,6 +20480,7 @@ function kpis(host, R){
    [String(R.atrasados.length), "fora do SLA agora", R.atrasados.length ? "ruim" : ""],
    [tot ? Math.round(ok / tot * 100) + "%" : "—", "das etapas no prazo", tot && ok / tot < .7 ? "ruim" : ""],
    [String(R.mud), "mudanças de status", ""],
+   [String(R.toqTot), "contatos registrados", ""],
    [String(ganhos), "ganhos", ""],
    [String(R.retornosTot), "retornos ao ADM", ""],
    [ciclo ? fmtDur(ciclo) : "—", "da entrada até o ganho, em média", ""]
@@ -20191,6 +20502,13 @@ function painelPessoal(){
   const g = el("div","ggrid dois");
   g.append(graficoTempo(R), graficoTransicoes(R));
   box.append(g);
+  if(R.toqTot){
+    const g2 = el("div","ggrid dois"); g2.style.marginTop = "14px";
+    const gc = graficoCapacidade(R), aj = gc.querySelector("details");
+    if(aj) aj.remove();   /* a meta se ajusta no Painel de desempenho */
+    g2.append(graficoCanais(R), gc);
+    box.append(g2);
+  }
   return box;
 }
 
