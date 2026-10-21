@@ -1227,6 +1227,9 @@ td.acima{color:var(--brick);font-weight:600}
 .msg .txt.midia{font-style:italic;color:var(--muted)}
 .msg time{display:block;text-align:right;font-size:10px;color:var(--muted);margin-top:1px}
   tr.lrow.retorno td{background:rgba(214,120,30,.07)}
+/* ---------- Modelo 04 ---------- */
+.m04cidades{max-height:420px;overflow:auto;margin-top:18px}
+.m04cidades table.leadlista td{white-space:nowrap}
 </style>
 </head>
 <body>
@@ -6183,6 +6186,8 @@ function desenhaPicker(){
   else if(pickEtapa === "qualificar") pickQualificar(w);
   else if(pickEtapa === "redes") pickRedes(w);
   else if(pickEtapa === "base") pickBase(w);
+  else if(pickEtapa === "modelo04") pickModelo04(w);
+  else if(pickEtapa === "novos") pickNovos(w);
   else if(pickEtapa === "receita") pickBuscar(w);
   else if(pickEtapa === "usuarios") pickUsuarios(w);
   else if(pickEtapa === "perfil") pickPerfil(w);
@@ -8424,6 +8429,538 @@ async function buscaEscolherFonteAtiva(){
   if(ocupada(rfb)) return "receita";
   if(ocupada(mcn)) return "maiscnpj";
   return null;
+}
+
+/* ===================== Modelo 04: Maps + MaisCNPJ, cidade por cidade =====================
+   A busca roda na extensão "Elosgate · Modelo 04". A cada cidade concluída,
+   os leads entram sozinhos no Cadastro Leads Novos (guardado neste navegador). */
+
+const M04 = { presente:false, ui:null, timer:null, importando:false, estado:null, verTodas:false };
+const NOVOS = { ui:null, filtro:{ busca:"", status:"aprovado", uf:"", cidade:"", naoEnviados:false }, sel:new Set(), mostrar:200 };
+const M04_UFS = ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"];
+const M04_STATUS = {
+  aprovado:   ["Aprovado", "st-done"],
+  aguardando: ["Aguardando 6 meses", "st-doing"],
+  fora:       ["Fora do requisito", "st-late"],
+  verificar:  ["Conferir", "st-doing"],
+  sem_cnpj:   ["Sem CNPJ", "st-todo"]
+};
+
+window.addEventListener("message", ev => {
+  if(ev.source !== window) return;
+  const d = ev.data;
+  if(d && d.canal === "extensao-para-leads" && d.id === "presente-modelo04") M04.presente = true;
+});
+function m04Enviar(msg, ms){ return pontEnviar("modelo04", msg, ms); }
+
+/* ---------- armazenamento do Cadastro Leads Novos (IndexedDB) ---------- */
+const NovosDB = {
+  _db:null,
+  abrir(){
+    if(this._db) return Promise.resolve(this._db);
+    return new Promise((ok, falha) => {
+      const r = indexedDB.open("elosgate_leads_novos", 1);
+      r.onupgradeneeded = () => {
+        const db = r.result;
+        if(!db.objectStoreNames.contains("leads")) db.createObjectStore("leads", { keyPath:"chave" });
+        if(!db.objectStoreNames.contains("meta")) db.createObjectStore("meta");
+      };
+      r.onsuccess = () => { this._db = r.result; ok(this._db); };
+      r.onerror = () => falha(r.error);
+    });
+  },
+  async tx(store, modo, fn){
+    const db = await this.abrir();
+    return new Promise((ok, falha) => {
+      const t = db.transaction(store, modo), s = t.objectStore(store);
+      const out = fn(s);
+      t.oncomplete = () => ok(out && out.result !== undefined ? out.result : out);
+      t.onerror = () => falha(t.error);
+    });
+  },
+  todos(){ return this.tx("leads", "readonly", s => s.getAll()); },
+  gravar(lista){ return this.tx("leads", "readwrite", s => { lista.forEach(x => s.put(x)); }); },
+  excluir(chaves){ return this.tx("leads", "readwrite", s => { chaves.forEach(k => s.delete(k)); }); },
+  meta(k){ return this.tx("meta", "readonly", s => s.get(k)); },
+  metaGravar(k, v){ return this.tx("meta", "readwrite", s => { s.put(v, k); }); }
+};
+
+/* traz para o Cadastro as cidades que a extensão já terminou */
+async function m04Importar(est){
+  if(M04.importando || !est || !est.existe) return 0;
+  M04.importando = true;
+  let novos = 0;
+  try {
+    const feitas = (await NovosDB.meta("importadas")) || {};
+    const chaveCid = i => est.uf + "|" + est.termo + "|" + est.criadoEm + "|" + i;
+    const pendentes = (est.cidades || []).map((c, i) => i).filter(i => est.cidades[i].status === "pronta" && !feitas[chaveCid(i)]);
+    if(!pendentes.length) return 0;
+    const existentes = new Map((await NovosDB.todos()).map(x => [x.chave, x]));
+    for(const i of pendentes){
+      const c = est.cidades[i];
+      const k = chaveCid(i);
+      const { resp, erro } = await m04Enviar({ type:"resultados", idx:i }, 20000);
+      if(erro || !resp) break;
+      const lista = (resp.registros || []).map(r => {
+        const antigo = existentes.get(r.chave);
+        const novo = Object.assign({}, r, { importadoEm: new Date().toISOString() });
+        if(antigo){ ["enviadoBase","enviadoBaseEm","cnpjManual"].forEach(p => { if(antigo[p]) novo[p] = antigo[p]; }); }
+        else novos++;
+        const d = cnpjDig(r.cnpj);
+        if(d.length === 14 && r.receita){ try { qualifGravar(d, { receita: r.receita }); REQ.cache[d] = r.receita; } catch(e){} }
+        return novo;
+      });
+      if(lista.length) await NovosDB.gravar(lista);
+      feitas[k] = new Date().toISOString();
+      await NovosDB.metaGravar("importadas", feitas);
+      const aprov = lista.filter(x => x.status === "aprovado").length;
+      if(lista.length) toast(c.nome + ": " + aprov + " leads aprovados no Cadastro Leads Novos.");
+    }
+  } catch(e){ /* tenta de novo na próxima volta */ }
+  finally { M04.importando = false; }
+  if(novos && NOVOS.ui && document.body.contains(NOVOS.ui.corpo)) novosDesenhar();
+  return novos;
+}
+
+/* importação contínua mesmo fora da tela do Modelo 04 */
+setInterval(async () => {
+  if(!M04.presente || M04.importando) return;
+  const { resp } = await m04Enviar({ type:"estado" }, 4000);
+  if(resp && resp.existe) m04Importar(resp);
+}, 20000);
+
+/* ---------- tela do Modelo 04 ---------- */
+function pickModelo04(host){
+  trilha(host, ["Modelo 04 · Maps + MaisCNPJ"], "frentes");
+
+  const hd = el("div","pickhead");
+  hd.append(el("h1",null,"Buscar no Maps e achar o CNPJ, cidade por cidade"));
+  hd.append(el("p",null,"Digite o tipo de cliente e o estado. Começa pela capital e segue em ordem alfabética. " +
+    "Em cada cidade, procura no Google Maps, acha o CNPJ no MaisCNPJ pelo endereço, pega o telefone de lá e confere " +
+    "se é LTDA com 6 meses ou mais. Cada cidade que fecha já entra no Cadastro Leads Novos."));
+  host.append(hd);
+
+  const aviso = el("div","leadsaviso"); aviso.hidden = true; host.append(aviso);
+
+  /* --- formulário --- */
+  const config = el("div");
+  const form = el("div","leadsform");
+  const campo = (rot, controle, dica, largo) => {
+    const c = el("div","leadscampo" + (largo ? " leadswide" : ""));
+    c.append(el("label",null,rot), controle);
+    if(dica) c.append(el("span","leadshint",dica));
+    form.append(c);
+    return controle;
+  };
+  const inTermo = el("input"); inTermo.type = "text"; inTermo.placeholder = "clínica odontológica";
+  inTermo.value = (M04.campos && M04.campos.termo) || "";
+  campo("Tipo de cliente", inTermo, "Do jeito que você procuraria no Google Maps.");
+
+  const selUf = el("select");
+  M04_UFS.forEach(u => { const o = el("option",null,u); o.value = u; selUf.append(o); });
+  selUf.value = (M04.campos && M04.campos.uf) || "MG";
+  campo("Estado", selUf, "Capital primeiro, depois as demais cidades em ordem alfabética.");
+
+  const selInt = el("select");
+  [["1000","1 segundo"],["1500","1,5 segundo"],["2500","2,5 segundos"],["4000","4 segundos"]]
+    .forEach(([v, r]) => { const o = el("option",null,r); o.value = v; selInt.append(o); });
+  selInt.value = "1500";
+  campo("Pausa entre ações", selInt, "Mais pausa, menos chance de o Google ou o MaisCNPJ pedirem verificação.");
+
+  const selMax = el("select");
+  [["120","até 120 por cidade"],["300","até 300 por cidade"],["600","até 600 por cidade"],["1500","até 1.500 por cidade"]]
+    .forEach(([v, r]) => { const o = el("option",null,r); o.value = v; selMax.append(o); });
+  selMax.value = "300";
+  campo("Locais do Maps por cidade", selMax, "");
+
+  const inTpl = el("input"); inTpl.type = "text"; inTpl.spellcheck = false;
+  inTpl.placeholder = "opcional — ex.: https://maiscnpj.com.br/busca?q={q}";
+  campo("Endereço da busca do MaisCNPJ", inTpl,
+    "Deixe em branco: a extensão usa o campo de busca do site e aprende o endereço sozinha. Preencha só se ela pedir.", true);
+  config.append(form);
+
+  const opc = el("div","qualopcoes");
+  const lb = el("label","qualcheck"); const ckDiv = el("input"); ckDiv.type = "checkbox"; ckDiv.checked = true;
+  lb.append(ckDiv, document.createTextNode(" Dividir cidades grandes em regiões (o Maps mostra no máximo uns 120 locais por busca)"));
+  opc.append(lb);
+  config.append(opc);
+
+  const acoes = el("div","leadsacoes");
+  const btIniciar = el("button","btn primary","Começar a busca");
+  acoes.append(btIniciar);
+  config.append(acoes);
+  config.append(el("p","leadshint","Abre uma janela do Chrome só para a busca. Pode deixá-la atrás das outras, mas não minimize nem feche."));
+  host.append(config);
+
+  /* --- progresso --- */
+  const prog = el("div","leadsprog"); prog.hidden = true;
+  const cab = el("div","leadscab");
+  const grande = el("strong",null,"0"), totalTxt = el("span",null,"de 0 cidades"), selo = el("span","selo");
+  cab.append(grande, totalTxt, selo);
+  prog.append(cab);
+  const escopo = el("p","leadsescopo"); prog.append(escopo);
+  const bar = el("div","leadsbar"), fill = el("i"); bar.append(fill); prog.append(bar);
+  const chips = el("div","leadschips"); prog.append(chips);
+  const atual = el("p","leadsatual"); prog.append(atual);
+  const bloqueio = el("div","leadsmotivo"); bloqueio.hidden = true; prog.append(bloqueio);
+
+  const tplBox = el("div","leadscampo"); tplBox.hidden = true; tplBox.style.margin = "12px 0 0";
+  tplBox.append(el("label",null,"Endereço da busca do MaisCNPJ"));
+  const inTpl2 = el("input"); inTpl2.type = "text"; inTpl2.spellcheck = false;
+  inTpl2.placeholder = "faça uma busca no site, copie o endereço e troque o texto buscado por {q}";
+  tplBox.append(inTpl2);
+  prog.append(tplBox);
+
+  const botoes = el("div","leadsbotoes");
+  const btPausar = el("button","btn","Pausar");
+  const btSeguir = el("button","btn","Continuar");
+  const btPular  = el("button","btn","Pular esta cidade");
+  const btParar  = el("button","btn","Parar");
+  const btVer    = el("button","btn primary","Abrir Cadastro Leads Novos");
+  const btNova   = el("button","btn danger","Nova busca");
+  [btPausar, btSeguir, btPular, btParar, btVer, btNova].forEach(b => botoes.append(b));
+  prog.append(botoes);
+
+  const tw = el("div","tablewrap m04cidades"); prog.append(tw);
+  const btTodas = el("button","btn sm","Mostrar todas as cidades"); btTodas.style.marginTop = "8px";
+  prog.append(btTodas);
+  host.append(prog);
+
+  M04.ui = { aviso, config, prog, grande, totalTxt, selo, escopo, fill, bar, chips, atual, bloqueio,
+             btPausar, btSeguir, btPular, btParar, btNova, btTodas, tw, tplBox };
+
+  btIniciar.onclick = async () => {
+    const termo = inTermo.value.trim();
+    if(!termo) return toast("Digite o tipo de cliente.");
+    M04.campos = { termo, uf: selUf.value };
+    btIniciar.disabled = true; btIniciar.textContent = "Carregando as cidades…";
+    const { resp, erro } = await m04Enviar({ type:"iniciar", termo, uf: selUf.value,
+      opcoes:{ intervalo: +selInt.value, maxPorCidade: +selMax.value, dividir: ckDiv.checked, maisTpl: inTpl.value.trim() } }, 30000);
+    btIniciar.disabled = false; btIniciar.textContent = "Começar a busca";
+    if(erro || !resp) return m04SemExtensao(erro);
+    m04Pinta(resp); m04Polling();
+  };
+  const cmd = async (type, extra) => {
+    const { resp, erro } = await m04Enviar(Object.assign({ type }, extra || {}), 15000);
+    if(erro || !resp) return m04SemExtensao(erro);
+    m04Pinta(resp); m04Polling();
+  };
+  btPausar.onclick = () => cmd("pausar");
+  btSeguir.onclick = () => cmd("continuar", inTpl2.value.trim() ? { maisTpl: inTpl2.value.trim() } : {});
+  btPular.onclick  = () => { if(confirm("Pular a cidade atual? O que já foi achado nela entra no Cadastro.")) cmd("pular"); };
+  btParar.onclick  = () => { if(confirm("Parar a busca? As cidades já concluídas continuam no Cadastro Leads Novos.")) cmd("parar"); };
+  btVer.onclick    = () => { pickEtapa = "novos"; desenhaPicker(); };
+  btTodas.onclick  = () => { M04.verTodas = !M04.verTodas; m04Pinta(M04.estado); };
+  btNova.onclick   = async () => {
+    if(!confirm("Começar uma busca nova? A atual é apagada da extensão. Os leads que já estão no Cadastro Leads Novos ficam.")) return;
+    if(M04.estado) await m04Importar(M04.estado);
+    cmd("limpar");
+  };
+
+  m04IniciarTela();
+}
+
+async function m04IniciarTela(){
+  const { resp, erro } = await m04Enviar({ type:"estado" }, 3000);
+  if(erro || !resp) return m04SemExtensao(erro);
+  M04.presente = true;
+  m04Pinta(resp);
+  m04Polling();
+}
+
+function m04SemExtensao(erro){
+  const u = M04.ui; if(!u) return;
+  u.aviso.hidden = false;
+  u.aviso.innerHTML = "<b>A extensão do Modelo 04 não respondeu.</b> Esta tela depende da extensão " +
+    "<i>Elosgate · Modelo 04</i>, que é quem abre o Google Maps e o MaisCNPJ. Confira em <code>chrome://extensions</code> " +
+    "que ela está instalada e ativada e, com o painel aberto como arquivo no computador, que a opção " +
+    "<b>Permitir acesso a URLs de arquivo</b> está ligada. Depois recarregue esta página." +
+    (erro ? "<br><span class='leadshint'>Detalhe técnico: " + esc(erro) + "</span>" : "");
+}
+
+function m04Polling(){
+  clearTimeout(M04.timer);
+  M04.timer = setTimeout(async () => {
+    if(!M04.ui || !document.body.contains(M04.ui.bar)) return;
+    const { resp, erro } = await m04Enviar({ type:"estado" }, 6000);
+    if(!erro && resp) m04Pinta(resp);
+    m04Polling();
+  }, 2000);
+}
+
+function m04Pinta(s){
+  const u = M04.ui; if(!u) return;
+  M04.estado = s;
+  s = s || { existe:false };
+  u.aviso.hidden = true;
+  if(!s.existe){ u.prog.hidden = true; u.config.hidden = false; return; }
+  u.config.hidden = true; u.prog.hidden = false;
+
+  const prontas = s.cidades.filter(c => c.status === "pronta").length;
+  u.grande.textContent = prontas.toLocaleString("pt-BR");
+  u.totalTxt.textContent = "de " + s.totalCidades.toLocaleString("pt-BR") + " cidades prontas";
+  seloEstado(u.selo, s);
+  u.escopo.textContent = "“" + s.termo + "” em " + s.uf + (s.maisTpl ? " · busca do MaisCNPJ: " + s.maisTpl : "");
+  const parcial = s.fase === "cnpj" && s.lugaresTotal ? s.li / s.lugaresTotal : 0;
+  u.fill.style.width = (s.totalCidades ? ((prontas + (s.concluido ? 0 : parcial)) / s.totalCidades) * 100 : 0) + "%";
+
+  const t = s.totais || {};
+  u.chips.innerHTML = "";
+  [[t.aprovados,"aprovados","ok"],[t.aguardando,"aguardando 6 meses","novo"],[t.fora,"fora do requisito","alerta"],
+   [t.semCnpj,"sem CNPJ","alerta"],[t.verificar,"para conferir","alerta"],[t.maps,"locais no Maps",""]]
+    .forEach(([v, r, c]) => { const x = leadsChip(v, r, c); if(x) u.chips.append(x); });
+
+  u.atual.textContent = s.concluido ? "Estado inteiro concluído." : s.pausado ? (s.motivo || "Pausada.") : (s.atual || "Trabalhando…");
+  u.bloqueio.hidden = !s.bloqueio;
+  u.bloqueio.textContent = s.bloqueio ? s.bloqueio + " Resolva na janela da busca e clique em Continuar." : "";
+
+  const ativo = s.rodando && !s.pausado && !s.concluido;
+  u.btPausar.hidden = !ativo;
+  u.btSeguir.hidden = !(s.pausado && !s.concluido);
+  u.btPular.hidden = s.concluido;
+  u.btParar.hidden = s.concluido || !s.rodando;
+  u.tplBox.hidden = !(s.pausado && /campo de busca do MaisCNPJ/.test(s.bloqueio || ""));
+
+  /* tabela de cidades */
+  const linhas = s.cidades.map((c, i) => Object.assign({ i }, c))
+    .filter(c => M04.verTodas || c.status !== "fila" || c.i < s.idx + 6);
+  u.btTodas.textContent = M04.verTodas ? "Mostrar só as em andamento" : "Mostrar todas as cidades";
+  const tb = el("table","leadlista");
+  const h = el("tr");
+  ["Cidade","Situação","No Maps","Com CNPJ","Aprovados","Aguardando","Fora","Sem CNPJ"].forEach(x => h.append(el("th",null,x)));
+  tb.append(h);
+  linhas.forEach(c => {
+    const tr = el("tr");
+    tr.append(el("td",null,c.nome));
+    const st = c.status === "pronta" ? ["pill st-done", c.pulada ? "pulada" : "pronta"]
+      : c.status === "maps" ? ["pill st-doing","no Maps"] : c.status === "cnpj" ? ["pill st-doing","achando CNPJ"] : ["pill st-todo","na fila"];
+    const td = el("td"); td.append(el("span", st[0], st[1]));
+    if(c.status === "cnpj" && c.i === s.idx && s.lugaresTotal) td.append(el("div","sub", s.li + " de " + s.lugaresTotal));
+    tr.append(td);
+    [c.maps, c.comCnpj, c.aprovados, c.aguardando, c.fora, c.semCnpj].forEach(v => tr.append(el("td", v ? null : "muted", v ? String(v) : "—")));
+    tb.append(tr);
+  });
+  u.tw.innerHTML = ""; u.tw.append(tb);
+
+  m04Importar(s);
+}
+
+/* ---------- Cadastro Leads Novos ---------- */
+function pickNovos(host){
+  trilha(host, ["Cadastro Leads Novos"], "frentes");
+  const hd = el("div","pickhead");
+  hd.append(el("h1",null,"Cadastro Leads Novos"));
+  hd.append(el("p",null,"Os leads do Modelo 04, cidade por cidade, com o telefone do Google Maps e o do MaisCNPJ lado a lado. " +
+    "Os aprovados são LTDA com 6 meses ou mais de CNPJ. Marque e envie para a Base de Leads, sem planilha."));
+  host.append(hd);
+
+  const barra = el("div","ltbarra");
+  const busca = el("div","ltbusca"); const inB = el("input"); inB.type = "search";
+  inB.placeholder = "Empresa, CNPJ, telefone ou endereço"; inB.value = NOVOS.filtro.busca; busca.append(inB);
+  const filtros = el("div","ltsel");
+  const sSt = el("select"), sUf = el("select"), sCid = el("select");
+  [["aprovado","Aprovados"],["aguardando","Aguardando 6 meses"],["fora","Fora do requisito"],["verificar","Para conferir"],["sem_cnpj","Sem CNPJ"],["","Todos"]]
+    .forEach(([v, r]) => { const o = el("option",null,r); o.value = v; sSt.append(o); });
+  sSt.value = NOVOS.filtro.status;
+  const lbN = el("label","qualcheck"); const ckN = el("input"); ckN.type = "checkbox"; ckN.checked = NOVOS.filtro.naoEnviados;
+  lbN.append(ckN, document.createTextNode(" só os não enviados"));
+  filtros.append(sSt, sUf, sCid, lbN);
+  barra.append(busca, filtros);
+  host.append(barra);
+
+  const chips = el("div","leadschips"); chips.style.margin = "0 0 12px"; host.append(chips);
+
+  const acoes = el("div","leadsacoes");
+  const btEnviar = el("button","btn primary","Enviar marcados para a Base de Leads");
+  const btExcluir = el("button","btn danger","Excluir marcados");
+  const btAtual = el("button","btn","Buscar cidades novas da extensão");
+  const info = el("span","leadshint"); info.style.alignSelf = "center";
+  acoes.append(btEnviar, btExcluir, btAtual, info);
+  host.append(acoes);
+
+  const corpo = el("div"); host.append(corpo);
+  NOVOS.ui = { inB, sSt, sUf, sCid, ckN, chips, corpo, info, btEnviar, btExcluir };
+
+  let t = null;
+  inB.oninput = () => { clearTimeout(t); t = setTimeout(() => { NOVOS.filtro.busca = inB.value; NOVOS.mostrar = 200; novosDesenhar(); }, 250); };
+  sSt.onchange = () => { NOVOS.filtro.status = sSt.value; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); };
+  sUf.onchange = () => { NOVOS.filtro.uf = sUf.value; NOVOS.filtro.cidade = ""; NOVOS.mostrar = 200; novosDesenhar(); };
+  sCid.onchange = () => { NOVOS.filtro.cidade = sCid.value; NOVOS.mostrar = 200; novosDesenhar(); };
+  ckN.onchange = () => { NOVOS.filtro.naoEnviados = ckN.checked; novosDesenhar(); };
+  btEnviar.onclick = novosEnviarBase;
+  btExcluir.onclick = async () => {
+    if(!NOVOS.sel.size) return toast("Marque os leads primeiro.");
+    if(!confirm("Excluir " + NOVOS.sel.size + " leads do Cadastro Leads Novos?")) return;
+    await NovosDB.excluir([...NOVOS.sel]); NOVOS.sel.clear(); novosDesenhar();
+  };
+  btAtual.onclick = async () => {
+    const { resp, erro } = await m04Enviar({ type:"estado" }, 4000);
+    if(erro || !resp) return toast("A extensão do Modelo 04 não respondeu.");
+    const n = await m04Importar(resp);
+    toast(n ? n + " leads novos importados." : "Nenhuma cidade nova concluída ainda.");
+    novosDesenhar();
+  };
+  novosDesenhar();
+}
+
+function novosTelefones(r){
+  const out = [];
+  [r.telMaps].concat(String(r.telMaisCnpj || "").split(" / "), r.telReceita || []).forEach(t => {
+    t = String(t || "").trim(); if(t && !out.some(x => chaveFone(x) === chaveFone(t))) out.push(t);
+  });
+  return out;
+}
+
+async function novosDesenhar(){
+  const u = NOVOS.ui; if(!u || !document.body.contains(u.corpo)) return;
+  const todos = await NovosDB.todos();
+  NOVOS.lista = todos;
+  const f = NOVOS.filtro;
+
+  const ufs = [...new Set(todos.map(x => x.uf))].sort();
+  u.sUf.innerHTML = '<option value="">Todos os estados</option>' + ufs.map(x => '<option>' + esc(x) + '</option>').join("");
+  u.sUf.value = f.uf;
+  const cids = [...new Set(todos.filter(x => !f.uf || x.uf === f.uf).map(x => x.cidade))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  u.sCid.innerHTML = '<option value="">Todas as cidades</option>' + cids.map(x => '<option>' + esc(x) + '</option>').join("");
+  u.sCid.value = f.cidade;
+
+  const noRecorte = todos.filter(x => (!f.uf || x.uf === f.uf) && (!f.cidade || x.cidade === f.cidade));
+  u.chips.innerHTML = "";
+  Object.entries(M04_STATUS).forEach(([k, [rot]]) => {
+    const n = noRecorte.filter(x => x.status === k).length;
+    const c = leadsChip(n, rot.replace(/^[A-Z](?=[a-z])/, l => l.toLowerCase()), k === "aprovado" ? "ok" : k === "aguardando" ? "novo" : "alerta"); if(c) u.chips.append(c);
+  });
+  const env = noRecorte.filter(x => x.enviadoBase).length;
+  const ce = leadsChip(env, "já enviados à Base", ""); if(ce) u.chips.append(ce);
+
+  const q = baseChave(f.busca), qd = cnpjDig(f.busca);
+  const lista = noRecorte.filter(x => (!f.status || x.status === f.status) && (!f.naoEnviados || !x.enviadoBase) &&
+    (!q || baseChave([x.nomeMaps, x.razaoSocial, x.nomeFantasia, x.cnpj, x.endereco, x.telMaps, x.telMaisCnpj].join(" ")).includes(q) ||
+     (qd.length >= 4 && (cnpjDig(x.cnpj).includes(qd) || cnpjDig(x.telMaps + x.telMaisCnpj).includes(qd)))))
+    .sort((a, b) => (a.uf + a.cidade + a.nomeMaps).localeCompare(b.uf + b.cidade + b.nomeMaps, "pt-BR"));
+
+  u.info.textContent = NOVOS.sel.size ? NOVOS.sel.size + " marcados" : "";
+  u.corpo.innerHTML = "";
+  if(!todos.length){
+    u.corpo.append(el("p","kicker","Ainda não há leads aqui. Comece uma busca no Modelo 04: cada cidade concluída aparece nesta lista."));
+    return;
+  }
+  if(!lista.length){ u.corpo.append(el("p","kicker","Nenhum lead com esses filtros.")); return; }
+
+  const tw = el("div","tablewrap"), tb = el("table","leadlista");
+  const h = el("tr");
+  const thCk = el("th","ck"); const ckT = el("input"); ckT.type = "checkbox";
+  const visiveis = lista.slice(0, NOVOS.mostrar);
+  ckT.checked = visiveis.length && visiveis.every(x => NOVOS.sel.has(x.chave));
+  ckT.onchange = () => { visiveis.forEach(x => ckT.checked ? NOVOS.sel.add(x.chave) : NOVOS.sel.delete(x.chave)); novosDesenhar(); };
+  thCk.append(ckT); h.append(thCk);
+  ["Empresa","CNPJ","Cidade","Endereço","Tel. Google Maps","Tel. MaisCNPJ","Requisito",""].forEach(x => h.append(el("th",null,x)));
+  tb.append(h);
+
+  visiveis.forEach(r => {
+    const tr = el("tr"); if(NOVOS.sel.has(r.chave)) tr.classList.add("marcado");
+    const tdc = el("td","ck"); const ck = el("input"); ck.type = "checkbox"; ck.checked = NOVOS.sel.has(r.chave);
+    ck.onchange = () => { ck.checked ? NOVOS.sel.add(r.chave) : NOVOS.sel.delete(r.chave); tr.classList.toggle("marcado", ck.checked); u.info.textContent = NOVOS.sel.size ? NOVOS.sel.size + " marcados" : ""; };
+    tdc.append(ck); tr.append(tdc);
+
+    const te = el("td"); te.append(el("b",null, r.nomeMaps || r.nomeFantasia || r.razaoSocial || "—"));
+    if(r.razaoSocial) te.append(el("div","sub", r.razaoSocial));
+    if(r.enviadoBase) te.append(el("div","quem","enviado à Base em " + new Date(r.enviadoBaseEm).toLocaleDateString("pt-BR")));
+    tr.append(te);
+
+    const tdCnpj = el("td");
+    if(r.cnpj){ tdCnpj.append(el("span",null,r.cnpj)); if(r.confianca) tdCnpj.append(el("div","sub","confiança " + Math.min(100, r.confianca))); }
+    else {
+      const inp = el("input"); inp.className = "obs"; inp.placeholder = "digitar CNPJ"; inp.style.cssText = "width:150px;border:1px solid var(--line);border-radius:5px;padding:4px 6px;font-size:12.5px";
+      const bt = el("button","btn sm","Conferir");
+      bt.onclick = () => novosConferirManual(r, inp.value, bt);
+      tdCnpj.append(inp, bt);
+    }
+    tr.append(tdCnpj);
+    tr.append(el("td",null, r.cidade + "/" + r.uf));
+    const tdEnd = el("td"); tdEnd.append(el("span",null, r.endereco || "—"));
+    if(r.enderecoReceita) tdEnd.append(el("div","sub","Receita: " + r.enderecoReceita));
+    tr.append(tdEnd);
+    tr.append(el("td","tel", r.telMaps || "—"));
+    const tdTm = el("td","tel", r.telMaisCnpj || "—");
+    if(!r.telMaisCnpj && (r.telReceita || []).length){ tdTm.textContent = r.telReceita.join(" / "); tdTm.append(el("div","sub","da Receita")); }
+    tr.append(tdTm);
+    const tdR = el("td"); const [rot, cls] = M04_STATUS[r.status] || [r.status, "st-todo"];
+    tdR.append(el("span","pill " + cls, rot));
+    const det = [r.natureza, r.abertura ? "aberta em " + fmtDataISO(r.abertura) : ""].filter(Boolean).join(" · ");
+    if(det) tdR.append(el("div","sub", det));
+    if(r.motivo && r.status !== "aprovado") tdR.append(el("div","sub", r.motivo));
+    tr.append(tdR);
+    const tdL = el("td");
+    if(r.link){ const a = el("a",null,"Maps"); a.href = r.link; a.target = "_blank"; a.rel = "noopener"; tdL.append(a); }
+    if(r.linkMaisCnpj){ tdL.append(document.createTextNode(" · ")); const a = el("a",null,"MaisCNPJ"); a.href = r.linkMaisCnpj; a.target = "_blank"; a.rel = "noopener"; tdL.append(a); }
+    tr.append(tdL);
+    tb.append(tr);
+  });
+  tw.append(tb); u.corpo.append(tw);
+  if(lista.length > visiveis.length){
+    const bm = el("button","btn sm","Mostrar mais " + Math.min(200, lista.length - visiveis.length) + " de " + (lista.length - visiveis.length));
+    bm.style.marginTop = "10px";
+    bm.onclick = () => { NOVOS.mostrar += 200; novosDesenhar(); };
+    u.corpo.append(bm);
+  }
+}
+
+/* lead do Maps sem CNPJ: a equipe digita o CNPJ e a Receita confere os requisitos */
+async function novosConferirManual(r, valor, bt){
+  const d = cnpjDig(valor);
+  if(d.length !== 14) return toast("Digite os 14 números do CNPJ.");
+  bt.disabled = true; bt.textContent = "Consultando…";
+  const x = await consultarCnpj(d);
+  bt.disabled = false; bt.textContent = "Conferir";
+  if(!x) return toast("A Receita não respondeu. Tente de novo em instantes.");
+  if(x.naoEncontrado) return toast("CNPJ não encontrado na Receita.");
+  const novo = Object.assign({}, r, {
+    chave: d, cnpj: d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5"), cnpjManual: true,
+    razaoSocial: x.razao || "", nomeFantasia: x.fantasia || "", natureza: x.natureza || "", codigoNatureza: x.codigo || "",
+    abertura: String(x.abertura || "").slice(0, 10), situacao: x.situacao || "", porte: x.porte || "", capital: x.capital || 0,
+    telReceita: x.telefones || [], receita: x, confianca: 0, motivo: ""
+  });
+  const ltda = ehLtda(x, novo);
+  if(novo.situacao && !/ATIVA/i.test(novo.situacao)){ novo.status = "fora"; novo.motivo = "situação cadastral: " + novo.situacao; }
+  else if(!ltda){ novo.status = "fora"; novo.motivo = "não é LTDA (" + (novo.natureza || "natureza não informada") + ")"; }
+  else if(novo.abertura && mesesDesde(novo.abertura) < 6){
+    novo.status = "aguardando"; novo.completa6m = maisSeisMeses(novo.abertura);
+    novo.motivo = "completa 6 meses em " + fmtDataISO(novo.completa6m);
+  } else novo.status = "aprovado";
+  await NovosDB.excluir([r.chave]);
+  await NovosDB.gravar([novo]);
+  toast(M04_STATUS[novo.status][0] + ": " + (novo.razaoSocial || novo.cnpj));
+  novosDesenhar();
+}
+
+/* envia para a Base de Leads no mesmo formato das planilhas das fases 01 e 03 */
+async function novosEnviarBase(){
+  const u = NOVOS.ui;
+  const marcados = (NOVOS.lista || []).filter(x => NOVOS.sel.has(x.chave));
+  if(!marcados.length) return toast("Marque os leads primeiro.");
+  const comCnpj = marcados.filter(x => cnpjDig(x.cnpj).length === 14);
+  if(!comCnpj.length) return toast("Os marcados não têm CNPJ. Digite o CNPJ antes de enviar.");
+  const registros = comCnpj.map(r => ({
+    cnpj: r.cnpj, razaoSocial: r.razaoSocial || "", nomeFantasia: r.nomeFantasia || r.nomeMaps || "",
+    endereco: r.endereco || r.enderecoReceita || "", bairro: r.bairro || "", cep: r.cep || "",
+    cidade: r.cidade, uf: r.uf, ramo: r.termo || "", cnae: r.cnae ? r.cnae + (r.cnaeDesc ? " - " + r.cnaeDesc : "") : "",
+    telefone: novosTelefones(r).join(" / "), site: r.site || "", nota: r.nota || "", avaliacoes: r.avaliacoes || "",
+    categoria: r.categoria || "", horario: "", statusEndereco: "Confere", link: r.link || "",
+    ...(r.porte ? { porte: r.porte } : {}), ...(r.abertura ? { abertura: r.abertura } : {}),
+    ...(r.capital ? { capital: String(r.capital) } : {}),
+    ...(r.latitude ? { latitude: r.latitude, longitude: r.longitude } : {})
+  }));
+  u.btEnviar.disabled = true; u.btEnviar.textContent = "Enviando…";
+  const { guardados, erro } = await baseGuardar(registros, ["busca","maps"]);
+  u.btEnviar.disabled = false; u.btEnviar.textContent = "Enviar marcados para a Base de Leads";
+  if(erro && !guardados) return toast("A Base de Leads não respondeu (" + erro + "). Confira se a extensão da Base está ativa.");
+  const agora = new Date().toISOString();
+  await NovosDB.gravar(comCnpj.map(r => Object.assign({}, r, { enviadoBase:true, enviadoBaseEm: agora })));
+  NOVOS.sel.clear();
+  toast(guardados.toLocaleString("pt-BR") + " leads enviados para a Base de Leads" +
+    (marcados.length > comCnpj.length ? " (" + (marcados.length - comCnpj.length) + " sem CNPJ ficaram de fora)" : "") + ".");
+  novosDesenhar();
 }
 
 /* ============================================================
@@ -13573,9 +14110,17 @@ function pickFrentes(host){
     "Confere no Google Maps a lista já filtrada: corrige o endereço quando estiver desatualizado e acrescenta telefone, site, bairro, CEP, nota e horário.",
     ["Corrige endereço","Acha telefone e site"], "qualificar");
 
+  cartaoLead("04","Maps + MaisCNPJ por cidade",
+    "Você digita o tipo de cliente e o estado. Cidade por cidade, acha no Google Maps, descobre o CNPJ no MaisCNPJ pelo endereço, junta os dois telefones e confere LTDA e 6 meses de abertura.",
+    ["Capital primeiro","Leads prontos a cada cidade"], "modelo04");
+
   cartaoLead("","Base de Leads",
     "Guarda tudo que passou pelas três fases, por ramo, estado e cidade, e monta o cadastro de redes com o sócio administrador e os telefones.",
     ["Consulta por ramo e cidade","Cadastro de redes"], "base", " arquivo");
+
+  cartaoLead("","Cadastro Leads Novos",
+    "Os leads do Modelo 04, cidade por cidade, com o telefone do Maps e o do MaisCNPJ. Separa aprovados, aguardando 6 meses e fora do requisito, e envia para a Base sem planilha.",
+    ["Entra a cada cidade concluída","Envia direto para a Base"], "novos", " arquivo");
 
   if(gleads.children.length) host.append(gleads);
 
@@ -16008,6 +16553,8 @@ const INICIO_ITENS = [
   ["redes","Redes e Sócios","Quadro de sócios e agrupamento de redes"],
   ["qualificar","Qualificar Leads","Conferência no Google Maps"],
   ["base","Base de Leads","Arquivo com tudo que passou pelas três fases"],
+  ["modelo04","Modelo 04 · Maps + MaisCNPJ","Busca por tipo de cliente, cidade por cidade"],
+  ["novos","Cadastro Leads Novos","Leads que saem do Modelo 04"],
   ["transferir","Transferir leads","Marcar leads na Base e passar para um usuário"]
 ];
 const GESTAO_ITENS = [
