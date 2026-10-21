@@ -21181,15 +21181,18 @@ const DESENHA_GRAFICO = { canais:graficoCanais, canaisUsuario:graficoCanaisUsuar
 
 /* ============================================================
    PRODUTIVIDADE DO SDR: volume, horários, eficiência semanal e capacidade
-   Todos usam os contatos registrados (+ Registrar contato) e as mudanças de status.
-   "Avanço" = lead que foi para um status de ganho ou de repasse (ex.: Reunião marcada).
-   Qualidade = % dos leads contatados num dia que avançaram em até 7 dias.
+   ATENDIMENTO = cada lead que o SDR trabalhou num dia: mudou o status
+   (ex.: Nenhum → Em contato, Em contato → Não atende, nova tentativa)
+   ou registrou um contato. O mesmo lead no mesmo dia conta uma vez.
+   REUNIÃO MARCADA = lead que o SDR levou para um status de repasse
+   (ex.: Reunião marcada): foi encaminhado ao closer. Conta uma vez por lead.
+   Qualidade = % dos leads atendidos num dia que viraram reunião (ou ganho) em até 7 dias.
    ============================================================ */
 GRAFICOS.push(
-  ["volumeSdr","Contatos do SDR por dia, semana, mês e ano","Volume de cada SDR em cada janela e se está acima ou abaixo da meta diária"],
-  ["horarios","Picos de horário e rendimento por período","Em que horas o time mais registra contatos, e se o SDR rende mais no 1º ou no 2º período"],
-  ["eficienciaSemana","Eficiência semanal","Semana a semana: contatos, % da meta, leads contatados, avanços e taxa de avanço"],
-  ["capacidadeQualidade","Quanto dá para crescer e o custo da sobrecarga","Até onde o volume sobe sem a qualidade cair, e quanto se perde nos dias acima da meta"]
+  ["volumeSdr","Atendimentos e reuniões do SDR por dia, semana, mês e ano","Leads trabalhados e reuniões encaminhadas ao closer em cada janela, contra a meta diária"],
+  ["horarios","Picos de horário e rendimento por período","Em que horas o time mais atende, e se o SDR rende mais no 1º ou no 2º período"],
+  ["eficienciaSemana","Eficiência semanal","Semana a semana: atendimentos, % da meta, reuniões marcadas e conversão"],
+  ["capacidadeQualidade","Quanto dá para crescer e o custo da sobrecarga","Até onde o volume sobe sem a conversão em reunião cair, e quanto se perde nos dias acima da meta"]
 );
 
 /* guarda o filtro junto com o resultado, para os gráficos abaixo recalcularem fora do período */
@@ -21201,6 +21204,11 @@ function sdrDiaKey(t){ const d = new Date(t); return d.getFullYear() + "-" + Str
 function sdrSemanaIni(t){ const d = new Date(t); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.getTime(); }
 function sdrPct(x){ return Math.round(x * 100) + "%"; }
 function sdrNum(x, casas){ return Number(x || 0).toFixed(casas == null ? 1 : casas).replace(".", ","); }
+function sdrEhAdm(id){ const u = (DB.usuarios || []).find(x => x.id === id); return !!(u && (perfilDe(u) || {}).adm); }
+function sdrNomeReuniao(){
+  const n = statusLista().filter(s => s.repasse).map(s => s.nome);
+  return n.length ? n.join(" / ") : "Reunião marcada";
+}
 
 function sdrDados(R){
   if(R._sdr) return R._sdr;
@@ -21210,33 +21218,61 @@ function sdrDados(R){
     .map(([k, a]) => Object.assign({ chave:k, arquivado:true }, a));
   const leads = ativos.concat(arq).filter(a =>
     (!f.frente || a.frenteId === f.frente) && (!f.ramo || a.ramoId === f.ramo) && (!f.permitido || f.permitido(a)));
-  const doU = id => id && id !== "null" && (!f.usuario || id === f.usuario);
-  const toques = [];
+  /* sem filtro de usuário, os gráficos mostram só os SDRs: o ADM tratando retornos não entra */
+  const doU = id => id && id !== "null" && (f.usuario ? id === f.usuario : !sdrEhAdm(id));
+  const entrada = new Set([(statusInicial() || {}).id, (statusDeVolta() || {}).id].filter(Boolean));
+
+  const unidades = [], reunioes = [];
+  const vistosReu = new Set();
   leads.forEach(a => {
     const log = a.log || [];
-    const desf = new Set(log.filter(e => e.tipo === "toque_x").map(e => e.id));
-    const sts = log.filter(e => e.tipo === "status").map(e => {
-      const st = statusPorId(e.status), t = Date.parse(e.t);
-      return { t, av: !!st && (st.tipo === "ganho" || !!st.repasse) && e.anterior !== e.status, perda: !!st && st.tipo === "perdido" };
-    }).filter(x => !isNaN(x.t));
     const lead = a.chave.split("@")[0];
-    log.filter(e => e.tipo === "toque" && !desf.has(e.id) && Array.isArray(e.canais) && e.canais.length).forEach(e => {
-      const t = Date.parse(e.t), quem = e.por || e.dono;
-      if(isNaN(t) || !doU(quem)) return;
-      const ate = t + SDR_JANELA_AV;
-      toques.push({ t, quem, lead,
-        av: sts.some(x => x.av && x.t >= t && x.t <= ate),
-        perda: sts.some(x => x.perda && x.t >= t && x.t <= ate) });
+    const desf = new Set(log.filter(e => e.tipo === "toque_x").map(e => e.id));
+    const acoes = [];
+    const marcos = [], perdas = [];
+    log.forEach(e => {
+      const t = Date.parse(e.t);
+      if(isNaN(t)) return;
+      if(e.tipo === "status"){
+        const st = statusPorId(e.status), mudou = e.anterior !== e.status;
+        const reu = !!st && (st.tipo === "ganho" || !!st.repasse) && mudou;
+        if(reu) marcos.push(t);
+        if(st && st.tipo === "perdido" && mudou) perdas.push(t);
+        /* só ações feitas por uma pessoa (o sistema grava sem "por") */
+        if(e.por && (mudou || e.tentativa))
+          acoes.push({ t, quem:e.por, novo: mudou && entrada.has(e.anterior), reu: reu && !!st.repasse, ganho: reu && st.tipo === "ganho" });
+      } else if(e.tipo === "toque" && !desf.has(e.id) && Array.isArray(e.canais) && e.canais.length){
+        const quem = e.por || e.dono;
+        if(quem) acoes.push({ t, quem, novo:false, reu:false, ganho:false });
+      }
+    });
+    const dias = new Map();
+    acoes.sort((x, y) => x.t - y.t).forEach(x => {
+      if(!doU(x.quem)) return;
+      const k = x.quem + "|" + sdrDiaKey(x.t);
+      const u = dias.get(k);
+      if(u){ u.acoes++; if(x.novo) u.novo = true; if(x.reu) u.reu = true; }
+      else dias.set(k, { t:x.t, quem:x.quem, lead, acoes:1, novo:x.novo, reu:x.reu });
+      if(x.reu && !vistosReu.has(x.quem + "|" + lead)){ vistosReu.add(x.quem + "|" + lead); reunioes.push({ t:x.t, quem:x.quem, lead }); }
+    });
+    dias.forEach(u => {
+      const ate = u.t + SDR_JANELA_AV;
+      u.av = marcos.some(m => m >= u.t && m <= ate);
+      u.perda = perdas.some(m => m >= u.t && m <= ate);
+      unidades.push(u);
     });
   });
-  toques.sort((x, y) => x.t - y.t);
-  const porSdr = {};
-  toques.forEach(x => (porSdr[x.quem] || (porSdr[x.quem] = [])).push(x));
-  R._sdr = { toques, porSdr, sdrs: Object.keys(porSdr).sort((a, b) => nomeUsuario(a).localeCompare(nomeUsuario(b))) };
+  unidades.sort((x, y) => x.t - y.t);
+  reunioes.sort((x, y) => x.t - y.t);
+  const porSdr = {}, reuPorSdr = {};
+  unidades.forEach(x => (porSdr[x.quem] || (porSdr[x.quem] = [])).push(x));
+  reunioes.forEach(x => (reuPorSdr[x.quem] || (reuPorSdr[x.quem] = [])).push(x));
+  R._sdr = { toques: unidades, porSdr, reunioes, reuPorSdr,
+             sdrs: Object.keys(porSdr).sort((a, b) => nomeUsuario(a).localeCompare(nomeUsuario(b))) };
   return R._sdr;
 }
 
-/* resumo de um conjunto de contatos: leads distintos, leads que avançaram, perdas */
+/* resumo de um conjunto de atendimentos */
 function sdrResumo(lista){
   const leads = new Map();
   lista.forEach(x => {
@@ -21245,10 +21281,11 @@ function sdrResumo(lista){
     leads.set(x.lead, l);
   });
   const L = leads.size, A = [...leads.values()].filter(l => l.av).length, P = [...leads.values()].filter(l => l.perda).length;
-  return { n: lista.length, L, A, P, taxa: L ? A / L : 0, perdas: L ? P / L : 0, porLead: L ? lista.length / L : 0 };
+  return { n: lista.length, L, A, P, novos: lista.filter(x => x.novo).length,
+           taxa: L ? A / L : 0, perdas: L ? P / L : 0, porLead: L ? lista.length / L : 0 };
 }
 
-/* dias úteis com e sem contato, por SDR, entre ini e fim */
+/* dias úteis (e os não úteis com atendimento) entre ini e fim */
 function sdrDiasUteis(lista, ini, fim){
   const porDia = {};
   lista.forEach(x => { if(x.t >= ini && x.t <= fim){ const k = sdrDiaKey(x.t); (porDia[k] || (porDia[k] = [])).push(x); } });
@@ -21265,10 +21302,11 @@ function sdrDiasUteis(lista, ini, fim){
 
 /* ---------- 1. volume por janela ---------- */
 function graficoVolumeSdr(R){
-  const c = gCard("Contatos do SDR por dia, semana, mês e ano",
-    "Contatos registrados em cada janela, independentemente do período escolhido acima. Ao lado, a % da meta: meta diária × dias úteis da janela até hoje."); c.classList.add("glargo");
+  const c = gCard("Atendimentos e reuniões do SDR por dia, semana, mês e ano",
+    "Atendimento = cada lead em que o SDR mudou o status (ex.: Nenhum → Em contato, nova tentativa de Não atende) ou registrou um contato. " +
+    "O mesmo lead no mesmo dia conta uma vez. Independe do período escolhido acima."); c.classList.add("glargo");
   const D = sdrDados(R);
-  if(!D.toques.length) return gVazio(c, "Nenhum contato registrado ainda.");
+  if(!D.toques.length) return gVazio(c, "Nenhum atendimento ainda: nenhuma mudança de status nem contato registrado pelos SDRs.");
   const agora = Date.now(), hoje0 = new Date(); hoje0.setHours(0, 0, 0, 0);
   const sem0 = sdrSemanaIni(agora), semAnt0 = sem0 - 7 * DIA_MS;
   const mes0 = new Date(hoje0.getFullYear(), hoje0.getMonth(), 1).getTime();
@@ -21282,36 +21320,58 @@ function graficoVolumeSdr(R){
     ["Mês passado", mesAnt0, mes0 - 1],
     ["Este ano", ano0, agora]
   ];
+  const nomeReu = sdrNomeReuniao();
+
+  /* atendimentos */
+  c.append(el("h5","gsub","Atendimentos (leads trabalhados)"));
   const tw = el("div","tablewrap"), t = el("table","leadlista gtab");
   const h = el("tr"); ["SDR","Meta/dia"].concat(janelas.map(j => j[0])).forEach(x => h.append(el("th",null,x))); t.append(h);
   const resumoMeta = [];
   D.sdrs.forEach(id => {
     const lst = D.porSdr[id], meta = metaContatos(id);
-    const primeiro = lst[0].t;
+    const primeiro = new Date(lst[0].t).setHours(0, 0, 0, 0);
     const tr = el("tr"); tr.append(tdNegrito(nomeUsuario(id)), el("td",null,String(meta)));
     janelas.forEach(([rot, ini, fim]) => {
-      const n = lst.filter(x => x.t >= ini && x.t <= fim).length;
-      const iniReal = Math.max(ini, new Date(primeiro).setHours(0, 0, 0, 0));
+      const l = lst.filter(x => x.t >= ini && x.t <= fim), n = l.length, nov = l.filter(x => x.novo).length;
+      const iniReal = Math.max(ini, primeiro);
       const du = iniReal > fim ? 0 : diasUteisEntre(iniReal, Math.min(fim, agora));
-      const alvo = meta * du;
-      const pct = alvo ? n / alvo : 0;
+      const alvo = meta * du, pct = alvo ? n / alvo : 0;
       const td = el("td", n ? null : "muted");
       td.append(el("b",null, n.toLocaleString("pt-BR")));
+      if(n) td.append(el("div","sub", nov + (nov === 1 ? " novo" : " novos") + " · " + (n - nov) + " retomadas"));
       if(alvo && n) td.append(el("div", "sub" + (pct > 1.1 ? " acima" : ""), sdrPct(pct) + " da meta"));
       tr.append(td);
     });
     t.append(tr);
-    /* dias úteis do período escolhido na meta */
-    const ini = Math.max(R.desde || 0, new Date(primeiro).setHours(0, 0, 0, 0));
+    const ini = Math.max(R.desde || 0, primeiro);
     const dias = sdrDiasUteis(lst, ini, agora - (new Date().getHours() < 18 ? DIA_MS : 0)).filter(d => d.util);
     const na = dias.filter(d => d.lista.length >= meta * .9 && d.lista.length <= meta * 1.1).length;
     const acima = dias.filter(d => d.lista.length > meta * 1.1).length;
-    const abaixo = dias.length - na - acima;
-    resumoMeta.push({ id, meta, dias: dias.length, na, acima, abaixo, media: dias.length ? dias.reduce((s, d) => s + d.lista.length, 0) / dias.length : 0 });
+    resumoMeta.push({ id, meta, dias: dias.length, na, acima, abaixo: dias.length - na - acima,
+                      media: dias.length ? dias.reduce((s, d) => s + d.lista.length, 0) / dias.length : 0 });
   });
   tw.append(t); c.append(tw);
 
-  c.append(el("h5","gsub","Dias úteis do período contra a meta diária"));
+  /* reuniões */
+  c.append(el("h5","gsub","Reuniões marcadas, encaminhadas ao closer (" + nomeReu + ")"));
+  const tw2 = el("div","tablewrap"), t2 = el("table","leadlista gtab");
+  const h2 = el("tr"); ["SDR"].concat(janelas.map(j => j[0])).forEach(x => h2.append(el("th",null,x))); t2.append(h2);
+  D.sdrs.forEach(id => {
+    const reu = D.reuPorSdr[id] || [], at = D.porSdr[id];
+    const tr = el("tr"); tr.append(tdNegrito(nomeUsuario(id)));
+    janelas.forEach(([rot, ini, fim]) => {
+      const n = reu.filter(x => x.t >= ini && x.t <= fim).length;
+      const L = new Set(at.filter(x => x.t >= ini && x.t <= fim).map(x => x.lead)).size;
+      const td = el("td", n ? null : "muted");
+      td.append(el("b",null,String(n)));
+      if(L) td.append(el("div","sub", sdrPct(n / L) + " dos " + L + " leads atendidos"));
+      tr.append(td);
+    });
+    t2.append(tr);
+  });
+  tw2.append(t2); c.append(tw2);
+
+  c.append(el("h5","gsub","Dias úteis do período contra a meta diária de atendimentos"));
   gPilha(c, resumoMeta.map(x => ({
     rot: nomeUsuario(x.id),
     det: "média " + sdrNum(x.media) + "/dia · meta " + x.meta,
@@ -21319,18 +21379,20 @@ function graficoVolumeSdr(R){
     txt: x.na + " na meta · " + x.acima + " acima · " + x.abaixo + " abaixo"
   })));
   gLegenda(c, [["bom","na meta (90% a 110%)"],["ruim","acima de 110%"],["neutro","abaixo de 90%"]]);
-  c.append(el("p","sub","Conta os dias úteis desde o 1º contato de cada SDR dentro do período escolhido. Hoje só entra depois das 18h."));
+  c.append(el("p","sub","Conta os dias úteis desde o 1º atendimento de cada SDR dentro do período escolhido. Hoje só entra depois das 18h. " +
+    "Novo = lead que saiu do status de entrada; retomada = lead que já estava em andamento."));
   return c;
 }
 
 /* ---------- 2. horários ---------- */
 function graficoHorarios(R){
   const c = gCard("Picos de horário e rendimento por período",
-    "Horas com mais contatos registrados no período. 1º período = até 12h; 2º período = a partir de 12h. O ritmo é contatos por hora em que o SDR registrou pelo menos um contato."); c.classList.add("glargo");
+    "Horário do 1º movimento de cada atendimento no período. 1º período = até 12h; 2º período = a partir de 12h. " +
+    "O ritmo é atendimentos por hora em que o SDR trabalhou pelo menos um lead."); c.classList.add("glargo");
   const D = sdrDados(R);
   const desde = R.desde || 0;
   const lst = D.toques.filter(x => x.t >= desde);
-  if(!lst.length) return gVazio(c, "Nenhum contato registrado no período.");
+  if(!lst.length) return gVazio(c, "Nenhum atendimento no período.");
 
   const porHora = Array(24).fill(0);
   lst.forEach(x => porHora[new Date(x.t).getHours()]++);
@@ -21346,7 +21408,6 @@ function graficoHorarios(R){
   gLegenda(c, [["bom","3 horários de pico"],["neutro","demais horários"]]);
   c.append(el("p","sub","Picos: " + top.map(h => String(h).padStart(2, "0") + "h às " + String(h + 1).padStart(2, "0") + "h").join(", ") + "."));
 
-  /* mapa dia da semana × hora */
   const nomes = ["seg","ter","qua","qui","sex","sáb","dom"];
   const grade = Array.from({ length:7 }, () => Array(24).fill(0));
   lst.forEach(x => { const d = new Date(x.t); grade[(d.getDay() + 6) % 7][d.getHours()]++; });
@@ -21360,37 +21421,38 @@ function graficoHorarios(R){
     const tr = el("tr"); tr.append(el("th",null,nomes[i]));
     for(let hh = hMin; hh <= hMax; hh++){
       const n = row[hh], td = el("td", null, n ? String(n) : "");
-      if(n){ td.style.background = "rgba(15,118,110," + (0.12 + 0.78 * n / maxG).toFixed(2) + ")"; if(n / maxG > .55) td.style.color = "#fff"; }
-      td.title = nomes[i] + " " + hh + "h: " + n + " contatos";
+      if(n){ td.style.background = "rgba(10,127,118," + (0.12 + 0.78 * n / maxG).toFixed(2) + ")"; if(n / maxG > .55) td.style.color = "#fff"; }
+      td.title = nomes[i] + " " + hh + "h: " + n + " atendimentos";
       tr.append(td);
     }
     t.append(tr);
   });
   tw.append(t); c.append(tw);
 
-  /* 1º x 2º período por SDR */
   c.append(el("h5","gsub","1º período x 2º período"));
   const tw2 = el("div","tablewrap"), t2 = el("table","leadlista gtab");
-  const h2 = el("tr"); ["SDR","1º período","ritmo","taxa de avanço","2º período","ritmo","taxa de avanço","Leitura"].forEach(x => h2.append(el("th",null,x))); t2.append(h2);
+  const h2 = el("tr"); ["SDR","1º período","ritmo","reuniões","2º período","ritmo","reuniões","Leitura"].forEach(x => h2.append(el("th",null,x))); t2.append(h2);
   D.sdrs.forEach(id => {
     const l = (D.porSdr[id] || []).filter(x => x.t >= desde);
     if(!l.length) return;
+    const reu = (D.reuPorSdr[id] || []).filter(x => x.t >= desde);
     const p1 = l.filter(x => new Date(x.t).getHours() < 12), p2 = l.filter(x => new Date(x.t).getHours() >= 12);
+    const r1n = reu.filter(x => new Date(x.t).getHours() < 12).length, r2n = reu.length - r1n;
     const horasAtivas = a => new Set(a.map(x => sdrDiaKey(x.t) + "|" + new Date(x.t).getHours())).size || 1;
     const r1 = p1.length / horasAtivas(p1), r2 = p2.length / horasAtivas(p2);
-    const q1 = sdrResumo(p1), q2 = sdrResumo(p2);
     let leitura = "—";
     if(p1.length >= 10 && p2.length >= 10){
       const dif = r1 / r2 - 1;
       leitura = Math.abs(dif) < .1 ? "ritmo parecido nos dois períodos"
         : "rende " + sdrPct(Math.abs(dif)) + " mais no " + (dif > 0 ? "1º" : "2º") + " período";
-      if(q1.L >= 10 && q2.L >= 10 && Math.abs(q1.taxa - q2.taxa) >= .02 && Math.abs(q1.taxa - q2.taxa) / Math.max(q1.taxa, q2.taxa) >= .15)
-        leitura += "; converte melhor no " + (q1.taxa > q2.taxa ? "1º" : "2º") + " (" + sdrPct(Math.max(q1.taxa, q2.taxa)) + " contra " + sdrPct(Math.min(q1.taxa, q2.taxa)) + ")";
-    } else if(l.length) leitura = "poucos contatos para comparar";
+      const c1 = r1n / p1.length, c2 = r2n / p2.length;
+      if(r1n + r2n >= 4 && Math.abs(c1 - c2) >= .02 && Math.abs(c1 - c2) / Math.max(c1, c2) >= .15)
+        leitura += "; marca mais reuniões no " + (c1 > c2 ? "1º" : "2º") + " (" + sdrPct(Math.max(c1, c2)) + " contra " + sdrPct(Math.min(c1, c2)) + " dos atendimentos)";
+    } else leitura = "poucos atendimentos para comparar";
     const tr = el("tr");
     tr.append(tdNegrito(nomeUsuario(id)),
-      el("td",null, p1.length + " (" + sdrPct(p1.length / l.length) + ")"), el("td",null, sdrNum(r1) + "/h"), el("td",null, q1.L ? sdrPct(q1.taxa) : "—"),
-      el("td",null, p2.length + " (" + sdrPct(p2.length / l.length) + ")"), el("td",null, sdrNum(r2) + "/h"), el("td",null, q2.L ? sdrPct(q2.taxa) : "—"),
+      el("td",null, p1.length + " (" + sdrPct(p1.length / l.length) + ")"), el("td",null, sdrNum(r1) + "/h"), el("td",null, String(r1n)),
+      el("td",null, p2.length + " (" + sdrPct(p2.length / l.length) + ")"), el("td",null, sdrNum(r2) + "/h"), el("td",null, String(r2n)),
       el("td",null, leitura));
     t2.append(tr);
   });
@@ -21401,41 +21463,45 @@ function graficoHorarios(R){
 /* ---------- 3. eficiência semanal ---------- */
 function graficoEficienciaSemana(R){
   const c = gCard("Eficiência semanal",
-    "As últimas 8 semanas de cada SDR. Taxa de avanço = leads contatados na semana que foram para um status de ganho ou repasse (ex.: Reunião marcada) em até 7 dias. Contatos por lead alto com avanço baixo indica insistência sem resultado."); c.classList.add("glargo");
+    "As últimas 8 semanas de cada SDR. Conversão = reuniões marcadas pelo SDR na semana ÷ leads que ele atendeu na semana. " +
+    "Atendimentos por lead alto com conversão baixa indica insistência sem resultado."); c.classList.add("glargo");
   const D = sdrDados(R);
-  if(!D.toques.length) return gVazio(c, "Nenhum contato registrado ainda.");
+  if(!D.toques.length) return gVazio(c, "Nenhum atendimento ainda.");
   const agora = Date.now(), sem0 = sdrSemanaIni(agora);
   const semanas = []; for(let i = 0; i < 8; i++) semanas.push(sem0 - i * 7 * DIA_MS);
   D.sdrs.forEach((id, k) => {
-    const lst = D.porSdr[id], meta = metaContatos(id);
+    const lst = D.porSdr[id], reu = D.reuPorSdr[id] || [], meta = metaContatos(id);
+    const primeiro = new Date(lst[0].t).setHours(0, 0, 0, 0);
     const dt = el("details","gsdr"); if(k === 0 || D.sdrs.length === 1) dt.open = true;
     const linhas = semanas.map(ini => {
       const fim = ini + 7 * DIA_MS - 1;
       const l = lst.filter(x => x.t >= ini && x.t <= fim);
-      const du = diasUteisEntre(Math.max(ini, new Date(lst[0].t).setHours(0, 0, 0, 0)), Math.min(fim, agora));
-      return Object.assign({ ini, du, meta: meta * du }, sdrResumo(l));
+      const r = reu.filter(x => x.t >= ini && x.t <= fim).length;
+      const du = diasUteisEntre(Math.max(ini, primeiro), Math.min(fim, agora));
+      const res = sdrResumo(l);
+      return Object.assign({ ini, du, meta: meta * du, reu: r, conv: res.L ? r / res.L : 0 }, res);
     }).filter(x => x.n || x.ini >= sdrSemanaIni(lst[0].t));
     const atual = linhas[0] || {}, ant = linhas[1] || {};
-    const seta = (a, b, pct) => !b ? "" : a > b * 1.05 ? " ▲" : a < b * .95 ? " ▼" : " =";
+    const seta = (a, b) => !b ? "" : a > b * 1.05 ? " ▲" : a < b * .95 ? " ▼" : " =";
     const sm = el("summary");
-    sm.append(el("b",null,nomeUsuario(id)), document.createTextNode(" · esta semana " + (atual.n || 0) + " contatos" +
-      (atual.L ? ", taxa de avanço " + sdrPct(atual.taxa) + seta(atual.taxa, ant.taxa) : "")));
+    sm.append(el("b",null,nomeUsuario(id)), document.createTextNode(" · esta semana " + (atual.n || 0) + " atendimentos, " +
+      (atual.reu || 0) + (atual.reu === 1 ? " reunião" : " reuniões") + (atual.L ? " (" + sdrPct(atual.conv) + seta(atual.conv, ant.conv) + ")" : "")));
     dt.append(sm);
     const tw = el("div","tablewrap"), t = el("table","leadlista gtab");
-    const h = el("tr"); ["Semana","Contatos","% da meta","Leads contatados","Contatos por lead","Avanços","Taxa de avanço","Perdas em 7 dias"].forEach(x => h.append(el("th",null,x))); t.append(h);
+    const h = el("tr"); ["Semana","Atendimentos","% da meta","Leads novos","Leads atendidos","Atend. por lead","Reuniões marcadas","Conversão","Atend. por reunião","Perdas em 7 dias"].forEach(x => h.append(el("th",null,x))); t.append(h);
     linhas.forEach((x, i) => {
       const ini = new Date(x.ini), tr = el("tr");
       tr.append(el("td",null, String(ini.getDate()).padStart(2, "0") + "/" + String(ini.getMonth() + 1).padStart(2, "0") + (i === 0 ? " (atual)" : "")));
       tr.append(tdNegrito(String(x.n)));
       tr.append(el("td", x.meta && x.n / x.meta > 1.1 ? "acima" : null, x.meta ? sdrPct(x.n / x.meta) : "—"));
-      tr.append(el("td",null,String(x.L)), el("td",null, x.L ? sdrNum(x.porLead) : "—"), el("td",null,String(x.A)),
-        el("td",null, x.L ? sdrPct(x.taxa) : "—"), el("td",null, x.L ? sdrPct(x.perdas) : "—"));
+      tr.append(el("td",null,String(x.novos)), el("td",null,String(x.L)), el("td",null, x.L ? sdrNum(x.porLead) : "—"),
+        tdNegrito(String(x.reu)), el("td",null, x.L ? sdrPct(x.conv) : "—"),
+        el("td",null, x.reu ? sdrNum(x.n / x.reu) : "—"), el("td",null, x.L ? sdrPct(x.perdas) : "—"));
       t.append(tr);
     });
     tw.append(t); dt.append(tw);
     c.append(dt);
   });
-  c.append(el("p","sub","As semanas mais recentes ainda podem ganhar avanços: um lead contatado há 3 dias tem mais 4 dias para avançar."));
   return c;
 }
 
@@ -21443,20 +21509,20 @@ function graficoEficienciaSemana(R){
 const SDR_FAIXAS = [["abaixo de 70%", 0, .7], ["70% a 90%", .7, .9], ["90% a 110%", .9, 1.1], ["110% a 130%", 1.1, 1.3], ["acima de 130%", 1.3, Infinity]];
 function graficoCapacidadeQualidade(R){
   const c = gCard("Quanto dá para crescer e o custo da sobrecarga",
-    "Compara os dias de cada SDR pela % da meta diária e mede a qualidade em cada faixa (leads contatados que avançaram em até 7 dias). " +
-    "Usa os últimos 120 dias, para ter dias suficientes em cada faixa."); c.classList.add("glargo");
+    "Separa os dias de cada SDR pela % da meta diária de atendimentos e mede a qualidade em cada faixa: dos leads atendidos no dia, quantos viraram reunião (ou ganho) em até 7 dias. " +
+    "Usa os últimos 120 dias."); c.classList.add("glargo");
   const D = sdrDados(R);
-  if(!D.toques.length) return gVazio(c, "Nenhum contato registrado ainda.");
+  if(!D.toques.length) return gVazio(c, "Nenhum atendimento ainda.");
   const agora = Date.now(), ini = agora - 120 * DIA_MS, fimAval = agora - SDR_JANELA_AV;
   D.sdrs.forEach(id => {
     const meta = metaContatos(id);
-    const lst = D.porSdr[id].filter(x => x.t >= ini && x.t <= fimAval);   /* só dias que já tiveram os 7 dias para avançar */
+    const lst = D.porSdr[id].filter(x => x.t >= ini && x.t <= fimAval);
     const box = el("div","gsdrbox");
-    box.append(el("h5","gsub", nomeUsuario(id) + " · meta " + meta + "/dia"));
-    const dias = sdrDiasUteis(lst, Math.max(ini, lst.length ? new Date(lst[0].t).setHours(0, 0, 0, 0) : ini), fimAval).filter(d => d.lista.length);
+    box.append(el("h5","gsub", nomeUsuario(id) + " · meta " + meta + " atendimentos/dia"));
+    const dias = sdrDiasUteis(lst, Math.max(ini, lst.length ? new Date(lst[0].t).setHours(0, 0, 0, 0) : ini), fimAval).filter(d => d.util && d.lista.length);
     if(dias.length < 5){
-      box.append(el("p","sub","Ainda não há dias suficientes com contatos registrados (são necessários 5, com 7 dias de prazo para avançar). " +
-        "Por enquanto, a referência é a meta: " + (dias.length ? "média de " + sdrNum(dias.reduce((s, d) => s + d.lista.length, 0) / dias.length) + "/dia." : "")));
+      box.append(el("p","sub","Ainda não há dias suficientes para medir: são necessários 5 dias com atendimento, e cada um precisa de 7 dias para ver se o lead virou reunião. " +
+        (dias.length ? "Até agora: " + dias.length + (dias.length === 1 ? " dia" : " dias") + ", média de " + sdrNum(dias.reduce((s, d) => s + d.lista.length, 0) / dias.length) + " atendimentos/dia." : "")));
       c.append(box); return;
     }
     const faixas = SDR_FAIXAS.map(([rot, a, b]) => {
@@ -21469,45 +21535,55 @@ function graficoCapacidadeQualidade(R){
     const ref = sdrResumo(normais.length ? normais : dias.flatMap(d => d.lista));
 
     const tw = el("div","tablewrap"), t = el("table","leadlista gtab");
-    const h = el("tr"); ["Faixa da meta","Dias","Contatos/dia","Leads contatados","Taxa de avanço","Perdas em 7 dias","Contatos por lead"].forEach(x => h.append(el("th",null,x))); t.append(h);
+    const h = el("tr"); ["Faixa da meta","Dias","Atendimentos/dia","Leads atendidos","Viraram reunião em 7 dias","Perdas em 7 dias","Atend. por lead"].forEach(x => h.append(el("th",null,x))); t.append(h);
     faixas.forEach(x => {
       const tr = el("tr", x.dias ? null : "muted");
       const cai = x.dias >= 3 && ref.taxa && x.taxa < ref.taxa * .9;
       tr.append(el("td",null,x.rot), el("td",null,String(x.dias)), el("td",null, x.dias ? sdrNum(x.vol) : "—"),
-        el("td",null, String(x.L)), el("td", cai ? "acima" : null, x.L ? sdrPct(x.taxa) : "—"),
+        el("td",null, String(x.L)), el("td", cai ? "acima" : null, x.L ? sdrPct(x.taxa) + " (" + x.A + ")" : "—"),
         el("td",null, x.L ? sdrPct(x.perdas) : "—"), el("td",null, x.L ? sdrNum(x.porLead) : "—"));
       t.append(tr);
     });
     tw.append(t); box.append(tw);
 
-    /* conclusões */
     const txt = [];
-    const ok = faixas.filter(x => x.dias >= 3 && x.L >= 10 && x.taxa >= ref.taxa * .9);
-    const teto = ok.length ? ok[ok.length - 1] : null;
-    if(teto && teto.vol > media * 1.05){
+    /* faixas com dados suficientes; a faixa da média atual é o ponto de partida */
+    const validas = faixas.filter(x => x.dias >= 3 && x.L >= 30);
+    const passa = x => x.taxa >= ref.taxa * .9;
+    const pm = media / meta;
+    const fMedia = faixas.find(x => pm >= x.a && pm < x.b);
+    const acimaDaMedia = validas.filter(x => x.a > fMedia.a);
+    let teto = null;
+    for(const x of acimaDaMedia){ if(passa(x)) teto = x; else break; }
+    const mediaOk = !validas.includes(fMedia) || passa(fMedia);
+    const abaixoOk = validas.filter(x => x.b <= fMedia.a && passa(x));
+    if(!ref.A){
+      txt.push("Ainda não há reuniões marcadas suficientes nesses dias para medir a qualidade. Por enquanto, a referência é só o volume: média de " +
+        sdrNum(media) + " atendimentos/dia contra a meta de " + meta + " (" + sdrPct(media / meta) + ").");
+    } else if(mediaOk && teto && teto.vol > media * 1.05){
       txt.push("<b>Dá para crescer cerca de " + sdrPct(teto.vol / media - 1) + "</b>: hoje a média é " + sdrNum(media) +
-        " contatos/dia e, nos dias com " + sdrNum(teto.vol) + "/dia (faixa " + teto.rot + "), a taxa de avanço se manteve em " + sdrPct(teto.taxa) +
+        " atendimentos/dia e, nos dias com " + sdrNum(teto.vol) + "/dia (faixa " + teto.rot + "), a conversão em reunião se manteve em " + sdrPct(teto.taxa) +
         " (referência " + sdrPct(ref.taxa) + ").");
-    } else if(teto && media > teto.vol * 1.05){
-      txt.push("<b>Acima do volume sustentável</b>: a qualidade se mantém até cerca de " + sdrNum(teto.vol) + " contatos/dia (faixa " + teto.rot +
-        ", taxa de avanço " + sdrPct(teto.taxa) + "). A média atual de " + sdrNum(media) + "/dia está " + sdrPct(media / teto.vol - 1) + " acima disso.");
+    } else if(!mediaOk && abaixoOk.length){
+      const t2 = abaixoOk[abaixoOk.length - 1];
+      txt.push("<b>Acima do volume sustentável</b>: no volume atual (" + sdrNum(media) + "/dia) só " + sdrPct(fMedia.taxa) + " dos leads viram reunião, contra " +
+        sdrPct(t2.taxa) + " nos dias com cerca de " + sdrNum(t2.vol) + "/dia (faixa " + t2.rot + "). Reduzir para perto disso deve devolver a conversão.");
     } else if(media < meta * .9){
-      const temAlto = faixas.some(x => x.a >= .9 && x.dias >= 3);
       txt.push("<b>Até a meta faltam " + sdrPct(meta / media - 1) + "</b> (média " + sdrNum(media) + " de " + meta + "/dia). " +
-        (temAlto ? "Nos dias de volume maior, a qualidade caiu: crescer exige cuidado." : "Ainda não há dias suficientes com volume mais alto para medir o efeito na qualidade; suba aos poucos e acompanhe a taxa de avanço."));
+        (acimaDaMedia.length ? "Nos dias de volume maior, a conversão caiu: crescer exige cuidado." : "Ainda não há dias suficientes com volume mais alto para medir o efeito na conversão; suba aos poucos e acompanhe."));
     } else {
-      txt.push("<b>Já está no limite observado</b>: a média de " + sdrNum(media) + "/dia é o maior volume em que a qualidade se manteve. Mais volume, aqui, tende a custar qualidade.");
+      txt.push("<b>Já está no limite observado</b>: a média de " + sdrNum(media) + " atendimentos/dia é o maior volume com dados suficientes em que a conversão se manteve.");
     }
     const altos = dias.filter(d => d.lista.length / meta > 1.1);
-    if(altos.length >= 3){
+    if(altos.length >= 3 && ref.A){
       const qa = sdrResumo(altos.flatMap(d => d.lista));
       const perdaAv = Math.max(0, (ref.taxa - qa.taxa) * qa.L);
       if(qa.L >= 10 && qa.taxa < ref.taxa * .9){
-        txt.push("<b>Custo da sobrecarga</b>: nos " + altos.length + " dias acima de 110% da meta, a taxa de avanço caiu de " + sdrPct(ref.taxa) +
-          " para " + sdrPct(qa.taxa) + " (" + sdrNum((ref.taxa - qa.taxa) * 100) + " avanços a menos a cada 100 leads). Isso equivale a cerca de <b>" +
-          Math.round(perdaAv) + " avanços perdidos</b>" + (qa.perdas > ref.perdas * 1.1 ? ", e as perdas em 7 dias subiram de " + sdrPct(ref.perdas) + " para " + sdrPct(qa.perdas) : "") + ".");
+        txt.push("<b>Custo da sobrecarga</b>: nos " + altos.length + " dias acima de 110% da meta, a conversão em reunião caiu de " + sdrPct(ref.taxa) +
+          " para " + sdrPct(qa.taxa) + ". Isso equivale a cerca de <b>" + Math.round(perdaAv) + " reuniões a menos</b> para o closer" +
+          (qa.perdas > ref.perdas * 1.1 ? ", e as perdas em 7 dias subiram de " + sdrPct(ref.perdas) + " para " + sdrPct(qa.perdas) : "") + ".");
       } else {
-        txt.push("Nos " + altos.length + " dias acima de 110% da meta a qualidade se manteve (" + sdrPct(qa.taxa) + " contra " + sdrPct(ref.taxa) +
+        txt.push("Nos " + altos.length + " dias acima de 110% da meta a conversão se manteve (" + sdrPct(qa.taxa) + " contra " + sdrPct(ref.taxa) +
           "). O risco aqui é de prazo: mais leads parados fora do SLA e cansaço; acompanhe o SLA deste SDR.");
       }
     }
@@ -21515,11 +21591,56 @@ function graficoCapacidadeQualidade(R){
     const p = el("div","gleitura"); p.innerHTML = txt.map(x => "<p>" + x + "</p>").join(""); box.append(p);
     c.append(box);
   });
-  c.append(el("p","sub","Os últimos 7 dias ficam de fora, porque os leads contatados neles ainda podem avançar. Quanto mais dias registrados, mais confiável a leitura."));
+  c.append(el("p","sub","Os últimos 7 dias ficam de fora, porque os leads atendidos neles ainda podem virar reunião. Quanto mais dias, mais confiável a leitura."));
   return c;
 }
 
+/* "Carga do SDR" e "Contatos por dia" passam a contar atendimentos (mudança de status + contato registrado) */
+function sdrComAtendimentos(R){
+  const D = sdrDados(R), desde = R.desde || 0;
+  const R2 = Object.assign({}, R, { porUsuario:{}, toqDia:{}, primeiroToque:null });
+  D.sdrs.forEach(id => {
+    const l = D.porSdr[id].filter(x => x.t >= desde);
+    if(!l.length) return;
+    const dias = {};
+    l.forEach(x => {
+      const k = sdrDiaKey(x.t);
+      dias[k] = (dias[k] || 0) + 1;
+      (R2.toqDia[k] || (R2.toqDia[k] = {}))[id] = (R2.toqDia[k][id] || 0) + 1;
+      if(R2.primeiroToque == null || x.t < R2.primeiroToque) R2.primeiroToque = x.t;
+    });
+    R2.porUsuario[id] = Object.assign({ ativos:0 }, R.porUsuario[id] || {}, { toq: l.length, dias });
+  });
+  return R2;
+}
+function sdrTrocarTexto(c, de, para){
+  c.querySelectorAll("h4, p.sub, p.gvazio, p.leadshint").forEach(p => { p.textContent = p.textContent.split(de).join(para); });
+  return c;
+}
+const _graficoCapacidadeBase = graficoCapacidade, _graficoToquesDiaBase = graficoToquesDia;
+graficoCapacidade = function(R){
+  const c = _graficoCapacidadeBase(sdrComAtendimentos(R));
+  sdrTrocarTexto(c, "Média de contatos por dia útil", "Média de atendimentos (leads trabalhados: mudança de status ou contato registrado) por dia útil");
+  sdrTrocarTexto(c, "O pico é o dia com mais contatos.", "O pico é o dia com mais atendimentos.");
+  sdrTrocarTexto(c, "Nenhum contato registrado no período.", "Nenhum atendimento no período.");
+  sdrTrocarTexto(c, "1º contato registrado", "1º atendimento");
+  sdrTrocarTexto(c, "Dias sem nenhum contato", "Dias sem nenhum atendimento");
+  return c;
+};
+graficoToquesDia = function(R){
+  const c = _graficoToquesDiaBase(sdrComAtendimentos(R));
+  sdrTrocarTexto(c, "Contatos por dia", "Atendimentos por dia");
+  sdrTrocarTexto(c, "Quantos contatos cada usuário registrou em cada dia.", "Quantos leads cada SDR trabalhou em cada dia (mudou o status ou registrou contato).");
+  sdrTrocarTexto(c, "Nenhum contato registrado no período.", "Nenhum atendimento no período.");
+  return c;
+};
+GRAFICOS.forEach(g => {
+  if(g[0] === "capacidade") g[2] = "Média de atendimentos por dia útil contra a meta diária de cada um";
+  if(g[0] === "toquesDia"){ g[1] = "Atendimentos por dia"; g[2] = "Leads trabalhados por cada SDR em cada dia, destacando os dias acima da meta"; }
+});
+
 Object.assign(DESENHA_GRAFICO, {
+  capacidade: graficoCapacidade, toquesDia: graficoToquesDia,
   volumeSdr: graficoVolumeSdr, horarios: graficoHorarios,
   eficienciaSemana: graficoEficienciaSemana, capacidadeQualidade: graficoCapacidadeQualidade
 });
