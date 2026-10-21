@@ -8494,7 +8494,7 @@ async function m04Importar(est){
     const feitas = (await NovosDB.meta("importadas")) || {};
     const chaveCid = i => est.uf + "|" + est.termo + "|" + est.criadoEm + "|" + i;
     const pendentes = (est.cidades || []).map((c, i) => i).filter(i => est.cidades[i].status === "pronta" && !feitas[chaveCid(i)]);
-    if(!pendentes.length) return 0;
+    if(!pendentes.length){ novos += await m04ImportarRefeitos(est); return novos; }
     const existentes = new Map((await NovosDB.todos()).map(x => [x.chave, x]));
     for(const i of pendentes){
       const c = est.cidades[i];
@@ -8516,10 +8516,32 @@ async function m04Importar(est){
       const aprov = lista.filter(x => x.status === "aprovado").length;
       if(lista.length) toast(c.nome + ": " + aprov + " leads aprovados no Cadastro Leads Novos.");
     }
+    novos += await m04ImportarRefeitos(est);
   } catch(e){ /* tenta de novo na próxima volta */ }
   finally { M04.importando = false; }
   if(novos && NOVOS.ui && document.body.contains(NOVOS.ui.corpo)) novosDesenhar();
   return novos;
+}
+
+/* leads “Sem CNPJ” que a extensão procurou de novo */
+async function m04ImportarRefeitos(est){
+  if(!est || !est.refeitos) return 0;
+  const { resp, erro } = await m04Enviar({ type:"refeitos" }, 20000);
+  if(erro || !resp || !(resp.registros || []).length) return 0;
+  const lista = resp.registros;
+  const velhas = lista.map(r => r.chaveAntiga).filter(Boolean);
+  await NovosDB.excluir(velhas);
+  await NovosDB.gravar(lista.map(r => {
+    const x = Object.assign({}, r, { importadoEm: new Date().toISOString() });
+    delete x.refazer; delete x.chaveAntiga;
+    const d = cnpjDig(x.cnpj);
+    if(d.length === 14 && x.receita){ try { qualifGravar(d, { receita: x.receita }); REQ.cache[d] = x.receita; } catch(e){} }
+    return x;
+  }));
+  await m04Enviar({ type:"refeitos_ok", n: lista.length }, 10000);
+  const achados = lista.filter(r => cnpjDig(r.cnpj).length === 14).length;
+  toast("Procura de novo: CNPJ achado em " + achados + " de " + lista.length + ".");
+  return achados;
 }
 
 /* importação contínua mesmo fora da tela do Modelo 04 */
@@ -8707,7 +8729,8 @@ function m04Pinta(s){
   const t = s.totais || {};
   u.chips.innerHTML = "";
   [[t.aprovados,"aprovados","ok"],[t.aguardando,"aguardando 6 meses","novo"],[t.fora,"fora do requisito","alerta"],
-   [t.semCnpj,"sem CNPJ","alerta"],[t.verificar,"para conferir","alerta"],[t.maps,"locais no Maps",""]]
+   [t.semCnpj,"sem CNPJ","alerta"],[t.verificar,"para conferir","alerta"],[t.maps,"locais no Maps",""],
+   [s.refazer,"na fila para procurar o CNPJ de novo","novo"]]
     .forEach(([v, r, c]) => { const x = leadsChip(v, r, c); if(x) u.chips.append(x); });
 
   u.atual.textContent = s.concluido ? "Estado inteiro concluído." : s.pausado ? (s.motivo || "Pausada.") : (s.atual || "Trabalhando…");
@@ -8774,8 +8797,10 @@ function pickNovos(host){
   const btEnviar = el("button","btn primary","Enviar marcados para a Base de Leads");
   const btExcluir = el("button","btn danger","Excluir marcados");
   const btAtual = el("button","btn","Buscar cidades novas da extensão");
+  const btRefazer = el("button","btn","Procurar CNPJ de novo");
+  btRefazer.title = "Manda os leads Sem CNPJ (os marcados ou, se nenhum estiver marcado, todos do filtro) para a extensão procurar de novo";
   const info = el("span","leadshint"); info.style.alignSelf = "center";
-  acoes.append(btEnviar, btExcluir, btAtual, info);
+  acoes.append(btEnviar, btExcluir, btAtual, btRefazer, info);
   host.append(acoes);
 
   const corpo = el("div"); host.append(corpo);
@@ -8792,6 +8817,22 @@ function pickNovos(host){
     if(!NOVOS.sel.size) return toast("Marque os leads primeiro.");
     if(!confirm("Excluir " + NOVOS.sel.size + " leads do Cadastro Leads Novos?")) return;
     await NovosDB.excluir([...NOVOS.sel]); NOVOS.sel.clear(); novosDesenhar();
+  };
+  btRefazer.onclick = async () => {
+    const f = NOVOS.filtro;
+    let alvo = (NOVOS.lista || []).filter(x => x.status === "sem_cnpj" && NOVOS.sel.has(x.chave));
+    if(!alvo.length) alvo = (NOVOS.lista || []).filter(x => x.status === "sem_cnpj" &&
+      (!f.uf || x.uf === f.uf) && (!f.cidade || x.cidade === f.cidade));
+    if(!alvo.length) return toast("Não há leads Sem CNPJ nesse filtro.");
+    if(!confirm("Procurar de novo o CNPJ de " + alvo.length + " leads? Eles têm prioridade e, depois, a busca das cidades continua de onde parou.")) return;
+    const itens = alvo.map(x => ({ chave:x.chave, nomeMaps:x.nomeMaps, endereco:x.endereco, cidade:x.cidade, uf:x.uf,
+      termo:x.termo, telMaps:x.telMaps, bairro:x.bairro, cep:x.cep, site:x.site, nota:x.nota, avaliacoes:x.avaliacoes,
+      categoria:x.categoria, link:x.link, latitude:x.latitude, longitude:x.longitude, encontradoEm:x.encontradoEm }));
+    const { resp, erro } = await m04Enviar({ type:"reprocessar", itens }, 20000);
+    if(erro || !resp) return toast("A extensão do Modelo 04 não respondeu. Recarregue a extensão e esta página.");
+    NOVOS.sel.clear();
+    toast(alvo.length + " leads na fila. Acompanhe na tela do Modelo 04; os achados voltam para cá sozinhos.");
+    novosDesenhar();
   };
   btAtual.onclick = async () => {
     const { resp, erro } = await m04Enviar({ type:"estado" }, 4000);
