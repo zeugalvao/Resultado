@@ -1243,6 +1243,13 @@ td.acima{color:var(--brick);font-weight:600}
 .nabas-b.on{border-color:var(--teal,#0f766e);background:var(--teal,#0f766e);color:#fff}
 .nabas-b.on b{color:#fff}
 .nkpis{margin:0 0 14px}
+.nestados .tablewrap{max-height:520px;overflow:auto}
+.nestados h3{font-size:13px;margin:0 0 6px;color:var(--muted);font-weight:600}
+table.nclic tr.ncid td{background:#f7fafb;font-size:13px}
+table.nclic tr.ncid td.ncid-nome{padding-left:34px}
+table.nclic tr.marcado td{background:var(--teal-soft)}
+.nmostrando{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:6px 0 12px;font-size:14px;scroll-margin-top:20px}
+.nmostrando b{font-size:16px}
 .nduas{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
 .nduas h3{font-size:13px;margin:0 0 6px;color:var(--muted);font-weight:600}
 .nduas .tablewrap{max-height:340px;overflow:auto}
@@ -8508,7 +8515,7 @@ const NovosDB = {
     return new Promise((ok, falha) => {
       const t = db.transaction(store, modo), s = t.objectStore(store);
       const out = fn(s);
-      t.oncomplete = () => ok(out && out.result !== undefined ? out.result : out);
+      t.oncomplete = () => ok(out instanceof IDBRequest ? out.result : out);
       t.onerror = () => falha(t.error);
     });
   },
@@ -8525,7 +8532,8 @@ async function m04Importar(est){
   M04.importando = true;
   let novos = 0;
   try {
-    const feitas = (await NovosDB.meta("importadas")) || {};
+    let feitas = await NovosDB.meta("importadas");
+    if(!feitas || typeof feitas !== "object" || feitas instanceof IDBRequest) feitas = {};
     const chaveCid = i => est.uf + "|" + est.termo + "|" + est.criadoEm + "|" + i;
     const pendentes = (est.cidades || []).map((c, i) => i).filter(i => est.cidades[i].status === "pronta" && !feitas[chaveCid(i)]);
     if(!pendentes.length){ novos += await m04ImportarRefeitos(est); return novos; }
@@ -8547,8 +8555,14 @@ async function m04Importar(est){
       if(lista.length) await NovosDB.gravar(lista);
       feitas[k] = new Date().toISOString();
       await NovosDB.metaGravar("importadas", feitas);
-      const aprov = lista.filter(x => x.status === "aprovado").length;
-      if(lista.length) toast(c.nome + ": " + aprov + " leads aprovados no Cadastro Leads Novos.");
+      M04.rodada = M04.rodada || { cidades:0, aprov:0, ultima:"" };
+      M04.rodada.cidades++; M04.rodada.aprov += lista.filter(x => x.status === "aprovado").length; M04.rodada.ultima = c.nome;
+    }
+    if(M04.rodada && M04.rodada.cidades){
+      const r = M04.rodada; M04.rodada = null;
+      toast(r.cidades === 1 ? r.ultima + ": " + r.aprov + " leads aprovados no Cadastro Leads Novos."
+        : r.cidades + " cidades importadas para o Cadastro Leads Novos (" + r.aprov + " aprovados).");
+      novos = Math.max(novos, 1);
     }
     novos += await m04ImportarRefeitos(est);
   } catch(e){ /* tenta de novo na próxima volta */ }
@@ -8833,14 +8847,21 @@ function pickNovos(host){
   const btEnviar = el("button","btn primary","Enviar marcados para a Base de Leads");
   const btExcluir = el("button","btn danger","Excluir marcados");
   const btAtual = el("button","btn","Buscar cidades novas da extensão");
+  const btCsv = el("button","btn","Baixar CSV"), btXls = el("button","btn","Baixar Excel");
+  btCsv.title = btXls.title = "Baixa todos os leads da lista abaixo, com os filtros escolhidos (ramo, estado, cidade, situação e busca)";
+  btCsv.onclick = () => novosExportar("csv");
+  btXls.onclick = () => novosExportar("xlsx");
   const btRefazer = el("button","btn","Procurar CNPJ de novo");
   btRefazer.title = "Manda os leads Sem CNPJ (os marcados ou, se nenhum estiver marcado, todos do filtro) para a extensão procurar de novo";
   const info = el("span","leadshint"); info.style.alignSelf = "center";
-  acoes.append(btEnviar, btExcluir, btAtual, btRefazer, info);
+  acoes.append(btEnviar, btCsv, btXls, btExcluir, btAtual, btRefazer, info);
+
+  const mostrando = el("div","nmostrando");
+  barra.before(mostrando);
   host.append(acoes);
 
   const corpo = el("div"); host.append(corpo);
-  NOVOS.ui = { inB, sSt, sUf, sCid, ckN, chips, corpo, info, btEnviar, btExcluir, ramos };
+  NOVOS.ui = { inB, sSt, sUf, sCid, ckN, chips, corpo, info, btEnviar, btExcluir, ramos, mostrando };
 
   let t = null;
   inB.oninput = () => { clearTimeout(t); t = setTimeout(() => { NOVOS.filtro.busca = inB.value; NOVOS.mostrar = 200; novosDesenhar(); }, 250); };
@@ -8918,6 +8939,17 @@ async function novosDesenhar(){
      (qd.length >= 4 && (cnpjDig(x.cnpj).includes(qd) || cnpjDig(x.telMaps + x.telMaisCnpj).includes(qd)))))
     .sort((a, b) => (a.uf + a.cidade + a.nomeMaps).localeCompare(b.uf + b.cidade + b.nomeMaps, "pt-BR"));
 
+  NOVOS.filtrada = lista;
+  u.sSt.value = f.status;
+  u.mostrando.innerHTML = "";
+  const partes = [f.ramo ? ((NOVOS.nomesRamo || {})[f.ramo] || "") : "Todos os ramos", f.uf || "todos os estados", f.cidade].filter(Boolean);
+  u.mostrando.append(el("b",null, lista.length.toLocaleString("pt-BR") + (lista.length === 1 ? " lead" : " leads")),
+    document.createTextNode(" · " + partes.join(" · ") + (f.status ? " · " + M04_STATUS[f.status][0].toLowerCase() : " · todas as situações")));
+  if(f.uf || f.cidade){
+    const lp = el("button","btn sm","Limpar estado e cidade");
+    lp.onclick = () => { f.uf = ""; f.cidade = ""; NOVOS.mostrar = 200; novosDesenhar(); };
+    u.mostrando.append(lp);
+  }
   u.info.textContent = NOVOS.sel.size ? NOVOS.sel.size + " marcados" : "";
   u.corpo.innerHTML = "";
   if(!todos.length){
@@ -8998,6 +9030,7 @@ function novosPainelRamos(box, todos){
     g.lista.push(x); grupos.set(k, g);
   });
   grupos.forEach(g => { const n = Object.entries(g.nomes).sort((a, b) => b[1] - a[1])[0][0]; g.nome = n.charAt(0).toUpperCase() + n.slice(1); });
+  NOVOS.nomesRamo = {}; grupos.forEach(g => { NOVOS.nomesRamo[g.k] = g.nome; });
   if(f.ramo && !grupos.has(f.ramo)) f.ramo = "";
   const lst = [...grupos.values()].sort((a, b) => b.lista.length - a.lista.length);
 
@@ -9031,37 +9064,40 @@ function novosPainelRamos(box, todos){
     .forEach(([v, r]) => { const d = el("div","gkpi"); d.append(el("b",null,Number(v).toLocaleString("pt-BR")), el("span",null,r)); res.append(d); });
   bl.append(res);
 
-  /* estados */
+  /* estados, com as cidades abrindo logo abaixo do estado clicado */
   const linhaTab = (cols) => { const tr = el("tr"); cols.forEach(c => tr.append(typeof c === "string" ? el("td",null,c) : c)); return tr; };
   const cabTab = (cols) => { const tr = el("tr"); cols.forEach(c => tr.append(el("th",null,c))); return tr; };
+  const irParaLista = () => setTimeout(() => { const alvo = NOVOS.ui && NOVOS.ui.mostrando; if(alvo) alvo.scrollIntoView({ behavior:"smooth", block:"start" }); }, 80);
   const twE = el("div","tablewrap"), tE = el("table","leadlista nclic");
-  tE.append(cabTab(["Estado","Cidades","Leads","Aprovados","Aguardando","Fora","Sem CNPJ"]));
+  tE.append(cabTab(["Estado / cidade","Cidades","Leads","Aprovados","Aguardando","Fora","Sem CNPJ"]));
   ufs.map(uf => ({ uf, c: conta(base.filter(x => x.uf === uf)) })).sort((a, b) => b.c.n - a.c.n).forEach(({ uf, c }) => {
-    const tr = linhaTab([tdNegrito(uf), String(c.cidades.size), String(c.n), String(c.aprovado), String(c.aguardando), String(c.fora), String(c.sem_cnpj)]);
-    if(f.uf === uf) tr.classList.add("marcado");
-    tr.title = "Ver as cidades de " + uf;
-    tr.onclick = () => { f.uf = f.uf === uf ? "" : uf; f.cidade = ""; NOVOS.mostrar = 200; novosDesenhar(); };
+    const aberto = f.uf === uf;
+    const tdUf = tdNegrito((aberto ? "▾ " : "▸ ") + uf);
+    const tr = linhaTab([tdUf, String(c.cidades.size), String(c.n), String(c.aprovado), String(c.aguardando), String(c.fora), String(c.sem_cnpj)]);
+    if(aberto && !f.cidade) tr.classList.add("marcado");
+    tr.title = aberto ? "Fechar " + uf : "Ver as cidades e todos os leads de " + uf;
+    tr.onclick = () => {
+      if(aberto && !f.cidade){ f.uf = ""; }
+      else { f.uf = uf; f.cidade = ""; f.status = ""; irParaLista(); }
+      NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar();
+    };
     tE.append(tr);
+    if(!aberto) return;
+    const cids = [...new Set(base.filter(x => x.uf === uf).map(x => x.cidade))];
+    cids.map(cd => ({ cd, c: conta(base.filter(x => x.uf === uf && x.cidade === cd)) }))
+      .sort((a, b) => b.c.n - a.c.n || a.cd.localeCompare(b.cd, "pt-BR")).forEach(({ cd, c: cc }) => {
+        const trc = linhaTab([el("td","ncid-nome", cd), "", String(cc.n), String(cc.aprovado), String(cc.aguardando), String(cc.fora), String(cc.sem_cnpj)]);
+        trc.classList.add("ncid");
+        if(f.cidade === cd) trc.classList.add("marcado");
+        trc.title = "Ver só os leads de " + cd;
+        trc.onclick = () => { f.cidade = f.cidade === cd ? "" : cd; f.status = ""; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); irParaLista(); };
+        tE.append(trc);
+      });
   });
   twE.append(tE);
-
-  const duas = el("div","nduas");
-  const colE = el("div"); colE.append(el("h3",null,"Por estado"), twE); duas.append(colE);
-  if(f.uf){
-    const twC = el("div","tablewrap"), tC = el("table","leadlista nclic");
-    tC.append(cabTab(["Cidade","Leads","Aprovados","Aguardando","Fora","Sem CNPJ"]));
-    const cids = [...new Set(base.filter(x => x.uf === f.uf).map(x => x.cidade))];
-    cids.map(cd => ({ cd, c: conta(base.filter(x => x.uf === f.uf && x.cidade === cd)) })).sort((a, b) => b.c.n - a.c.n).forEach(({ cd, c }) => {
-      const tr = linhaTab([tdNegrito(cd), String(c.n), String(c.aprovado), String(c.aguardando), String(c.fora), String(c.sem_cnpj)]);
-      if(f.cidade === cd) tr.classList.add("marcado");
-      tr.onclick = () => { f.cidade = f.cidade === cd ? "" : cd; NOVOS.mostrar = 200; novosDesenhar(); };
-      tC.append(tr);
-    });
-    twC.append(tC);
-    const colC = el("div"); colC.append(el("h3",null,"Cidades de " + f.uf), twC); duas.append(colC);
-  }
-  bl.append(duas);
-  bl.append(el("p","leadshint","Clique num estado para ver as cidades, e numa cidade para filtrar a lista abaixo. Os números somam só as cidades já pesquisadas pelo Modelo 04."));
+  const colE = el("div","nestados"); colE.append(el("h3",null,"Por estado"), twE);
+  bl.append(colE);
+  bl.append(el("p","leadshint","Clique num estado para abrir as cidades e listar abaixo todos os leads desse estado; clique numa cidade para ver só os leads dela. Os números somam só as cidades já pesquisadas pelo Modelo 04."));
 
   if(g && g.lista.length){
     const bt = el("button","btn sm","Renomear ou juntar este ramo");
@@ -9074,6 +9110,34 @@ function novosPainelRamos(box, todos){
     bl.append(bt);
   }
   box.append(bl);
+}
+
+/* exporta a lista filtrada (todas as páginas) em CSV ou Excel */
+function novosExportar(tipo){
+  const lista = NOVOS.filtrada || [];
+  if(!lista.length) return toast("Não há leads com esses filtros para baixar.");
+  const f = NOVOS.filtro;
+  const data = d => d ? String(d).slice(0, 10).split("-").reverse().join("/") : "";
+  const cab = ["Ramo","Situação","Motivo","Empresa (Google Maps)","Razão social","Nome fantasia","CNPJ","Natureza jurídica","Abertura","Situação cadastral",
+    "Porte","Capital social","Endereço (Google Maps)","Bairro","CEP","Cidade","UF","Endereço (Receita)","Telefone Google Maps","Telefone MaisCNPJ",
+    "Telefone Receita","E-mail","Site","Nota Google","Avaliações","Categoria","Link Google Maps","Link MaisCNPJ","Enviado à Base","Encontrado em"];
+  const linhas = [cab].concat(lista.map(r => [
+    r.termo || "", (M04_STATUS[r.status] || [r.status])[0], r.status === "aprovado" ? "" : (r.motivo || ""),
+    r.nomeMaps || "", r.razaoSocial || "", r.nomeFantasia || "", r.cnpj || "", r.natureza || "", data(r.abertura), r.situacao || "",
+    r.porte || "", r.capital ? String(r.capital) : "", r.endereco || "", r.bairro || "", r.cep || "", r.cidade || "", r.uf || "",
+    r.enderecoReceita || "", r.telMaps || "", r.telMaisCnpj || "", (r.telReceita || []).join(" / "), r.email || "", r.site || "",
+    r.nota || "", r.avaliacoes || "", r.categoria || "", r.link || "", r.linkMaisCnpj || "",
+    r.enviadoBase ? "Sim" : "Não", r.encontradoEm ? new Date(r.encontradoEm).toLocaleDateString("pt-BR") : ""
+  ].map(v => v == null ? "" : String(v))));
+  const nome = ["leads", f.ramo ? (NOVOS.nomesRamo || {})[f.ramo] : "todos-os-ramos", f.uf, f.cidade, f.status, stamp()]
+    .filter(Boolean).join("_").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w\-]+/g, "-").toLowerCase();
+  if(tipo === "csv"){
+    const q = v => /[";\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+    download(nome + ".csv", "text/csv", linhas.map(l => l.map(q).join(";")).join("\r\n"));
+  } else {
+    baixarXlsx(nome, linhas, [22,18,40,34,40,30,20,34,12,14,14,14,50,22,10,22,6,50,18,22,26,30,30,8,10,24,40,40,10,12]);
+  }
+  toast(lista.length.toLocaleString("pt-BR") + " leads baixados.");
 }
 
 /* lead do Maps sem CNPJ: a equipe digita o CNPJ e a Receita confere os requisitos */
