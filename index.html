@@ -8602,12 +8602,65 @@ async function m04ImportarRefeitos(est){
   return achados;
 }
 
-/* importação contínua mesmo fora da tela do Modelo 04 */
+/* ---------- vigia: retoma sozinha quando a busca para ----------
+   A extensão pausa sozinha quando o Chrome reinicia o processo dela, quando uma aba demora
+   ou quando o Google/MaisCNPJ seguram por um tempo. O vigia manda "continuar" com espera
+   crescente e destrava a busca que ficou parada sem avançar. Pausa feita por você é respeitada. */
+const M04_AUTO = { tentativas:0, ultimaTent:0, pausaDesde:0, assin:"", assinDesde:0, ocupado:false, ultimoTxt:"" };
+function m04Pref(k, padrao){ try { const v = localStorage.getItem("m04_" + k); return v == null ? padrao : v === "1"; } catch(e){ return padrao; } }
+function m04PrefSet(k, v){ try { localStorage.setItem("m04_" + k, v ? "1" : "0"); } catch(e){} }
+function m04AutoLigado(){ return m04Pref("auto", true); }
+function m04PausaManual(){ return m04Pref("pausaManual", false); }
+function m04HoraCurta(t){ return new Date(t).toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" }); }
+function m04PrecisaDeVoce(s){ return /campo de busca do MaisCNPJ/i.test(s.bloqueio || ""); }
+async function m04Vigia(s){
+  if(!s || !s.existe || s.concluido || M04_AUTO.ocupado) return;
+  if(!m04AutoLigado() || m04PausaManual()) { M04_AUTO.pausaDesde = 0; return; }
+  const agora = Date.now();
+  if(s.pausado){
+    if(m04PrecisaDeVoce(s)) return;
+    if(!M04_AUTO.pausaDesde) M04_AUTO.pausaDesde = agora;
+    const passos = s.bloqueio ? [90, 180, 300, 600] : [10, 30, 60, 120, 300];
+    const espera = passos[Math.min(M04_AUTO.tentativas, passos.length - 1)] * 1000;
+    const desde = Math.max(M04_AUTO.pausaDesde, M04_AUTO.ultimaTent);
+    M04_AUTO.proxima = desde + espera;
+    if(agora < M04_AUTO.proxima) return;
+    M04_AUTO.ocupado = true;
+    try {
+      M04_AUTO.tentativas++; M04_AUTO.ultimaTent = agora;
+      const { resp } = await m04Enviar({ type:"continuar" }, 15000);
+      M04_AUTO.ultimoTxt = "Retomada sozinha às " + m04HoraCurta(agora) +
+        (s.motivo || s.bloqueio ? " (tinha parado: " + (s.bloqueio || s.motivo) + ")" : "") + ".";
+      M04_AUTO.pausaDesde = 0;
+      if(resp && M04.ui) m04Pinta(resp);
+    } finally { M04_AUTO.ocupado = false; }
+    return;
+  }
+  M04_AUTO.pausaDesde = 0; M04_AUTO.proxima = 0;
+  if(!s.rodando) return;
+  /* rodando, mas sem avançar nada há 4 minutos: pausa e continua para destravar */
+  const assin = [s.idx, s.fase, s.li, s.lugaresTotal, s.atual, (s.totais || {}).maps].join("|");
+  if(assin !== M04_AUTO.assin){ M04_AUTO.assin = assin; M04_AUTO.assinDesde = agora; M04_AUTO.tentativas = 0; return; }
+  const LIMITE = 4 * 60 * 1000;
+  if(agora - M04_AUTO.assinDesde < LIMITE || agora - M04_AUTO.ultimaTent < LIMITE) return;
+  M04_AUTO.ocupado = true;
+  try {
+    M04_AUTO.ultimaTent = agora; M04_AUTO.tentativas++;
+    await m04Enviar({ type:"pausar" }, 15000);
+    await new Promise(r => setTimeout(r, 3000));
+    const { resp } = await m04Enviar({ type:"continuar" }, 15000);
+    M04_AUTO.ultimoTxt = "Destravada sozinha às " + m04HoraCurta(agora) + " (estava parada sem avançar havia 4 minutos).";
+    if(resp && M04.ui) m04Pinta(resp);
+  } finally { M04_AUTO.ocupado = false; }
+}
+
+/* importação contínua e vigia, mesmo fora da tela do Modelo 04 */
 setInterval(async () => {
   if(!M04.presente || M04.importando) return;
+  if(M04.ui && document.body.contains(M04.ui.bar)) return; /* com a tela aberta, o polling de 2s já faz isso */
   const { resp } = await m04Enviar({ type:"estado" }, 4000);
-  if(resp && resp.existe) m04Importar(resp);
-}, 20000);
+  if(resp && resp.existe){ m04Importar(resp); m04Vigia(resp); }
+}, 10000);
 
 /* ---------- tela do Modelo 04 ---------- */
 function pickModelo04(host){
@@ -8700,6 +8753,12 @@ function pickModelo04(host){
   const btNova   = el("button","btn danger","Nova busca");
   [btPausar, btSeguir, btPular, btParar, btVer, btNova].forEach(b => botoes.append(b));
   prog.append(botoes);
+  const autoBox = el("label","qualcheck"); autoBox.style.display = "block"; autoBox.style.marginTop = "10px";
+  const ckAuto = el("input"); ckAuto.type = "checkbox"; ckAuto.checked = m04AutoLigado();
+  autoBox.append(ckAuto, document.createTextNode(" Retomar sozinha quando a busca parar (não precisa clicar em Continuar)"));
+  ckAuto.onchange = () => { m04PrefSet("auto", ckAuto.checked); M04_AUTO.tentativas = 0; if(M04.estado) m04Pinta(M04.estado); };
+  prog.append(autoBox);
+  const autoInfo = el("p","leadshint"); autoInfo.style.margin = "4px 0 0"; prog.append(autoInfo);
 
   const tw = el("div","tablewrap m04cidades"); prog.append(tw);
   const btTodas = el("button","btn sm","Mostrar todas as cidades"); btTodas.style.marginTop = "8px";
@@ -8707,12 +8766,13 @@ function pickModelo04(host){
   host.append(prog);
 
   M04.ui = { aviso, config, prog, grande, totalTxt, selo, escopo, fill, bar, chips, atual, bloqueio,
-             btPausar, btSeguir, btPular, btParar, btNova, btTodas, tw, tplBox };
+             btPausar, btSeguir, btPular, btParar, btNova, btTodas, tw, tplBox, autoInfo };
 
   btIniciar.onclick = async () => {
     const termo = inTermo.value.trim();
     if(!termo) return toast("Digite o tipo de cliente.");
     M04.campos = { termo, uf: selUf.value };
+    m04PrefSet("pausaManual", false); M04_AUTO.tentativas = 0;
     btIniciar.disabled = true; btIniciar.textContent = "Carregando as cidades…";
     const { resp, erro } = await m04Enviar({ type:"iniciar", termo, uf: selUf.value,
       opcoes:{ intervalo: +selInt.value, maxPorCidade: +selMax.value, dividir: ckDiv.checked, maisTpl: inTpl.value.trim() } }, 30000);
@@ -8725,15 +8785,17 @@ function pickModelo04(host){
     if(erro || !resp) return m04SemExtensao(erro);
     m04Pinta(resp); m04Polling();
   };
-  btPausar.onclick = () => cmd("pausar");
-  btSeguir.onclick = () => cmd("continuar", inTpl2.value.trim() ? { maisTpl: inTpl2.value.trim() } : {});
+  btPausar.onclick = () => { m04PrefSet("pausaManual", true); cmd("pausar"); };
+  btSeguir.onclick = () => { m04PrefSet("pausaManual", false); M04_AUTO.tentativas = 0;
+    cmd("continuar", inTpl2.value.trim() ? { maisTpl: inTpl2.value.trim() } : {}); };
   btPular.onclick  = () => { if(confirm("Pular a cidade atual? O que já foi achado nela entra no Cadastro.")) cmd("pular"); };
-  btParar.onclick  = () => { if(confirm("Parar a busca? As cidades já concluídas continuam no Cadastro Leads Novos.")) cmd("parar"); };
+  btParar.onclick  = () => { if(confirm("Parar a busca? As cidades já concluídas continuam no Cadastro Leads Novos.")){ m04PrefSet("pausaManual", true); cmd("parar"); } };
   btVer.onclick    = () => { pickEtapa = "novos"; desenhaPicker(); };
   btTodas.onclick  = () => { M04.verTodas = !M04.verTodas; m04Pinta(M04.estado); };
   btNova.onclick   = async () => {
     if(!confirm("Começar uma busca nova? A atual é apagada da extensão. Os leads que já estão no Cadastro Leads Novos ficam.")) return;
     if(M04.estado) await m04Importar(M04.estado);
+    m04PrefSet("pausaManual", false); M04_AUTO.tentativas = 0;
     cmd("limpar");
   };
 
@@ -8793,7 +8855,8 @@ function m04Pinta(s){
 
   u.atual.textContent = s.concluido ? "Estado inteiro concluído." : s.pausado ? (s.motivo || "Pausada.") : (s.atual || "Trabalhando…");
   u.bloqueio.hidden = !s.bloqueio;
-  u.bloqueio.textContent = s.bloqueio ? s.bloqueio + " Resolva na janela da busca e clique em Continuar." : "";
+  u.bloqueio.textContent = s.bloqueio ? s.bloqueio + (m04AutoLigado() && !m04PrecisaDeVoce(s)
+    ? " Se for uma verificação, resolva na janela da busca; a busca retoma sozinha." : " Resolva na janela da busca e clique em Continuar.") : "";
 
   const ativo = s.rodando && !s.pausado && !s.concluido;
   u.btPausar.hidden = !ativo;
@@ -8823,7 +8886,22 @@ function m04Pinta(s){
   });
   u.tw.innerHTML = ""; u.tw.append(tb);
 
+  /* situação do vigia */
+  if(u.autoInfo){
+    let txt = "";
+    if(!s.concluido && s.pausado){
+      if(m04PausaManual()) txt = "Pausada por você: o vigia não retoma sozinho. Clique em Continuar.";
+      else if(!m04AutoLigado()) txt = "";
+      else if(m04PrecisaDeVoce(s)) txt = "Esta parada precisa de você (endereço da busca do MaisCNPJ).";
+      else if(M04_AUTO.proxima) txt = "Retomando sozinha em " + Math.max(0, Math.ceil((M04_AUTO.proxima - Date.now()) / 1000)) + " s" +
+        (s.bloqueio ? " (se houver verificação na janela da busca, resolver lá adianta)" : "") + ".";
+    }
+    if(!txt && M04_AUTO.ultimoTxt) txt = M04_AUTO.ultimoTxt;
+    u.autoInfo.textContent = txt; u.autoInfo.hidden = !txt;
+  }
+
   m04Importar(s);
+  m04Vigia(s);
 }
 
 /* ---------- Cadastro Leads Novos ---------- */
