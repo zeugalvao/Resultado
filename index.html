@@ -19786,6 +19786,7 @@ const STATUS_PADRAO = [
   {id:"st_novo",     nome:"Novo",             sla:24, tipo:"aberto",  repasse:false},
   {id:"st_contato",  nome:"Em contato",       sla:48, tipo:"aberto",  repasse:false},
   {id:"st_reuniao",  nome:"Reunião marcada",  sla:72, tipo:"aberto",  repasse:true},
+  {id:"st_email",    nome:"Enviar Email Apresentação", sla:72, tipo:"aberto", repasse:false, emailApres:true},
   {id:"st_proposta", nome:"Proposta enviada", sla:96, tipo:"aberto",  repasse:false},
   {id:"st_ganho",    nome:"Ganho",            sla:0,  tipo:"ganho",   repasse:false},
   {id:"st_perdido",  nome:"Perdido",          sla:0,  tipo:"perdido", repasse:false}
@@ -20155,6 +20156,19 @@ function migrarStatusLeads(){
     if(na){ na.religar = true; na.retornaAdm = false; if(!na.tentativas) na.tentativas = 2; }
     sn.religarOk2 = true;
   }
+  /* marca gravada no 1º status (que vai junto no salvamento): se o ADM excluir o status depois, ele não volta */
+  const marcaEmail = statusLista()[0];
+  if(marcaEmail && !marcaEmail.emailOk){
+    const chv = x => String(x || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const ja = DB.statusLead.find(x => x.emailApres || /e-?mail.*apresenta/.test(chv(x.nome)));
+    if(ja){ ja.emailApres = true; ja.repasse = false; if(ja.tipo !== "aberto") ja.tipo = "aberto"; }
+    else {
+      const novoSt = { id:"st_email", nome:"Enviar Email Apresentação", sla:72, tipo:"aberto", repasse:false, emailApres:true };
+      const iReu = DB.statusLead.findIndex(x => ehReuniao(x));
+      if(iReu >= 0) DB.statusLead.splice(iReu + 1, 0, novoSt); else DB.statusLead.push(novoSt);
+    }
+    marcaEmail.emailOk = true;
+  }
   if(sn && !sn.foraOk){
     if(!DB.statusLead.some(x => x.foraReq))
       DB.statusLead.push({ id:"st_forareq", nome:"Lead fora do requisito", sla:0, tipo:"aberto", repasse:false, retornaAdm:true, pedeData:false, foraReq:true });
@@ -20200,9 +20214,82 @@ function destinosRepasse(a, comSemAcesso){
   let lista = (DB.usuarios || []).filter(u => u.ativo !== false && u.id !== a.usuarioId);
   if(!ehAdm()){
     const liberados = (USR && USR.transfPerfis) || [];
-    lista = lista.filter(u => liberados.includes(u.perfilId));
+    /* closer e ADM sempre podem receber; os demais perfis só se liberados no cadastro */
+    lista = lista.filter(u => liberados.includes(u.perfilId) || ehPerfilAdm(u) || ehPerfilCloser(u));
   }
   return comSemAcesso ? lista : lista.filter(u => pRamo(perfilDe(u), F, S));
+}
+function ehPerfilAdm(u){ return !!(perfilDe(u) || {}).adm; }
+function ehPerfilCloser(u){ return /closer|fechador|executivo/i.test((perfilDe(u) || {}).nome || ""); }
+/* status de reunião marcada: pela flag "repasse" ou pelo nome (ex.: REUNIAO MARCADA) */
+function ehEmailApres(st){
+  if(!st || st.tipo !== "aberto") return false;
+  const n = String(st.nome || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return !!st.emailApres || /e-?mail.*apresenta/.test(n);
+}
+/* status que obrigam o SDR a escolher closer/ADM e escrever a observação */
+function ehTransfereObs(st){ return ehReuniao(st) || ehEmailApres(st); }
+function ehReuniao(st){
+  if(!st || st.tipo !== "aberto" || ehEmailApres(st)) return false;
+  const n = String(st.nome || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return !!st.repasse || /reuni/i.test(n);
+}
+/* modal obrigatório: para quem enviar (closer ou ADM) + observação. Devolve { u, obs } ou null */
+function pedirReuniao(st, a){
+  return new Promise(resolve => {
+    const empresa = (a.lead && a.lead.razaoSocial) || "Este lead";
+    const fundo = el("div","tmodal"), caixa = el("div","tcaixa");
+    caixa.setAttribute("role","dialog"); caixa.setAttribute("aria-modal","true");
+    fundo.append(caixa);
+    let feito = false;
+    const fim = v => { if(feito) return; feito = true; fundo.remove(); document.removeEventListener("keydown", esc, true); resolve(v); };
+    const esc = ev => { if(ev.key === "Escape"){ ev.stopPropagation(); fim(null); } };
+    document.addEventListener("keydown", esc, true);
+    fundo.onclick = ev => { if(ev.target === fundo) fim(null); };
+    const email = ehEmailApres(st);
+    caixa.append(el("h3",null,(email ? "E-mail de apresentação" : "Reunião marcada") + ": para quem enviar?"));
+    caixa.append(el("p","sub", empresa + " vai ficar como \"" + st.nome + "\" e será repassado para quem você escolher. Depois disso você não trabalha mais este lead."));
+    const destinos = destinosRepasse(a);
+    const lbD = el("label","motobs-rot","Enviar para (closer ou ADM) *");
+    const sel = el("select"); sel.style.width = "100%"; sel.style.padding = "8px 10px";
+    sel.append(Object.assign(el("option",null,"Escolher…"), {value:""}));
+    const grupos = [["Closers", u => ehPerfilCloser(u) && !ehPerfilAdm(u)], ["Administradores", ehPerfilAdm],
+                    ["Outros perfis liberados", u => !ehPerfilCloser(u) && !ehPerfilAdm(u)]];
+    grupos.forEach(([rot, f]) => {
+      const us = destinos.filter(f).sort((x, y) => x.nome.localeCompare(y.nome));
+      if(!us.length) return;
+      const og = el("optgroup"); og.label = rot;
+      us.forEach(u => og.append(Object.assign(el("option",null,u.nome), {value:u.id})));
+      sel.append(og);
+    });
+    const lbO = el("label","motobs-rot","Observação para quem vai receber *");
+    const obs = el("textarea","motobs"); obs.rows = 4; obs.maxLength = 1000;
+    obs.placeholder = email
+      ? "Ex.: enviar para ana@clinica.com.br (Dra. Ana, sócia); pediu material sobre Pix Automático; usa boleto do banco X"
+      : "Ex.: reunião dia 28/10 às 14h com a Dra. Ana (sócia); usa boleto do banco X; quer entender o Pix Automático";
+    obs.value = (a.obs || "");
+    const erro = el("p","terro");
+    sel.onchange = obs.oninput = () => { erro.textContent = ""; };
+    const ac = el("div","pickacoes"), ok = el("button","btn primary","Confirmar e enviar"), cc = el("button","btn","Cancelar");
+    if(!destinos.length){
+      erro.textContent = "Nenhum closer ou ADM ativo com acesso a este ramo. Peça ao ADM para revisar os cadastros.";
+      ok.disabled = true;
+    }
+    ok.onclick = () => {
+      const u = destinos.find(x => x.id === sel.value);
+      if(!u) return (erro.textContent = "Escolha o closer ou o ADM que vai receber o lead.");
+      const o = obs.value.trim();
+      if(o.length < 3) return (erro.textContent = email
+        ? "Escreva a observação (e-mail de destino, com quem falou, o que foi conversado)."
+        : "Escreva a observação (data/hora da reunião, com quem, o que foi conversado).");
+      fim({ u, obs: o });
+    };
+    cc.onclick = () => fim(null);
+    ac.append(ok, cc);
+    caixa.append(lbD, sel, lbO, obs, erro, ac);
+    document.body.append(fundo);
+    setTimeout(() => sel.focus(), 30);
+  });
 }
 function repassarLead(a, u){
   const ref = atribs()[a.chave];
@@ -20250,7 +20337,7 @@ function textoEvento(e){
   if(e.tipo === "entrada") return "Entrou para " + nomeUsuario(e.dono) + " como " + nomeStatus(e.status) + (e.aprox ? " (data aproximada)" : "");
   if(e.tipo === "status" && e.tentativa && e.anterior === e.status) return quem + ": " + nomeStatus(e.status) + " (tentativa " + e.tentativa + ")" + (e.retorno ? ", devolvido ao ADM" : "");
   if(e.tipo === "status" && e.motivo) return quem + " mudou de " + nomeStatus(e.anterior) + " para " + nomeStatus(e.status) + " · motivo: " + e.motivo + (e.obsMotivo ? " · obs.: " + e.obsMotivo : "");
-  if(e.tipo === "status") return quem + " mudou de " + nomeStatus(e.anterior) + " para " + nomeStatus(e.status) + (e.aprox ? " (data aproximada)" : "");
+  if(e.tipo === "status") return quem + " mudou de " + nomeStatus(e.anterior) + " para " + nomeStatus(e.status) + (e.aprox ? " (data aproximada)" : "") + (e.obsReuniao ? " · obs.: " + e.obsReuniao : "");
   if(e.tipo === "telefone" && e.receita) return nomeUsuario(e.por) + " trocou o telefone repetido " + (e.de || "") + " pelo da Receita: " + (e.para || "");
   if(e.tipo === "telefone") return nomeUsuario(e.por) + " corrigiu o telefone de " + (e.de || "nenhum") + " para " + (e.para || "");
   if(e.tipo === "contato") return nomeUsuario(e.por) + " " + (e.acao || "adicionou") + " o telefone " + (e.setor ? e.setor + " " : "") + (e.tel || "");
@@ -20685,6 +20772,11 @@ function renderLeadsTrab(host){
           if(!rm){ s.value = ant; return; }
           motivo = rm.motivo; obsPerda = rm.obs || "";
         }
+        let reuniao = null;
+        if(ehTransfereObs(novo) && !ehAdm()){
+          reuniao = await pedirReuniao(novo, a);
+          if(!reuniao){ s.value = ant; return; }
+        }
         if(pedeData(novo)){
           dataPrev = await pedirData("Quando o CNPJ atinge o tempo mínimo?",
             (l.razaoSocial || "Este lead") + (ehAdm() ? "" : " vai para o administrador, na divisão Aguardando tempo de CNPJ, e sai da sua lista."));
@@ -20699,7 +20791,11 @@ function renderLeadsTrab(host){
         ref.atualizadoEm = new Date().toISOString();
         registrar(ref, { t: ref.atualizadoEm, tipo:"status", anterior: ant, status: s.value, dono: ref.usuarioId,
                          retorno: retornaAdm(novo) || undefined, data: dataPrev || undefined, motivo: motivo || undefined,
-                         obsMotivo: obsPerda || undefined });
+                         obsMotivo: obsPerda || undefined, obsReuniao: reuniao ? reuniao.obs : undefined });
+        if(reuniao){
+          ref.obs = reuniao.obs;
+          ref[ehEmailApres(novo) ? "emailApres" : "reuniao"] = { obs: reuniao.obs, em: ref.atualizadoEm, por: USR ? USR.id : null, para: reuniao.u.id };
+        }
         if(motivo) ref.motivoPerda = { motivo, obs: obsPerda || undefined, status: s.value, em: ref.atualizadoEm, por: USR ? USR.id : null };
         else if(!pedeMotivo(novo)) delete ref.motivoPerda;
         if(religar(novo) && !retornaAdm(novo) && !vinhaDeRetorno){
@@ -20724,6 +20820,10 @@ function renderLeadsTrab(host){
             moverLead(ref, sdr, ref.atualizadoEm);
           }
           toast((l.razaoSocial || "Lead") + " está agora com " + nomeUsuario(ref.usuarioId) + ".");
+        }
+        if(reuniao && ref.usuarioId !== reuniao.u.id){
+          repassarLead(Object.assign({}, a, { usuarioId: ref.usuarioId }), reuniao.u);
+          return;
         }
         persist(); render();
       };
@@ -20932,10 +21032,10 @@ function intervalosDe(a, agora){
 function calcDash(f){
   const agora = Date.now();
   const R = { porStatus:{}, porUsuario:{}, trans:{}, atrasados:[], funil:{}, ciclo:[], ativos:0, mud:0, retornos:{}, retornosTot:0, perdas:{}, perdasTot:0,
-              toqTot:0, toqCanal:{}, toqCombo:{}, toqDia:{}, seqs:{}, desde:f.desde, primeiroToque:null };
+              toqTot:0, toqCanal:{}, toqCombo:{}, toqDia:{}, seqs:{}, desde:f.desde, primeiroToque:null, reuTot:0, emailTot:0 };
   const U = id => R.porUsuario[id] || (R.porUsuario[id] = { mud:0, ganhos:0, perdidos:0, recebidos:0, repassados:0,
                                                            cumpridos:0, estourados:0, ativos:0, fora:0,
-                                                           toq:0, toqCanal:{}, leadsToq:new Set(), avancos:0, dias:{} });
+                                                           toq:0, toqCanal:{}, leadsToq:new Set(), avancos:0, dias:{}, reunioes:0, emails:0 });
   const diaDe = t => { const d = new Date(t); return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0"); };
   const SS = id => R.porStatus[id] || (R.porStatus[id] = { n:0, soma:0, cumpridos:0, estourados:0, foraAgora:0 });
   const ativos = Object.entries(atribs()).map(([k, a]) => Object.assign({ chave:k }, a));
@@ -20975,7 +21075,11 @@ function calcDash(f){
         const st = statusPorId(e.status);
         if(st && st.tipo === "ganho" && doUsuario(e.dono)) U(e.dono).ganhos++;
         if(st && st.tipo === "perdido" && doUsuario(e.dono)) U(e.dono).perdidos++;
-        if(st && (st.tipo === "ganho" || st.repasse) && e.anterior !== e.status && doUsuario(quem)) U(quem).avancos++;
+        if(st && (st.tipo === "ganho" || ehReuniao(st)) && e.anterior !== e.status && doUsuario(quem)) U(quem).avancos++;
+        if(e.anterior !== e.status && doUsuario(quem)){
+          if(ehReuniao(st)){ U(quem).reunioes++; R.reuTot++; }
+          else if(ehEmailApres(st)){ U(quem).emails++; R.emailTot++; }
+        }
         if(e.motivo && doUsuario(quem)){
           const x = R.perdas[e.motivo] || (R.perdas[e.motivo] = { total:0, por:{} });
           x.total++; x.por[quem] = (x.por[quem] || 0) + 1; R.perdasTot++;
@@ -21100,7 +21204,7 @@ function graficoProdutividade(R){
   const lst = Object.entries(R.porUsuario).filter(([id]) => id && id !== "null").sort((x, y) => y[1].mud - x[1].mud);
   if(!lst.some(([, u]) => u.mud || u.recebidos)) return gVazio(c);
   gBarras(c, lst.map(([id, u]) => ({
-    rot: nomeUsuario(id), det: u.recebidos + " recebidos · " + u.ganhos + " ganhos · " + u.ativos + " em aberto",
+    rot: nomeUsuario(id), det: u.recebidos + " recebidos · " + u.reunioes + " reuniões · " + u.emails + " e-mails apres. · " + u.ganhos + " ganhos · " + u.ativos + " em aberto",
     valor: u.mud, txt: u.mud + (u.mud === 1 ? " mudança" : " mudanças"), cls:"neutro"
   })));
   return c;
@@ -21369,8 +21473,12 @@ function sdrPct(x){ return Math.round(x * 100) + "%"; }
 function sdrNum(x, casas){ return Number(x || 0).toFixed(casas == null ? 1 : casas).replace(".", ","); }
 function sdrEhAdm(id){ const u = (DB.usuarios || []).find(x => x.id === id); return !!(u && (perfilDe(u) || {}).adm); }
 function sdrNomeReuniao(){
-  const n = statusLista().filter(s => s.repasse).map(s => s.nome);
+  const n = statusLista().filter(s => ehReuniao(s)).map(s => s.nome);
   return n.length ? n.join(" / ") : "Reunião marcada";
+}
+function sdrNomeEmail(){
+  const n = statusLista().filter(s => ehEmailApres(s)).map(s => s.nome);
+  return n.length ? n.join(" / ") : "Enviar Email Apresentação";
 }
 
 function sdrDados(R){
@@ -21385,8 +21493,8 @@ function sdrDados(R){
   const doU = id => id && id !== "null" && (f.usuario ? id === f.usuario : !sdrEhAdm(id));
   const entrada = new Set([(statusInicial() || {}).id, (statusDeVolta() || {}).id].filter(Boolean));
 
-  const unidades = [], reunioes = [];
-  const vistosReu = new Set();
+  const unidades = [], reunioes = [], emails = [];
+  const vistosReu = new Set(), vistosEml = new Set();
   leads.forEach(a => {
     const log = a.log || [];
     const lead = a.chave.split("@")[0];
@@ -21398,12 +21506,13 @@ function sdrDados(R){
       if(isNaN(t)) return;
       if(e.tipo === "status"){
         const st = statusPorId(e.status), mudou = e.anterior !== e.status;
-        const reu = !!st && (st.tipo === "ganho" || !!st.repasse) && mudou;
+        const reu = !!st && (st.tipo === "ganho" || ehReuniao(st)) && mudou;
+        const eml = !!st && ehEmailApres(st) && mudou;
         if(reu) marcos.push(t);
         if(st && st.tipo === "perdido" && mudou) perdas.push(t);
         /* só ações feitas por uma pessoa (o sistema grava sem "por") */
         if(e.por && (mudou || e.tentativa))
-          acoes.push({ t, quem:e.por, novo: mudou && entrada.has(e.anterior), reu: reu && !!st.repasse, ganho: reu && st.tipo === "ganho" });
+          acoes.push({ t, quem:e.por, novo: mudou && entrada.has(e.anterior), reu: reu && ehReuniao(st), ganho: reu && st.tipo === "ganho", eml });
       } else if(e.tipo === "toque" && !desf.has(e.id) && Array.isArray(e.canais) && e.canais.length){
         const quem = e.por || e.dono;
         if(quem) acoes.push({ t, quem, novo:false, reu:false, ganho:false });
@@ -21417,6 +21526,7 @@ function sdrDados(R){
       if(u){ u.acoes++; if(x.novo) u.novo = true; if(x.reu) u.reu = true; }
       else dias.set(k, { t:x.t, quem:x.quem, lead, acoes:1, novo:x.novo, reu:x.reu });
       if(x.reu && !vistosReu.has(x.quem + "|" + lead)){ vistosReu.add(x.quem + "|" + lead); reunioes.push({ t:x.t, quem:x.quem, lead }); }
+      if(x.eml && !vistosEml.has(x.quem + "|" + lead)){ vistosEml.add(x.quem + "|" + lead); emails.push({ t:x.t, quem:x.quem, lead }); }
     });
     dias.forEach(u => {
       const ate = u.t + SDR_JANELA_AV;
@@ -21427,10 +21537,12 @@ function sdrDados(R){
   });
   unidades.sort((x, y) => x.t - y.t);
   reunioes.sort((x, y) => x.t - y.t);
-  const porSdr = {}, reuPorSdr = {};
+  const porSdr = {}, reuPorSdr = {}, emlPorSdr = {};
+  emails.sort((x, y) => x.t - y.t);
+  emails.forEach(x => (emlPorSdr[x.quem] || (emlPorSdr[x.quem] = [])).push(x));
   unidades.forEach(x => (porSdr[x.quem] || (porSdr[x.quem] = [])).push(x));
   reunioes.forEach(x => (reuPorSdr[x.quem] || (reuPorSdr[x.quem] = [])).push(x));
-  R._sdr = { toques: unidades, porSdr, reunioes, reuPorSdr,
+  R._sdr = { toques: unidades, porSdr, reunioes, reuPorSdr, emails, emlPorSdr,
              sdrs: Object.keys(porSdr).sort((a, b) => nomeUsuario(a).localeCompare(nomeUsuario(b))) };
   return R._sdr;
 }
@@ -21534,6 +21646,25 @@ function graficoVolumeSdr(R){
   });
   tw2.append(t2); c.append(tw2);
 
+  /* e-mails de apresentação: contados à parte das reuniões */
+  c.append(el("h5","gsub","E-mails de apresentação, encaminhados ao closer (" + sdrNomeEmail() + ")"));
+  const tw3 = el("div","tablewrap"), t3 = el("table","leadlista gtab");
+  const h3 = el("tr"); ["SDR"].concat(janelas.map(j => j[0])).forEach(x => h3.append(el("th",null,x))); t3.append(h3);
+  D.sdrs.forEach(id => {
+    const eml = D.emlPorSdr[id] || [], at = D.porSdr[id];
+    const tr = el("tr"); tr.append(tdNegrito(nomeUsuario(id)));
+    janelas.forEach(([rot, ini, fim]) => {
+      const n = eml.filter(x => x.t >= ini && x.t <= fim).length;
+      const L = new Set(at.filter(x => x.t >= ini && x.t <= fim).map(x => x.lead)).size;
+      const td = el("td", n ? null : "muted");
+      td.append(el("b",null,String(n)));
+      if(L) td.append(el("div","sub", sdrPct(n / L) + " dos " + L + " leads atendidos"));
+      tr.append(td);
+    });
+    t3.append(tr);
+  });
+  tw3.append(t3); c.append(tw3);
+
   c.append(el("h5","gsub","Dias úteis do período contra a meta diária de atendimentos"));
   gPilha(c, resumoMeta.map(x => ({
     rot: nomeUsuario(x.id),
@@ -21633,7 +21764,7 @@ function graficoEficienciaSemana(R){
   const agora = Date.now(), sem0 = sdrSemanaIni(agora);
   const semanas = []; for(let i = 0; i < 8; i++) semanas.push(sem0 - i * 7 * DIA_MS);
   D.sdrs.forEach((id, k) => {
-    const lst = D.porSdr[id], reu = D.reuPorSdr[id] || [], meta = metaContatos(id);
+    const lst = D.porSdr[id], reu = D.reuPorSdr[id] || [], eml = D.emlPorSdr[id] || [], meta = metaContatos(id);
     const primeiro = new Date(lst[0].t).setHours(0, 0, 0, 0);
     const dt = el("details","gsdr"); if(k === 0 || D.sdrs.length === 1) dt.open = true;
     const linhas = semanas.map(ini => {
@@ -21642,16 +21773,18 @@ function graficoEficienciaSemana(R){
       const r = reu.filter(x => x.t >= ini && x.t <= fim).length;
       const du = diasUteisEntre(Math.max(ini, primeiro), Math.min(fim, agora));
       const res = sdrResumo(l);
-      return Object.assign({ ini, du, meta: meta * du, reu: r, conv: res.L ? r / res.L : 0 }, res);
+      const em = eml.filter(x => x.t >= ini && x.t <= fim).length;
+      return Object.assign({ ini, du, meta: meta * du, reu: r, eml: em, conv: res.L ? r / res.L : 0 }, res);
     }).filter(x => x.n || x.ini >= sdrSemanaIni(lst[0].t));
     const atual = linhas[0] || {}, ant = linhas[1] || {};
     const seta = (a, b) => !b ? "" : a > b * 1.05 ? " ▲" : a < b * .95 ? " ▼" : " =";
     const sm = el("summary");
     sm.append(el("b",null,nomeUsuario(id)), document.createTextNode(" · esta semana " + (atual.n || 0) + " atendimentos, " +
-      (atual.reu || 0) + (atual.reu === 1 ? " reunião" : " reuniões") + (atual.L ? " (" + sdrPct(atual.conv) + seta(atual.conv, ant.conv) + ")" : "")));
+      (atual.reu || 0) + (atual.reu === 1 ? " reunião" : " reuniões") + (atual.L ? " (" + sdrPct(atual.conv) + seta(atual.conv, ant.conv) + ")" : "") +
+      ", " + (atual.eml || 0) + (atual.eml === 1 ? " e-mail de apresentação" : " e-mails de apresentação")));
     dt.append(sm);
     const tw = el("div","tablewrap"), t = el("table","leadlista gtab");
-    const h = el("tr"); ["Semana","Atendimentos","% da meta","Leads novos","Leads atendidos","Atend. por lead","Reuniões marcadas","Conversão","Atend. por reunião","Perdas em 7 dias"].forEach(x => h.append(el("th",null,x))); t.append(h);
+    const h = el("tr"); ["Semana","Atendimentos","% da meta","Leads novos","Leads atendidos","Atend. por lead","Reuniões marcadas","Conversão","Atend. por reunião","E-mails apresentação","Perdas em 7 dias"].forEach(x => h.append(el("th",null,x))); t.append(h);
     linhas.forEach((x, i) => {
       const ini = new Date(x.ini), tr = el("tr");
       tr.append(el("td",null, String(ini.getDate()).padStart(2, "0") + "/" + String(ini.getMonth() + 1).padStart(2, "0") + (i === 0 ? " (atual)" : "")));
@@ -21659,7 +21792,7 @@ function graficoEficienciaSemana(R){
       tr.append(el("td", x.meta && x.n / x.meta > 1.1 ? "acima" : null, x.meta ? sdrPct(x.n / x.meta) : "—"));
       tr.append(el("td",null,String(x.novos)), el("td",null,String(x.L)), el("td",null, x.L ? sdrNum(x.porLead) : "—"),
         tdNegrito(String(x.reu)), el("td",null, x.L ? sdrPct(x.conv) : "—"),
-        el("td",null, x.reu ? sdrNum(x.n / x.reu) : "—"), el("td",null, x.L ? sdrPct(x.perdas) : "—"));
+        el("td",null, x.reu ? sdrNum(x.n / x.reu) : "—"), tdNegrito(String(x.eml || 0)), el("td",null, x.L ? sdrPct(x.perdas) : "—"));
       t.append(tr);
     });
     tw.append(t); dt.append(tw);
@@ -21819,6 +21952,8 @@ function kpis(host, R){
    [tot ? Math.round(ok / tot * 100) + "%" : "—", "das etapas no prazo", tot && ok / tot < .7 ? "ruim" : ""],
    [String(R.mud), "mudanças de status", ""],
    [String(R.toqTot), "contatos registrados", ""],
+   [String(R.reuTot), "reuniões marcadas", ""],
+   [String(R.emailTot), "e-mails de apresentação", ""],
    [String(ganhos), "ganhos", ""],
    [String(R.retornosTot), "retornos ao ADM", ""],
    [ciclo ? fmtDur(ciclo) : "—", "da entrada até o ganho, em média", ""]
