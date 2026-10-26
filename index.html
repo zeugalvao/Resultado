@@ -8565,6 +8565,8 @@ async function m04Importar(est){
       if(lista.length) await NovosDB.gravar(lista);
       feitas[k] = new Date().toISOString();
       await NovosDB.metaGravar("importadas", feitas);
+      /* avisa a extensão que já pode apagar os resultados desta cidade (libera espaço) */
+      m04Enviar({ type:"importada", idx:i }, 8000);
       M04.rodada = M04.rodada || { cidades:0, aprov:0, ultima:"" };
       M04.rodada.cidades++; M04.rodada.aprov += lista.filter(x => x.status === "aprovado").length; M04.rodada.ultima = c.nome;
     }
