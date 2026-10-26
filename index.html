@@ -8612,10 +8612,13 @@ function m04PrefSet(k, v){ try { localStorage.setItem("m04_" + k, v ? "1" : "0")
 function m04AutoLigado(){ return m04Pref("auto", true); }
 function m04PausaManual(){ return m04Pref("pausaManual", false); }
 function m04HoraCurta(t){ return new Date(t).toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" }); }
+/* a extensão (v1.2+) diz se a pausa foi feita por você; versões antigas: vale a marca deste navegador */
+function m04EhPausaManual(s){ return s && typeof s.pausaManual === "boolean" ? s.pausaManual : m04PausaManual(); }
 function m04PrecisaDeVoce(s){ return /campo de busca do MaisCNPJ/i.test(s.bloqueio || ""); }
 async function m04Vigia(s){
   if(!s || !s.existe || s.concluido || M04_AUTO.ocupado) return;
-  if(!m04AutoLigado() || m04PausaManual()) { M04_AUTO.pausaDesde = 0; return; }
+  if(s.rodando && !s.pausado && m04PausaManual()) m04PrefSet("pausaManual", false);
+  if(!m04AutoLigado() || (s.pausado && m04EhPausaManual(s))) { M04_AUTO.pausaDesde = 0; return; }
   const agora = Date.now();
   if(s.pausado){
     if(m04PrecisaDeVoce(s)) return;
@@ -8646,7 +8649,7 @@ async function m04Vigia(s){
   M04_AUTO.ocupado = true;
   try {
     M04_AUTO.ultimaTent = agora; M04_AUTO.tentativas++;
-    await m04Enviar({ type:"pausar" }, 15000);
+    await m04Enviar({ type:"pausar", vigia:true }, 15000);
     await new Promise(r => setTimeout(r, 3000));
     const { resp } = await m04Enviar({ type:"continuar" }, 15000);
     M04_AUTO.ultimoTxt = "Destravada sozinha às " + m04HoraCurta(agora) + " (estava parada sem avançar havia 4 minutos).";
@@ -8890,13 +8893,14 @@ function m04Pinta(s){
   if(u.autoInfo){
     let txt = "";
     if(!s.concluido && s.pausado){
-      if(m04PausaManual()) txt = "Pausada por você: o vigia não retoma sozinho. Clique em Continuar.";
+      if(m04EhPausaManual(s)) txt = "Pausada por você: o vigia não retoma sozinho. Clique em Continuar.";
       else if(!m04AutoLigado()) txt = "";
       else if(m04PrecisaDeVoce(s)) txt = "Esta parada precisa de você (endereço da busca do MaisCNPJ).";
       else if(M04_AUTO.proxima) txt = "Retomando sozinha em " + Math.max(0, Math.ceil((M04_AUTO.proxima - Date.now()) / 1000)) + " s" +
         (s.bloqueio ? " (se houver verificação na janela da busca, resolver lá adianta)" : "") + ".";
     }
     if(!txt && M04_AUTO.ultimoTxt) txt = M04_AUTO.ultimoTxt;
+    if(s.ultimoErro && !s.concluido) txt = (txt ? txt + " " : "") + "Último erro da extensão: " + s.ultimoErro + ".";
     u.autoInfo.textContent = txt; u.autoInfo.hidden = !txt;
   }
 
