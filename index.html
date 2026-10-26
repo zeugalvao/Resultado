@@ -925,6 +925,16 @@ table.leadlista.lt select.andsel{border:1px solid var(--line);border-radius:5px;
 table.leadlista.lt input.obs{width:100%;min-width:160px;border:1px solid transparent;border-radius:5px;padding:4px 6px;font-size:12.5px;background:transparent}
 table.leadlista.lt input.obs:hover{border-color:var(--line)}
 table.leadlista.lt input.obs:focus{outline:none;border-color:var(--teal);background:var(--surface)}
+.anotlinha{display:flex;gap:6px;align-items:center}
+table.leadlista.lt .anotlinha input.obs{border-color:var(--line);background:var(--surface)}
+.btn.anotbtn{background:#1E8A4C;border-color:#1E8A4C;color:#fff;font-weight:600;white-space:nowrap;padding:4px 12px}
+.btn.anotbtn:hover{background:#176E3C;border-color:#176E3C}
+.btn.anotbtn:disabled{opacity:.5;cursor:not-allowed}
+.anotlist{list-style:none;margin:6px 0 4px;padding:0;max-width:340px}
+.anotlist li{font-size:12px;line-height:1.35;padding:4px 0;border-top:1px solid var(--line-soft);color:var(--ink)}
+.anotlist li:first-child{border-top:0}
+.anotlist time{display:block;font-size:11px;color:var(--muted)}
+.anotlist .mais{font-size:11.5px;color:var(--muted);font-style:italic}
 table.leadlista.lt tr.and-ganho td:first-child{box-shadow:inset 3px 0 0 #2FA89C}
 table.leadlista.lt tr.and-perdido td{color:var(--muted)}
 table.leadlista.lt tr.and-perdido td:first-child{box-shadow:inset 3px 0 0 var(--brick)}
@@ -19732,6 +19742,48 @@ function desenharConversa(a, host){
   host.append(corpo);
   requestAnimationFrame(() => { if(!LT.convMais[a.chave]) corpo.scrollTop = corpo.scrollHeight; });
 }
+/* ---------- anotações do contato: cada registro fica gravado e vira histórico ---------- */
+function anotacoesDe(ref){
+  const lst = Array.isArray(ref.anotacoes) ? ref.anotacoes.slice() : [];
+  /* anotação antiga (de antes do botão Registrar) aparece como a primeira do histórico */
+  if(!lst.length && ref.obs) lst.push({ id:"legado", t: ref.atualizadoEm || ref.em, texto: ref.obs, por: null, legado: true });
+  return lst.sort((x, y) => String(x.t).localeCompare(String(y.t)));
+}
+function addAnotacao(ref, texto, extra){
+  if(!ref) return false;
+  const t = new Date().toISOString();
+  if(!Array.isArray(ref.anotacoes)){
+    ref.anotacoes = [];
+    if(ref.obs && ref.obs.trim() && ref.obs.trim() !== texto)
+      ref.anotacoes.push({ id:"legado", t: ref.atualizadoEm || ref.em || t, texto: ref.obs, por: null, legado: true });
+  }
+  const id = "an" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const nota = Object.assign({ id, t, texto, por: USR ? USR.id : null, status: ref.andamento }, extra || {});
+  ref.anotacoes.push(nota);
+  ref.obs = texto;               /* a última anotação continua indo junto no repasse e na exportação */
+  ref.atualizadoEm = t;
+  /* sem campo status: não mexe no relógio do SLA */
+  registrar(ref, { t, tipo:"anotacao", id, texto, origem: (extra && extra.origem) || undefined, dono: ref.usuarioId });
+  return true;
+}
+function listaAnotacoes(ref, max){
+  const lst = anotacoesDe(ref || {});
+  const ul = el("ol","anotlist");
+  if(!lst.length) return ul;
+  const n = max || 3, ult = lst.slice(-n).reverse();
+  ult.forEach(x => {
+    const li = el("li");
+    li.append(el("time",null, (x.t ? dataHora(x.t) : "") + (x.por ? " · " + nomeUsuario(x.por) : x.legado ? " · anotação anterior" : "") +
+      (x.origem ? " · " + x.origem : "")));
+    li.append(document.createTextNode(x.texto));
+    ul.append(li);
+  });
+  if(lst.length > n){
+    const li = el("li","mais", "+ " + (lst.length - n) + (lst.length - n === 1 ? " anotação anterior" : " anotações anteriores") + " no Histórico");
+    ul.append(li);
+  }
+  return ul;
+}
 function desenharMovimentacoes(a, host){
   const ul = el("ol","logl");
   const log = (a.log || []).slice().sort((x, y) => String(x.t).localeCompare(String(y.t)));
@@ -20345,6 +20397,7 @@ function textoEvento(e){
   if(e.tipo === "data") return nomeUsuario(e.por) + " alterou a data prevista" + (e.de ? " de " + fmtDataISO(e.de) : "") + " para " + fmtDataISO(e.data);
   if(e.tipo === "repasse") return nomeUsuario(e.de) + (e.auto ? " classificou como " + nomeStatus(e.status) + " e o lead foi transferido automaticamente para " + nomeUsuario(e.dono)
                                                          : " repassou para " + nomeUsuario(e.dono) + (e.statusAnt ? " (entregou em " + nomeStatus(e.statusAnt) + "; chega como " + nomeStatus(e.status) + ")" : ", em " + nomeStatus(e.status)));
+  if(e.tipo === "anotacao") return quem + " anotou" + (e.origem ? " (" + e.origem + ")" : "") + ": " + (e.texto || "");
   if(e.tipo === "devolucao") return quem + " devolveu para a Base";
   if(e.tipo === "whatsapp") return quem + " abriu conversa no WhatsApp com " + (e.tel || "o contato");
   if(e.tipo === "toque") return quem + " registrou o " + (e.n || "") + "º contato: " + textoCanais(e.canais);
@@ -20793,6 +20846,7 @@ function renderLeadsTrab(host){
                          retorno: retornaAdm(novo) || undefined, data: dataPrev || undefined, motivo: motivo || undefined,
                          obsMotivo: obsPerda || undefined, obsReuniao: reuniao ? reuniao.obs : undefined });
         if(reuniao){
+          addAnotacao(ref, reuniao.obs, { origem: novo.nome });
           ref.obs = reuniao.obs;
           ref[ehEmailApres(novo) ? "emailApres" : "reuniao"] = { obs: reuniao.obs, em: ref.atualizadoEm, por: USR ? USR.id : null, para: reuniao.u.id };
         }
@@ -20879,9 +20933,28 @@ function renderLeadsTrab(host){
         } else tp.append(el("span","muted","—"));
         tr.append(tp);
       }
-      const to = el("td"), io = el("input","obs"); io.value = a.obs || ""; io.placeholder = "Anotação do contato";
-      io.onchange = () => { ref.obs = io.value; ref.atualizadoEm = new Date().toISOString(); persist(); };
-      to.append(io);
+      const to = el("td");
+      if(!LT.rascunho) LT.rascunho = {};
+      const linhaAnot = el("div","anotlinha");
+      const io = el("input","obs"); io.placeholder = "Anotação do contato"; io.maxLength = 1000;
+      io.value = LT.rascunho[a.chave] || "";
+      const bReg = el("button","btn sm anotbtn","Registrar");
+      bReg.title = "Grava a anotação no histórico do lead";
+      bReg.disabled = !io.value.trim();
+      io.oninput = () => { LT.rascunho[a.chave] = io.value; bReg.disabled = !io.value.trim(); };
+      const gravar = () => {
+        const txt = io.value.trim();
+        if(!txt) return;
+        if(!addAnotacao(ref, txt)) return;
+        delete LT.rascunho[a.chave];
+        persist(); render();
+        toast("Anotação registrada no histórico de " + (l.razaoSocial || "este lead") + ".");
+      };
+      bReg.onclick = gravar;
+      io.onkeydown = ev => { if(ev.key === "Enter"){ ev.preventDefault(); gravar(); } };
+      linhaAnot.append(io, bReg);
+      to.append(linhaAnot);
+      to.append(listaAnotacoes(ref));
       if(veParcelados()){
         const pc = el("label","parcin");
         pc.append(document.createTextNode("Pacientes pagando parcelas:"));
