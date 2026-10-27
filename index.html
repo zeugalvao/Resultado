@@ -1265,6 +1265,17 @@ table.nclic tr.marcado td{background:var(--teal-soft)}
 .nduas .tablewrap{max-height:340px;overflow:auto}
 table.nclic tr:not(:first-child){cursor:pointer}
 table.nclic tr:not(:first-child):hover td{background:var(--line-soft)}
+th.thord{cursor:pointer;user-select:none}
+th.thord:hover{color:var(--teal,#0f766e)}
+th.thord .ordseta{margin-left:5px;font-size:10px;color:var(--muted);opacity:.55}
+th.thord.on .ordseta{color:var(--teal,#0f766e);opacity:1}
+.nmais{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;margin:0 8px 0 -26px;padding:0;border:1px solid var(--line);border-radius:4px;background:var(--surface);color:var(--teal,#0f766e);font-family:inherit;font-weight:700;font-size:13px;line-height:1;cursor:pointer;vertical-align:-3px}
+.nmais:hover,.nmais.on{background:var(--teal,#0f766e);border-color:var(--teal,#0f766e);color:#fff}
+table.nclic tr.ncidleads td,table.nclic tr.ncidleads:hover > td{background:var(--surface);cursor:default}
+table.nclic tr.ncidleads > td{padding:2px 9px 12px 34px}
+table.nclic table.ncidtab{border:1px solid var(--line);font-size:12.5px}
+table.nclic table.ncidtab th{position:static;font-size:12px}
+table.nclic table.ncidtab tr td,table.nclic table.ncidtab tr:hover td{background:var(--surface);cursor:default}
 /* ---------- Painel: produtividade do SDR ---------- */
 .gcard.glargo{grid-column:1/-1}
 .gcard .sub.acima{color:var(--brick);font-weight:600}
@@ -8486,7 +8497,35 @@ async function buscaEscolherFonteAtiva(){
    os leads entram sozinhos no Cadastro Leads Novos (guardado neste navegador). */
 
 const M04 = { presente:false, ui:null, timer:null, importando:false, estado:null, verTodas:false };
-const NOVOS = { ui:null, filtro:{ busca:"", status:"aprovado", uf:"", cidade:"", naoEnviados:false, ramo:"" }, sel:new Set(), mostrar:200 };
+const NOVOS = { ui:null, filtro:{ busca:"", status:"aprovado", uf:"", cidade:"", naoEnviados:false, ramo:"" }, sel:new Set(), mostrar:200,
+  ordE:{ col:"n", dir:-1 }, ordCid:{ col:"empresa", dir:1 }, ordLista:{ col:"empresa", dir:1 }, cidAbertas:new Set() };
+/* ordenação das tabelas de leads: clicar no título da coluna ordena; clicar de novo inverte */
+const novosCmp = (a, b) => typeof a === "number" && typeof b === "number" ? a - b
+  : String(a || "").localeCompare(String(b || ""), "pt-BR", { numeric:true, sensitivity:"base" });
+const NOVOS_LEAD_COLS = {
+  empresa:     r => r.nomeMaps || r.nomeFantasia || r.razaoSocial || "",
+  cnpj:        r => r.cnpj || "",
+  cidade:      r => (r.cidade || "") + "/" + (r.uf || ""),
+  endereco:    r => r.endereco || "",
+  telMaps:     r => r.telMaps || "",
+  telMaisCnpj: r => r.telMaisCnpj || (r.telReceita || []).join(" / "),
+  situacao:    r => (M04_STATUS[r.status] || [r.status || ""])[0]
+};
+function novosOrdenaLeads(l, ord){
+  const f = NOVOS_LEAD_COLS[ord.col] || NOVOS_LEAD_COLS.empresa, nome = NOVOS_LEAD_COLS.empresa;
+  return l.sort((a, b) => { const va = f(a), vb = f(b);
+    if(!va !== !vb) return va ? -1 : 1;          /* vazios sempre no fim */
+    return ord.dir * novosCmp(va, vb) || novosCmp(nome(a), nome(b)); });
+}
+function novosThOrd(rot, col, ord, aoMudar, numerica, cls){
+  const on = ord.col === col, th = el("th", "thord" + (on ? " on" : "") + (cls ? " " + cls : ""));
+  th.append(document.createTextNode(rot), el("span","ordseta", on ? (ord.dir > 0 ? "▲" : "▼") : "↕"));
+  th.title = "Ordenar por " + rot.toLowerCase() + (on ? " (clique de novo para inverter)" : "");
+  th.onclick = ev => { ev.stopPropagation();
+    if(on) ord.dir = -ord.dir; else { ord.col = col; ord.dir = numerica ? -1 : 1; }
+    aoMudar(); };
+  return th;
+}
 function novosRamoKey(x){ return baseChave(x.termo || "sem ramo"); }
 const M04_UFS = ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"];
 const M04_STATUS = {
@@ -9031,7 +9070,8 @@ async function novosDesenhar(){
   const lista = noRecorte.filter(x => (!f.status || x.status === f.status) && (!f.naoEnviados || !x.enviadoBase) &&
     (!q || baseChave([x.nomeMaps, x.razaoSocial, x.nomeFantasia, x.cnpj, x.endereco, x.telMaps, x.telMaisCnpj].join(" ")).includes(q) ||
      (qd.length >= 4 && (cnpjDig(x.cnpj).includes(qd) || cnpjDig(x.telMaps + x.telMaisCnpj).includes(qd)))))
-    .sort((a, b) => (a.uf + a.cidade + a.nomeMaps).localeCompare(b.uf + b.cidade + b.nomeMaps, "pt-BR"));
+    ;
+  novosOrdenaLeads(lista, NOVOS.ordLista);
 
   NOVOS.filtrada = lista;
   u.sSt.value = f.status;
@@ -9059,7 +9099,9 @@ async function novosDesenhar(){
   ckT.checked = visiveis.length && visiveis.every(x => NOVOS.sel.has(x.chave));
   ckT.onchange = () => { visiveis.forEach(x => ckT.checked ? NOVOS.sel.add(x.chave) : NOVOS.sel.delete(x.chave)); novosDesenhar(); };
   thCk.append(ckT); h.append(thCk);
-  ["Empresa","CNPJ","Cidade","Endereço","Tel. Google Maps","Tel. MaisCNPJ","Requisito",""].forEach(x => h.append(el("th",null,x)));
+  [["Empresa","empresa"],["CNPJ","cnpj"],["Cidade","cidade"],["Endereço","endereco"],["Tel. Google Maps","telMaps"],["Tel. MaisCNPJ","telMaisCnpj"],["Requisito","situacao"]]
+    .forEach(([rot, col]) => h.append(novosThOrd(rot, col, NOVOS.ordLista, () => novosDesenhar())));
+  h.append(el("th"));
   tb.append(h);
 
   visiveis.forEach(r => {
@@ -9114,6 +9156,7 @@ async function novosDesenhar(){
 /* visão por ramo: Brasil → estados → cidades */
 function novosPainelRamos(box, todos){
   const f = NOVOS.filtro;
+  const twAntes = box.querySelector(".nestados .tablewrap"), rolagem = twAntes ? twAntes.scrollTop : 0;
   box.innerHTML = "";
   if(!todos.length) return;
   const grupos = new Map();
@@ -9163,8 +9206,17 @@ function novosPainelRamos(box, todos){
   const cabTab = (cols) => { const tr = el("tr"); cols.forEach(c => tr.append(el("th",null,c))); return tr; };
   const irParaLista = () => setTimeout(() => { const alvo = NOVOS.ui && NOVOS.ui.mostrando; if(alvo) alvo.scrollIntoView({ behavior:"smooth", block:"start" }); }, 80);
   const twE = el("div","tablewrap"), tE = el("table","leadlista nclic");
-  tE.append(cabTab(["Estado / cidade","Cidades","Leads","Aprovados","Aguardando","Fora","Sem CNPJ"]));
-  ufs.map(uf => ({ uf, c: conta(base.filter(x => x.uf === uf)) })).sort((a, b) => b.c.n - a.c.n).forEach(({ uf, c }) => {
+  const redesenha = () => novosDesenhar();
+  const oE = NOVOS.ordE;
+  const hE = el("tr");
+  [["Estado / cidade","nome",false],["Cidades","cidades",true],["Leads","n",true],["Aprovados","aprovado",true],
+   ["Aguardando","aguardando",true],["Fora","fora",true],["Sem CNPJ","sem_cnpj",true]]
+    .forEach(([rot, col, num]) => hE.append(novosThOrd(rot, col, oE, redesenha, num)));
+  tE.append(hE);
+  /* valor da coluna escolhida (cidade não tem "Cidades": usa os leads) */
+  const valE = (nome, c, ehCidade) => oE.col === "nome" ? nome : oE.col === "cidades" ? (ehCidade ? c.n : c.cidades.size) : (c[oE.col] || 0);
+  const ordena = (l, ehCidade) => l.sort((a, b) => oE.dir * novosCmp(valE(a.nome, a.c, ehCidade), valE(b.nome, b.c, ehCidade)) || novosCmp(a.nome, b.nome));
+  ordena(ufs.map(uf => ({ nome:uf, uf, c: conta(base.filter(x => x.uf === uf)) })), false).forEach(({ uf, c }) => {
     const aberto = f.uf === uf;
     const tdUf = tdNegrito((aberto ? "▾ " : "▸ ") + uf);
     const tr = linhaTab([tdUf, String(c.cidades.size), String(c.n), String(c.aprovado), String(c.aguardando), String(c.fora), String(c.sem_cnpj)]);
@@ -9177,21 +9229,50 @@ function novosPainelRamos(box, todos){
     };
     tE.append(tr);
     if(!aberto) return;
-    const cids = [...new Set(base.filter(x => x.uf === uf).map(x => x.cidade))];
-    cids.map(cd => ({ cd, c: conta(base.filter(x => x.uf === uf && x.cidade === cd)) }))
-      .sort((a, b) => b.c.n - a.c.n || a.cd.localeCompare(b.cd, "pt-BR")).forEach(({ cd, c: cc }) => {
-        const trc = linhaTab([el("td","ncid-nome", cd), "", String(cc.n), String(cc.aprovado), String(cc.aguardando), String(cc.fora), String(cc.sem_cnpj)]);
-        trc.classList.add("ncid");
-        if(f.cidade === cd) trc.classList.add("marcado");
-        trc.title = "Ver só os leads de " + cd;
-        trc.onclick = () => { f.cidade = f.cidade === cd ? "" : cd; f.status = ""; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); irParaLista(); };
-        tE.append(trc);
+    const daUf = base.filter(x => x.uf === uf);
+    const cids = [...new Set(daUf.map(x => x.cidade))];
+    ordena(cids.map(cd => ({ nome:cd, cd, c: conta(daUf.filter(x => x.cidade === cd)) })), true).forEach(({ cd, c: cc }) => {
+      const chaveCid = uf + "|" + cd, cidAberta = NOVOS.cidAbertas.has(chaveCid);
+      const tdNome = el("td","ncid-nome");
+      const bMais = el("button","nmais" + (cidAberta ? " on" : ""), cidAberta ? "−" : "+");
+      bMais.title = (cidAberta ? "Esconder" : "Mostrar") + " os " + cc.n + " leads de " + cd;
+      bMais.onclick = ev => { ev.stopPropagation(); cidAberta ? NOVOS.cidAbertas.delete(chaveCid) : NOVOS.cidAbertas.add(chaveCid); novosDesenhar(); };
+      tdNome.append(bMais, document.createTextNode(cd));
+      const trc = linhaTab([tdNome, "", String(cc.n), String(cc.aprovado), String(cc.aguardando), String(cc.fora), String(cc.sem_cnpj)]);
+      trc.classList.add("ncid");
+      if(f.cidade === cd) trc.classList.add("marcado");
+      trc.title = "Ver só os leads de " + cd;
+      trc.onclick = () => { f.cidade = f.cidade === cd ? "" : cd; f.status = ""; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); irParaLista(); };
+      tE.append(trc);
+      if(!cidAberta) return;
+      /* leads da cidade logo abaixo dela */
+      const trL = el("tr","ncidleads"), tdL = el("td"); tdL.colSpan = 7;
+      tdL.onclick = ev => ev.stopPropagation();
+      const tL = el("table","leadlista ncidtab"), hL = el("tr");
+      [["Empresa","empresa"],["CNPJ","cnpj"],["Situação","situacao"],["Tel. Google Maps","telMaps"],["Tel. MaisCNPJ","telMaisCnpj"],["Endereço","endereco"]]
+        .forEach(([rot, col]) => hL.append(novosThOrd(rot, col, NOVOS.ordCid, redesenha)));
+      hL.append(el("th"));
+      tL.append(hL);
+      novosOrdenaLeads(daUf.filter(x => x.cidade === cd), NOVOS.ordCid).forEach(r => {
+        const t = el("tr");
+        const te = el("td"); te.append(el("b",null, NOVOS_LEAD_COLS.empresa(r) || "—"));
+        if(r.razaoSocial && r.razaoSocial !== r.nomeMaps) te.append(el("div","sub", r.razaoSocial));
+        t.append(te, el("td",null, r.cnpj || "—"));
+        const ts = el("td"); const [rot, cls] = M04_STATUS[r.status] || [r.status, "st-todo"]; ts.append(el("span","pill " + cls, rot)); t.append(ts);
+        t.append(el("td","tel", r.telMaps || "—"), el("td","tel", NOVOS_LEAD_COLS.telMaisCnpj(r) || "—"), el("td",null, r.endereco || "—"));
+        const tl = el("td");
+        if(r.link){ const a = el("a",null,"Maps"); a.href = r.link; a.target = "_blank"; a.rel = "noopener"; tl.append(a); }
+        if(r.linkMaisCnpj){ if(r.link) tl.append(document.createTextNode(" · ")); const a = el("a",null,"MaisCNPJ"); a.href = r.linkMaisCnpj; a.target = "_blank"; a.rel = "noopener"; tl.append(a); }
+        t.append(tl);
+        tL.append(t);
       });
+      tdL.append(tL); trL.append(tdL); tE.append(trL);
+    });
   });
   twE.append(tE);
   const colE = el("div","nestados"); colE.append(el("h3",null,"Por estado"), twE);
   bl.append(colE);
-  bl.append(el("p","leadshint","Clique num estado para abrir as cidades e listar abaixo todos os leads desse estado; clique numa cidade para ver só os leads dela. Os números somam só as cidades já pesquisadas pelo Modelo 04."));
+  bl.append(el("p","leadshint","Clique num título de coluna para ordenar (clique de novo para inverter). Clique num estado para abrir as cidades e listar abaixo todos os leads desse estado; clique numa cidade para ver só os leads dela, ou no + ao lado do nome para abrir os leads ali mesmo. Os números somam só as cidades já pesquisadas pelo Modelo 04."));
 
   if(g && g.lista.length){
     const bt = el("button","btn sm","Renomear ou juntar este ramo");
@@ -9204,6 +9285,7 @@ function novosPainelRamos(box, todos){
     bl.append(bt);
   }
   box.append(bl);
+  if(rolagem) twE.scrollTop = rolagem;
 }
 
 /* exporta a lista filtrada (todas as páginas) em CSV ou Excel */
