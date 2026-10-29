@@ -8979,8 +8979,12 @@ function m04Pinta(s){
       : c.status === "maps" ? ["pill st-doing","no Maps"] : c.status === "cnpj" ? ["pill st-doing","achando CNPJ"] : ["pill st-todo","na fila"];
     const td = el("td"); td.append(el("span", st[0], st[1]));
     if(c.status === "cnpj" && c.i === s.idx && s.lugaresTotal) td.append(el("div","sub", s.li + " de " + s.lugaresTotal));
+    /* diagnóstico da busca no Maps: quantos vieram na lista, se rolou até o fim, se dividiu em regiões */
+    if(c.diag || c.erroMaps){ const d = el("div","sub", c.diag || ""); if(c.erroMaps) d.textContent += (c.diag ? " · " : "") + "erro: " + c.erroMaps; tr.title = d.textContent; td.append(d); }
     tr.append(td);
-    [c.maps, c.comCnpj, c.aprovados, c.aguardando, c.fora, c.semCnpj].forEach(v => tr.append(el("td", v ? null : "muted", v ? String(v) : "—")));
+    if(c.mapsFeito && !c.maps){ tr.append(el("td",null,"0")); }
+    else tr.append(el("td", c.maps ? null : "muted", c.maps ? String(c.maps) : "—"));
+    [c.comCnpj, c.aprovados, c.aguardando, c.fora, c.semCnpj].forEach(v => tr.append(el("td", v ? null : "muted", v ? String(v) : "—")));
     tb.append(tr);
   });
   u.tw.innerHTML = ""; u.tw.append(tb);
