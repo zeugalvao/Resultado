@@ -8544,6 +8544,42 @@ window.addEventListener("message", ev => {
 function m04Enviar(msg, ms){ return pontEnviar("modelo04", msg, ms); }
 
 /* ---------- armazenamento do Cadastro Leads Novos (IndexedDB) ---------- */
+/* ---- ramo pedido: só entram locais cujo nome ou categoria tenham as palavras do ramo ---- */
+const RAMO_VAZIAS = new Set(("CLINICA CLINICAS DE DA DO DAS DOS E EM A O AS OS AO PARA COM POR NO NA NOS NAS " +
+  "LOJA LOJAS SERVICO SERVICOS CENTRO EMPRESA EMPRESAS ESTUDIO STUDIO ESPACO CASA").split(" "));
+const RAMO_SINONIMOS = {
+  DEPIL:["DEPIL","FOTODEPIL","LASER"], LASER:["LASER","DEPIL","FOTODEPIL"],
+  ODONT:["ODONT","DENT","ORTODON","SORRIS","IMPLANT"], DENT:["DENT","ODONT","ORTODON","SORRIS","IMPLANT"],
+  ADVOC:["ADVOC","ADVOG","JURIDIC"], ADVOG:["ADVOG","ADVOC","JURIDIC"],
+  VETERIN:["VETERIN"], ESTET:["ESTET"], FISIOTER:["FISIOTER"], PSICOLOG:["PSICOLOG","PSICOTER"]
+};
+const ramoNorm = s => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  .toUpperCase().replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+function ramoRaiz(w){
+  for(const suf of ["ACOES","ACAO","OLOGICAS","OLOGICOS","OLOGICA","OLOGICO","OLOGIA","ARIAS","ARIA","EIROS","EIRAS","EIRO","EIRA",
+                    "ISTAS","ISTA","ICAS","ICOS","ICA","ICO","IAS","IA","OS","AS","ES","S"])
+    if(w.endsWith(suf) && w.length - suf.length >= 4) return w.slice(0, -suf.length);
+  return w;
+}
+/* palavras digitadas (separadas por vírgula) ou, se vazio, tiradas do próprio tipo de cliente */
+function ramoPalavras(termo, digitadas){
+  const lista = new Set();
+  const dig = String(digitadas || "").split(/[,;\n]/).map(ramoNorm).filter(Boolean);
+  if(dig.length){ dig.forEach(p => p.split(" ").forEach(w => { if(w.length >= 3 && !RAMO_VAZIAS.has(w)) lista.add(ramoRaiz(w)); })); return [...lista]; }
+  ramoNorm(termo).split(" ").filter(w => w.length >= 3 && !RAMO_VAZIAS.has(w)).forEach(w => {
+    const r = ramoRaiz(w);
+    lista.add(r);
+    Object.keys(RAMO_SINONIMOS).forEach(k => { if(r.startsWith(k)) RAMO_SINONIMOS[k].forEach(s => lista.add(s)); });
+  });
+  return [...lista];
+}
+/* a palavra tem que aparecer no começo de alguma palavra do texto (DEPIL acha DEPILAÇÃO, não acha "XDEPIL") */
+function ramoConfere(palavras, texto){
+  if(!palavras || !palavras.length) return true;
+  const t = " " + ramoNorm(texto) + " ";
+  return palavras.some(p => t.includes(" " + p));
+}
+
 const NovosDB = {
   _db:null,
   abrir(){
@@ -8592,7 +8628,10 @@ async function m04Importar(est){
       const k = chaveCid(i);
       const { resp, erro } = await m04Enviar({ type:"resultados", idx:i }, 20000);
       if(erro || !resp) break;
-      const lista = (resp.registros || []).map(r => {
+      /* segunda trava: mesmo que a extensão traga algo de outro ramo, só entra o ramo buscado */
+      const pal = (est.palavras && est.palavras.length) ? est.palavras : ramoPalavras(est.termo, "");
+      const doRamo = r => ramoConfere(pal, [r.nomeMaps, r.nomeFantasia, r.razaoSocial, r.categoria].join(" "));
+      const lista = (resp.registros || []).filter(doRamo).map(r => {
         const antigo = existentes.get(r.chave);
         const novo = Object.assign({}, r, { importadoEm: new Date().toISOString() });
         if(antigo){ ["enviadoBase","enviadoBaseEm","cnpjManual"].forEach(p => { if(antigo[p]) novo[p] = antigo[p]; }); }
@@ -8733,6 +8772,22 @@ function pickModelo04(host){
   inTermo.value = (M04.campos && M04.campos.termo) || "";
   campo("Tipo de cliente", inTermo, "Do jeito que você procuraria no Google Maps.");
 
+  const inPal = el("input"); inPal.type = "text"; inPal.spellcheck = false;
+  inPal.value = (M04.campos && M04.campos.palavras) || "";
+  const palDica = el("span","leadshint");
+  const palAtualiza = () => {
+    const auto = ramoPalavras(inTermo.value, "");
+    inPal.placeholder = auto.length ? "automático: " + auto.join(", ").toLowerCase() : "ex.: depilação, laser";
+    const usadas = ramoPalavras(inTermo.value, inPal.value);
+    palDica.textContent = usadas.length
+      ? "Só entram locais com nome ou categoria começando por: " + usadas.join(", ").toLowerCase() + ". Os demais são descartados sem abrir."
+      : "Sem palavras: entra qualquer negócio que o Maps mostrar.";
+  };
+  inTermo.addEventListener("input", palAtualiza); inPal.addEventListener("input", palAtualiza);
+  campo("Palavras do ramo (opcional, separe por vírgula)", inPal, "", true);
+  inPal.parentElement.append(palDica);
+  palAtualiza();
+
   const selUf = el("select");
   M04_UFS.forEach(u => { const o = el("option",null,u); o.value = u; selUf.append(o); });
   selUf.value = (M04.campos && M04.campos.uf) || "MG";
@@ -8815,11 +8870,11 @@ function pickModelo04(host){
   btIniciar.onclick = async () => {
     const termo = inTermo.value.trim();
     if(!termo) return toast("Digite o tipo de cliente.");
-    M04.campos = { termo, uf: selUf.value };
+    M04.campos = { termo, uf: selUf.value, palavras: inPal.value.trim() };
     m04PrefSet("pausaManual", false); M04_AUTO.tentativas = 0;
     btIniciar.disabled = true; btIniciar.textContent = "Carregando as cidades…";
     const { resp, erro } = await m04Enviar({ type:"iniciar", termo, uf: selUf.value,
-      opcoes:{ intervalo: +selInt.value, maxPorCidade: +selMax.value, dividir: ckDiv.checked, maisTpl: inTpl.value.trim() } }, 30000);
+      opcoes:{ intervalo: +selInt.value, maxPorCidade: +selMax.value, dividir: ckDiv.checked, maisTpl: inTpl.value.trim(), palavras: inPal.value.trim() } }, 30000);
     btIniciar.disabled = false; btIniciar.textContent = "Começar a busca";
     if(erro || !resp) return m04SemExtensao(erro);
     m04Pinta(resp); m04Polling();
@@ -8894,7 +8949,7 @@ function m04Pinta(s){
   u.chips.innerHTML = "";
   [[t.aprovados,"aprovados","ok"],[t.aguardando,"aguardando 6 meses","novo"],[t.fora,"fora do requisito","alerta"],
    [t.semCnpj,"sem CNPJ","alerta"],[t.verificar,"para conferir","alerta"],[t.maps,"locais no Maps",""],
-   [s.refazer,"na fila para procurar o CNPJ de novo","novo"]]
+   [t.outroRamo,"de outro ramo descartados",""], [s.refazer,"na fila para procurar o CNPJ de novo","novo"]]
     .forEach(([v, r, c]) => { const x = leadsChip(v, r, c); if(x) u.chips.append(x); });
 
   u.atual.textContent = s.concluido ? "Estado inteiro concluído." : s.pausado ? (s.motivo || "Pausada.") : (s.atual || "Trabalhando…");
@@ -9283,9 +9338,35 @@ function novosPainelRamos(box, todos){
       f.ramo = baseChave(novo); novosDesenhar();
     };
     bl.append(bt);
+    const btLimpa = el("button","btn sm danger","Tirar os leads que não são deste ramo");
+    btLimpa.style.marginLeft = "8px";
+    btLimpa.onclick = () => novosLimparRamo(g);
+    bl.append(btLimpa);
   }
   box.append(bl);
   if(rolagem) twE.scrollTop = rolagem;
+}
+
+/* apaga do Cadastro os leads de um ramo cujo nome e categoria não têm as palavras do ramo */
+async function novosLimparRamo(g){
+  const auto = ramoPalavras(g.nome, "").join(", ").toLowerCase();
+  const dig = prompt("Ficam só os leads de “" + g.nome + "” cujo nome, razão social ou categoria do Maps comecem por uma destas palavras " +
+    "(separe por vírgula; pode acrescentar, ex.: estética):", auto);
+  if(dig == null) return;
+  const pal = ramoPalavras(g.nome, dig);
+  if(!pal.length) return toast("Digite pelo menos uma palavra.");
+  const fora = g.lista.filter(x => !ramoConfere(pal, [x.nomeMaps, x.nomeFantasia, x.razaoSocial, x.categoria].join(" ")));
+  if(!fora.length) return toast("Todos os " + g.lista.length.toLocaleString("pt-BR") + " leads já são do ramo.");
+  const cats = {};
+  fora.forEach(x => { const c = x.categoria || "sem categoria"; cats[c] = (cats[c] || 0) + 1; });
+  const top = Object.entries(cats).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([c, n]) => "  • " + c + " (" + n + ")").join("\n");
+  const ficam = g.lista.length - fora.length;
+  if(!confirm("Vão sair " + fora.length.toLocaleString("pt-BR") + " leads e ficar " + ficam.toLocaleString("pt-BR") + ".\n\n" +
+    "Categorias que mais saem:\n" + top + "\n\nApagar esses leads do Cadastro Leads Novos?")) return;
+  await NovosDB.excluir(fora.map(x => x.chave));
+  NOVOS.sel.clear(); NOVOS.cidAbertas.clear();
+  toast(fora.length.toLocaleString("pt-BR") + " leads de outros ramos apagados. Ficaram " + ficam.toLocaleString("pt-BR") + ".");
+  novosDesenhar();
 }
 
 /* exporta a lista filtrada (todas as páginas) em CSV ou Excel */
