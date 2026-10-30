@@ -1266,6 +1266,8 @@ table.nclic tr.marcado td{background:var(--teal-soft)}
 table.nclic tr:not(:first-child){cursor:pointer}
 table.nclic tr:not(:first-child):hover td{background:var(--line-soft)}
 th.thord{cursor:pointer;user-select:none}
+.m04zonabox{margin:14px 0 4px;padding:14px 16px;border:1px solid var(--teal,#0f766e);border-radius:10px;background:var(--teal-soft,#e6f4f1)}
+.m04zonabox .leadsbotoes{margin-top:10px}
 th.thord:hover{color:var(--teal,#0f766e)}
 th.thord .ordseta{margin-left:5px;font-size:10px;color:var(--muted);opacity:.55}
 th.thord.on .ordseta{color:var(--teal,#0f766e);opacity:1}
@@ -8505,7 +8507,7 @@ const novosCmp = (a, b) => typeof a === "number" && typeof b === "number" ? a - 
 const NOVOS_LEAD_COLS = {
   empresa:     r => r.nomeMaps || r.nomeFantasia || r.razaoSocial || "",
   cnpj:        r => r.cnpj || "",
-  cidade:      r => (r.cidade || "") + "/" + (r.uf || ""),
+  cidade:      r => (r.cidade || "") + "/" + (r.uf || "") + (r.zona ? " " + r.zona : "") + (r.distrito ? " " + r.distrito : ""),
   endereco:    r => r.endereco || "",
   telMaps:     r => r.telMaps || "",
   telMaisCnpj: r => r.telMaisCnpj || (r.telReceita || []).join(" / "),
@@ -8580,6 +8582,7 @@ function ramoConfere(palavras, texto){
   return palavras.some(p => t.includes(" " + p));
 }
 
+const M04_ZONAS = ["Centro","Norte","Sul","Leste","Oeste"];
 const NovosDB = {
   _db:null,
   abrir(){
@@ -8646,7 +8649,7 @@ async function m04Importar(est){
       /* avisa a extensão que já pode apagar os resultados desta cidade (libera espaço) */
       m04Enviar({ type:"importada", idx:i }, 8000);
       M04.rodada = M04.rodada || { cidades:0, aprov:0, ultima:"" };
-      M04.rodada.cidades++; M04.rodada.aprov += lista.filter(x => x.status === "aprovado").length; M04.rodada.ultima = c.nome;
+      M04.rodada.cidades++; M04.rodada.aprov += lista.filter(x => x.status === "aprovado").length; M04.rodada.ultima = c.nome + (c.zona ? " (Zona " + c.zona + ")" : "");
     }
     if(M04.rodada && M04.rodada.cidades){
       const r = M04.rodada; M04.rodada = null;
@@ -8815,6 +8818,22 @@ function pickModelo04(host){
   const lb = el("label","qualcheck"); const ckDiv = el("input"); ckDiv.type = "checkbox"; ckDiv.checked = true;
   lb.append(ckDiv, document.createTextNode(" Dividir cidades grandes em regiões (o Maps mostra no máximo uns 120 locais por busca)"));
   opc.append(lb);
+  const lbZ = el("label","qualcheck"); lbZ.style.display = "block"; lbZ.style.marginTop = "8px";
+  const ckZona = el("input"); ckZona.type = "checkbox"; ckZona.checked = !!(M04.campos && M04.campos.porZona);
+  const selZona = el("select"); selZona.style.marginLeft = "8px";
+  M04_ZONAS.forEach(z => { const o = el("option",null,"começar pela Zona " + z); o.value = z; selZona.append(o); });
+  selZona.value = (M04.campos && M04.campos.zonaInicial) || "Leste";
+  const zonaDica = el("span","leadshint"); zonaDica.style.display = "block"; zonaDica.style.marginLeft = "24px";
+  const zonaAtualiza = () => {
+    selZona.disabled = !ckZona.checked;
+    zonaDica.textContent = !ckZona.checked ? "" : selUf.value === "SP"
+      ? "São Paulo é buscada distrito por distrito (96 distritos oficiais, agrupados pelas subprefeituras). Ao terminar cada zona, a busca para e pergunta a próxima. Depois da capital, segue para as outras cidades."
+      : "A capital é dividida em 5 zonas pela posição em relação ao centro e cada zona é buscada em regiões. Ao terminar cada zona, a busca para e pergunta a próxima.";
+  };
+  ckZona.onchange = zonaAtualiza; selUf.addEventListener("change", zonaAtualiza);
+  lbZ.append(ckZona, document.createTextNode(" Fazer a capital por zona"), selZona);
+  opc.append(lbZ, zonaDica);
+  zonaAtualiza();
   config.append(opc);
 
   const acoes = el("div","leadsacoes");
@@ -8835,6 +8854,8 @@ function pickModelo04(host){
   const chips = el("div","leadschips"); prog.append(chips);
   const atual = el("p","leadsatual"); prog.append(atual);
   const bloqueio = el("div","leadsmotivo"); bloqueio.hidden = true; prog.append(bloqueio);
+
+  const zonaBox = el("div","m04zonabox"); zonaBox.hidden = true; prog.append(zonaBox);
 
   const tplBox = el("div","leadscampo"); tplBox.hidden = true; tplBox.style.margin = "12px 0 0";
   tplBox.append(el("label",null,"Endereço da busca do MaisCNPJ"));
@@ -8865,16 +8886,16 @@ function pickModelo04(host){
   host.append(prog);
 
   M04.ui = { aviso, config, prog, grande, totalTxt, selo, escopo, fill, bar, chips, atual, bloqueio,
-             btPausar, btSeguir, btPular, btParar, btNova, btTodas, tw, tplBox, autoInfo };
+             btPausar, btSeguir, btPular, btParar, btNova, btTodas, tw, tplBox, autoInfo, zonaBox };
 
   btIniciar.onclick = async () => {
     const termo = inTermo.value.trim();
     if(!termo) return toast("Digite o tipo de cliente.");
-    M04.campos = { termo, uf: selUf.value, palavras: inPal.value.trim() };
+    M04.campos = { termo, uf: selUf.value, palavras: inPal.value.trim(), porZona: ckZona.checked, zonaInicial: selZona.value };
     m04PrefSet("pausaManual", false); M04_AUTO.tentativas = 0;
     btIniciar.disabled = true; btIniciar.textContent = "Carregando as cidades…";
     const { resp, erro } = await m04Enviar({ type:"iniciar", termo, uf: selUf.value,
-      opcoes:{ intervalo: +selInt.value, maxPorCidade: +selMax.value, dividir: ckDiv.checked, maisTpl: inTpl.value.trim(), palavras: inPal.value.trim() } }, 30000);
+      opcoes:{ intervalo: +selInt.value, maxPorCidade: +selMax.value, dividir: ckDiv.checked, maisTpl: inTpl.value.trim(), palavras: inPal.value.trim(), porZona: ckZona.checked, zonaInicial: selZona.value } }, 30000);
     btIniciar.disabled = false; btIniciar.textContent = "Começar a busca";
     if(erro || !resp) return m04SemExtensao(erro);
     m04Pinta(resp); m04Polling();
@@ -8959,10 +8980,43 @@ function m04Pinta(s){
 
   const ativo = s.rodando && !s.pausado && !s.concluido;
   u.btPausar.hidden = !ativo;
-  u.btSeguir.hidden = !(s.pausado && !s.concluido);
+  u.btSeguir.hidden = !(s.pausado && !s.concluido) || !!(s.esperaZona && (s.zonasPendentes || []).length);
   u.btPular.hidden = s.concluido;
   u.btParar.hidden = s.concluido || !s.rodando;
   u.tplBox.hidden = !(s.pausado && /campo de busca do MaisCNPJ/.test(s.bloqueio || ""));
+
+  /* capital por zona: terminou uma zona, escolher a próxima */
+  const pendZ = s.zonasPendentes || [];
+  u.zonaBox.hidden = !(s.esperaZona && pendZ.length && !s.concluido);
+  if(!u.zonaBox.hidden){
+    const chave = pendZ.join("|");
+    if(u.zonaBox.dataset.k !== chave){
+      u.zonaBox.dataset.k = chave;
+      u.zonaBox.innerHTML = "";
+      const capital = (s.cidades.find(c => c.zona) || {}).nome || "capital";
+      u.zonaBox.append(el("b",null,"Qual a próxima zona de " + capital + "?"));
+      const feitas = s.cidades.filter(c => c.zona && c.status === "pronta");
+      if(feitas.length) u.zonaBox.append(el("div","leadshint", "Já feitas: " + feitas.map(c => "Zona " + c.zona + " (" + (c.maps || 0) + " locais, " + (c.aprovados || 0) + " aprovados)").join(" · ")));
+      const linha = el("div","leadsbotoes");
+      pendZ.forEach(z => {
+        const n = s.distritosZona && s.distritosZona[z];
+        const b = el("button","btn primary","Zona " + z + (n ? " · " + n + " distritos" : ""));
+        b.onclick = async () => { u.zonaBox.querySelectorAll("button").forEach(x => x.disabled = true);
+          const { resp, erro } = await m04Enviar({ type:"zona", zona:z }, 15000);
+          if(erro) toast("Não consegui falar com a extensão: " + erro); else if(resp) m04Pinta(resp); };
+        linha.append(b);
+      });
+      const bFim = el("button","btn","Encerrar a capital e seguir para as outras cidades");
+      bFim.onclick = async () => {
+        if(!confirm("Encerrar " + capital + " sem fazer as zonas " + pendZ.join(", ") + "? A busca segue para as outras cidades.")) return;
+        u.zonaBox.querySelectorAll("button").forEach(x => x.disabled = true);
+        const { resp, erro } = await m04Enviar({ type:"zona", zona:"__fim" }, 15000);
+        if(erro) toast("Não consegui falar com a extensão: " + erro); else if(resp) m04Pinta(resp);
+      };
+      linha.append(bFim);
+      u.zonaBox.append(linha);
+    }
+  } else u.zonaBox.dataset.k = "";
 
   /* tabela de cidades */
   const linhas = s.cidades.map((c, i) => Object.assign({ i }, c))
@@ -8974,7 +9028,7 @@ function m04Pinta(s){
   tb.append(h);
   linhas.forEach(c => {
     const tr = el("tr");
-    tr.append(el("td",null,c.nome));
+    tr.append(el("td",null,c.nome + (c.zona ? " · Zona " + c.zona : "")));
     const st = c.status === "pronta" ? ["pill st-done", c.pulada ? "pulada" : "pronta"]
       : c.status === "maps" ? ["pill st-doing","no Maps"] : c.status === "cnpj" ? ["pill st-doing","achando CNPJ"] : ["pill st-todo","na fila"];
     const td = el("td"); td.append(el("span", st[0], st[1]));
@@ -8993,7 +9047,8 @@ function m04Pinta(s){
   if(u.autoInfo){
     let txt = "";
     if(!s.concluido && s.pausado){
-      if(m04EhPausaManual(s)) txt = "Pausada por você: o vigia não retoma sozinho. Clique em Continuar.";
+      if(s.esperaZona) txt = "Esperando você escolher a próxima zona.";
+      else if(m04EhPausaManual(s)) txt = "Pausada por você: o vigia não retoma sozinho. Clique em Continuar.";
       else if(!m04AutoLigado()) txt = "";
       else if(m04PrecisaDeVoce(s)) txt = "Esta parada precisa de você (endereço da busca do MaisCNPJ).";
       else if(M04_AUTO.proxima) txt = "Retomando sozinha em " + Math.max(0, Math.ceil((M04_AUTO.proxima - Date.now()) / 1000)) + " s" +
@@ -9127,7 +9182,7 @@ async function novosDesenhar(){
 
   const q = baseChave(f.busca), qd = cnpjDig(f.busca);
   const lista = noRecorte.filter(x => (!f.status || x.status === f.status) && (!f.naoEnviados || !x.enviadoBase) &&
-    (!q || baseChave([x.nomeMaps, x.razaoSocial, x.nomeFantasia, x.cnpj, x.endereco, x.telMaps, x.telMaisCnpj].join(" ")).includes(q) ||
+    (!q || baseChave([x.nomeMaps, x.razaoSocial, x.nomeFantasia, x.cnpj, x.endereco, x.telMaps, x.telMaisCnpj, x.distrito, x.zona ? "zona " + x.zona : ""].join(" ")).includes(q) ||
      (qd.length >= 4 && (cnpjDig(x.cnpj).includes(qd) || cnpjDig(x.telMaps + x.telMaisCnpj).includes(qd)))))
     ;
   novosOrdenaLeads(lista, NOVOS.ordLista);
@@ -9183,7 +9238,9 @@ async function novosDesenhar(){
       tdCnpj.append(inp, bt);
     }
     tr.append(tdCnpj);
-    tr.append(el("td",null, r.cidade + "/" + r.uf));
+    const tdCid = el("td",null, r.cidade + "/" + r.uf);
+    if(r.zona || r.distrito) tdCid.append(el("div","sub", [r.zona ? "Zona " + r.zona : "", r.distrito].filter(Boolean).join(" · ")));
+    tr.append(tdCid);
     const tdEnd = el("td"); tdEnd.append(el("span",null, r.endereco || "—"));
     if(r.enderecoReceita) tdEnd.append(el("div","sub","Receita: " + r.enderecoReceita));
     tr.append(tdEnd);
@@ -9380,12 +9437,12 @@ function novosExportar(tipo){
   const f = NOVOS.filtro;
   const data = d => d ? String(d).slice(0, 10).split("-").reverse().join("/") : "";
   const cab = ["Ramo","Situação","Motivo","Empresa (Google Maps)","Razão social","Nome fantasia","CNPJ","Natureza jurídica","Abertura","Situação cadastral",
-    "Porte","Capital social","Endereço (Google Maps)","Bairro","CEP","Cidade","UF","Endereço (Receita)","Telefone Google Maps","Telefone MaisCNPJ",
+    "Porte","Capital social","Endereço (Google Maps)","Bairro","CEP","Cidade","UF","Zona","Distrito","Endereço (Receita)","Telefone Google Maps","Telefone MaisCNPJ",
     "Telefone Receita","E-mail","Site","Nota Google","Avaliações","Categoria","Link Google Maps","Link MaisCNPJ","Enviado à Base","Encontrado em"];
   const linhas = [cab].concat(lista.map(r => [
     r.termo || "", (M04_STATUS[r.status] || [r.status])[0], r.status === "aprovado" ? "" : (r.motivo || ""),
     r.nomeMaps || "", r.razaoSocial || "", r.nomeFantasia || "", r.cnpj || "", r.natureza || "", data(r.abertura), r.situacao || "",
-    r.porte || "", r.capital ? String(r.capital) : "", r.endereco || "", r.bairro || "", r.cep || "", r.cidade || "", r.uf || "",
+    r.porte || "", r.capital ? String(r.capital) : "", r.endereco || "", r.bairro || "", r.cep || "", r.cidade || "", r.uf || "", r.zona || "", r.distrito || "",
     r.enderecoReceita || "", r.telMaps || "", r.telMaisCnpj || "", (r.telReceita || []).join(" / "), r.email || "", r.site || "",
     r.nota || "", r.avaliacoes || "", r.categoria || "", r.link || "", r.linkMaisCnpj || "",
     r.enviadoBase ? "Sim" : "Não", r.encontradoEm ? new Date(r.encontradoEm).toLocaleDateString("pt-BR") : ""
@@ -9396,7 +9453,7 @@ function novosExportar(tipo){
     const q = v => /[";\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
     download(nome + ".csv", "text/csv", linhas.map(l => l.map(q).join(";")).join("\r\n"));
   } else {
-    baixarXlsx(nome, linhas, [22,18,40,34,40,30,20,34,12,14,14,14,50,22,10,22,6,50,18,22,26,30,30,8,10,24,40,40,10,12]);
+    baixarXlsx(nome, linhas, [22,18,40,34,40,30,20,34,12,14,14,14,50,22,10,22,6,10,22,50,18,22,26,30,30,8,10,24,40,40,10,12]);
   }
   toast(lista.length.toLocaleString("pt-BR") + " leads baixados.");
 }
