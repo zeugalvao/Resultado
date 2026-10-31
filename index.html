@@ -8583,6 +8583,10 @@ function ramoConfere(palavras, texto){
 }
 
 const M04_ZONAS = ["Centro","Norte","Sul","Leste","Oeste"];
+const M04_CAPITAIS = { AC:"Rio Branco", AL:"Maceió", AP:"Macapá", AM:"Manaus", BA:"Salvador", CE:"Fortaleza",
+  DF:"Brasília", ES:"Vitória", GO:"Goiânia", MA:"São Luís", MT:"Cuiabá", MS:"Campo Grande", MG:"Belo Horizonte",
+  PA:"Belém", PB:"João Pessoa", PR:"Curitiba", PE:"Recife", PI:"Teresina", RJ:"Rio de Janeiro", RN:"Natal",
+  RS:"Porto Alegre", RO:"Porto Velho", RR:"Boa Vista", SC:"Florianópolis", SP:"São Paulo", SE:"Aracaju", TO:"Palmas" };
 const NovosDB = {
   _db:null,
   abrir(){
@@ -8794,7 +8798,33 @@ function pickModelo04(host){
   const selUf = el("select");
   M04_UFS.forEach(u => { const o = el("option",null,u); o.value = u; selUf.append(o); });
   selUf.value = (M04.campos && M04.campos.uf) || "MG";
-  campo("Estado", selUf, "Capital primeiro, depois as demais cidades em ordem alfabética.");
+  campo("Estado", selUf, "");
+
+  /* onde buscar: a capital (por zona) e as outras cidades são buscas separadas */
+  const selEsc = el("select");
+  [["zona","Só a capital, por zona"],["demais","Só as outras cidades do estado (sem a capital)"],["estado","Estado inteiro (capital e outras cidades)"]]
+    .forEach(([v, r]) => { const o = el("option",null,r); o.value = v; selEsc.append(o); });
+  selEsc.value = (M04.campos && M04.campos.escopo) || "zona";
+  campo("Onde buscar", selEsc, "");
+  const selZona = el("select");
+  M04_ZONAS.forEach(z => { const o = el("option",null,"Zona " + z); o.value = z; selZona.append(o); });
+  selZona.value = (M04.campos && M04.campos.zonaInicial) || "Oeste";
+  campo("Zona da capital", selZona, "");
+  const escDica = el("span","leadshint");
+  const escBox = el("div","leadscampo leadswide"); escBox.append(escDica); form.append(escBox);
+  const escAtualiza = () => {
+    const cap = M04_CAPITAIS[selUf.value] || "a capital", z = selEsc.value === "zona";
+    selZona.parentElement.style.display = z ? "" : "none";
+    escDica.textContent = z
+      ? (selUf.value === "SP"
+          ? "Busca só em " + cap + ", só na Zona " + selZona.value + ": cada distrito da zona pelo nome e em 9 pedaços de ~2 km em volta, rolando cada lista até o fim. Ao terminar, para e pergunta se quer fazer outra zona. Nunca passa para outras cidades."
+          : "Busca só em " + cap + ", só na Zona " + selZona.value + " (pela posição em relação ao centro), em pedaços de ~2,5 km. Ao terminar, para e pergunta se quer fazer outra zona. Nunca passa para outras cidades.")
+      : selEsc.value === "demais"
+        ? "Busca todas as cidades de " + selUf.value + " em ordem alfabética, menos " + cap + "."
+        : "Começa por " + cap + " (busca da cidade inteira, em regiões) e depois segue para as outras cidades em ordem alfabética.";
+  };
+  selUf.addEventListener("change", escAtualiza); selEsc.onchange = escAtualiza; selZona.onchange = escAtualiza;
+  escAtualiza();
 
   const selInt = el("select");
   [["1000","1 segundo"],["1500","1,5 segundo"],["2500","2,5 segundos"],["4000","4 segundos"]]
@@ -8818,22 +8848,6 @@ function pickModelo04(host){
   const lb = el("label","qualcheck"); const ckDiv = el("input"); ckDiv.type = "checkbox"; ckDiv.checked = true;
   lb.append(ckDiv, document.createTextNode(" Dividir cidades grandes em regiões (o Maps mostra no máximo uns 120 locais por busca)"));
   opc.append(lb);
-  const lbZ = el("label","qualcheck"); lbZ.style.display = "block"; lbZ.style.marginTop = "8px";
-  const ckZona = el("input"); ckZona.type = "checkbox"; ckZona.checked = !!(M04.campos && M04.campos.porZona);
-  const selZona = el("select"); selZona.style.marginLeft = "8px";
-  M04_ZONAS.forEach(z => { const o = el("option",null,"começar pela Zona " + z); o.value = z; selZona.append(o); });
-  selZona.value = (M04.campos && M04.campos.zonaInicial) || "Leste";
-  const zonaDica = el("span","leadshint"); zonaDica.style.display = "block"; zonaDica.style.marginLeft = "24px";
-  const zonaAtualiza = () => {
-    selZona.disabled = !ckZona.checked;
-    zonaDica.textContent = !ckZona.checked ? "" : selUf.value === "SP"
-      ? "São Paulo é buscada distrito por distrito (96 distritos oficiais, agrupados pelas subprefeituras). Ao terminar cada zona, a busca para e pergunta a próxima. Depois da capital, segue para as outras cidades."
-      : "A capital é dividida em 5 zonas pela posição em relação ao centro e cada zona é buscada em regiões. Ao terminar cada zona, a busca para e pergunta a próxima.";
-  };
-  ckZona.onchange = zonaAtualiza; selUf.addEventListener("change", zonaAtualiza);
-  lbZ.append(ckZona, document.createTextNode(" Fazer a capital por zona"), selZona);
-  opc.append(lbZ, zonaDica);
-  zonaAtualiza();
   config.append(opc);
 
   const acoes = el("div","leadsacoes");
@@ -8891,11 +8905,16 @@ function pickModelo04(host){
   btIniciar.onclick = async () => {
     const termo = inTermo.value.trim();
     if(!termo) return toast("Digite o tipo de cliente.");
-    M04.campos = { termo, uf: selUf.value, palavras: inPal.value.trim(), porZona: ckZona.checked, zonaInicial: selZona.value };
+    /* o tipo de cliente é só o ramo: cidade e zona são escolhidas nos campos próprios */
+    if(/\bzona\b|\bcapital\b/i.test(termo) || ramoNorm(termo).includes(ramoNorm(M04_CAPITAIS[selUf.value] || "@@"))){
+      inTermo.focus();
+      return toast("Em “Tipo de cliente” digite só o ramo (ex.: clínica de depilação a laser). A cidade e a zona são escolhidas em “Onde buscar” e “Zona da capital”.");
+    }
+    M04.campos = { termo, uf: selUf.value, palavras: inPal.value.trim(), escopo: selEsc.value, zonaInicial: selZona.value };
     m04PrefSet("pausaManual", false); M04_AUTO.tentativas = 0;
     btIniciar.disabled = true; btIniciar.textContent = "Carregando as cidades…";
     const { resp, erro } = await m04Enviar({ type:"iniciar", termo, uf: selUf.value,
-      opcoes:{ intervalo: +selInt.value, maxPorCidade: +selMax.value, dividir: ckDiv.checked, maisTpl: inTpl.value.trim(), palavras: inPal.value.trim(), porZona: ckZona.checked, zonaInicial: selZona.value } }, 30000);
+      opcoes:{ intervalo: +selInt.value, maxPorCidade: +selMax.value, dividir: ckDiv.checked, maisTpl: inTpl.value.trim(), palavras: inPal.value.trim(), escopo: selEsc.value, zonaInicial: selZona.value } }, 30000);
     btIniciar.disabled = false; btIniciar.textContent = "Começar a busca";
     if(erro || !resp) return m04SemExtensao(erro);
     m04Pinta(resp); m04Polling();
@@ -8960,9 +8979,9 @@ function m04Pinta(s){
 
   const prontas = s.cidades.filter(c => c.status === "pronta").length;
   u.grande.textContent = prontas.toLocaleString("pt-BR");
-  u.totalTxt.textContent = "de " + s.totalCidades.toLocaleString("pt-BR") + " cidades prontas";
+  u.totalTxt.textContent = "de " + s.totalCidades.toLocaleString("pt-BR") + (s.escopo === "zona" ? " zonas prontas" : " cidades prontas");
   seloEstado(u.selo, s);
-  u.escopo.textContent = "“" + s.termo + "” em " + s.uf + (s.maisTpl ? " · busca do MaisCNPJ: " + s.maisTpl : "");
+  u.escopo.textContent = "“" + s.termo + "” em " + (s.escopo === "zona" ? (M04_CAPITAIS[s.uf] || s.uf) + " (capital, por zona)" : s.escopo === "demais" ? s.uf + " sem a capital" : s.uf) + (s.maisTpl ? " · busca do MaisCNPJ: " + s.maisTpl : "");
   const parcial = s.fase === "cnpj" && s.lugaresTotal ? s.li / s.lugaresTotal : 0;
   u.fill.style.width = (s.totalCidades ? ((prontas + (s.concluido ? 0 : parcial)) / s.totalCidades) * 100 : 0) + "%";
 
@@ -8973,7 +8992,7 @@ function m04Pinta(s){
    [t.outroRamo,"de outro ramo descartados",""], [s.refazer,"na fila para procurar o CNPJ de novo","novo"]]
     .forEach(([v, r, c]) => { const x = leadsChip(v, r, c); if(x) u.chips.append(x); });
 
-  u.atual.textContent = s.concluido ? "Estado inteiro concluído." : s.pausado ? (s.motivo || "Pausada.") : (s.atual || "Trabalhando…");
+  u.atual.textContent = s.concluido ? (s.escopo === "zona" ? "Busca na capital concluída." : s.escopo === "demais" ? "Todas as outras cidades concluídas." : "Estado inteiro concluído.") : s.pausado ? (s.motivo || "Pausada.") : (s.atual || "Trabalhando…");
   u.bloqueio.hidden = !s.bloqueio;
   u.bloqueio.textContent = s.bloqueio ? s.bloqueio + (m04AutoLigado() && !m04PrecisaDeVoce(s)
     ? " Se for uma verificação, resolva na janela da busca; a busca retoma sozinha." : " Resolva na janela da busca e clique em Continuar.") : "";
@@ -9006,9 +9025,11 @@ function m04Pinta(s){
           if(erro) toast("Não consegui falar com a extensão: " + erro); else if(resp) m04Pinta(resp); };
         linha.append(b);
       });
-      const bFim = el("button","btn","Encerrar a capital e seguir para as outras cidades");
+      const soCapital = s.escopo === "zona";
+      const bFim = el("button","btn", soCapital ? "Terminar a busca (não fazer as outras zonas agora)" : "Encerrar a capital e seguir para as outras cidades");
       bFim.onclick = async () => {
-        if(!confirm("Encerrar " + capital + " sem fazer as zonas " + pendZ.join(", ") + "? A busca segue para as outras cidades.")) return;
+        if(!confirm(soCapital ? "Terminar a busca em " + capital + " sem fazer as zonas " + pendZ.join(", ") + "?"
+          : "Encerrar " + capital + " sem fazer as zonas " + pendZ.join(", ") + "? A busca segue para as outras cidades.")) return;
         u.zonaBox.querySelectorAll("button").forEach(x => x.disabled = true);
         const { resp, erro } = await m04Enviar({ type:"zona", zona:"__fim" }, 15000);
         if(erro) toast("Não consegui falar com a extensão: " + erro); else if(resp) m04Pinta(resp);
