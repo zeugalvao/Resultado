@@ -1309,6 +1309,12 @@ details.gsdr summary{cursor:pointer;font-size:13px}
 /* ---------- Modelo 04 ---------- */
 .m04cidades{max-height:420px;overflow:auto;margin-top:18px}
 .m04cidades table.leadlista td{white-space:nowrap}
+/* Modelo 04: o andamento usa a largura inteira da tela */
+.leadsprog.m04prog{max-width:none}
+.m04prog .m04cidades{max-height:calc(100vh - 260px);min-height:320px}
+.m04prog .m04cidades table.leadlista{width:100%}
+.m04prog .m04cidades table.leadlista td:nth-child(2){white-space:normal;min-width:320px}
+.m04prog .leadsatual{max-width:none}
 </style>
 </head>
 <body>
@@ -8881,7 +8887,7 @@ function pickModelo04(host){
   host.append(config);
 
   /* --- progresso --- */
-  const prog = el("div","leadsprog"); prog.hidden = true;
+  const prog = el("div","leadsprog m04prog"); prog.hidden = true;
   const cab = el("div","leadscab");
   const grande = el("strong",null,"0"), totalTxt = el("span",null,"de 0 cidades"), selo = el("span","selo");
   cab.append(grande, totalTxt, selo);
