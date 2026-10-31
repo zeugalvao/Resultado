@@ -1266,8 +1266,16 @@ table.nclic tr.marcado td{background:var(--teal-soft)}
 .ndiv.on{background:var(--teal,#0f766e);border-color:var(--teal,#0f766e);color:#fff}
 table.leadlista tr.nredecab td{background:var(--teal-soft,#e6f4f1);font-size:13.5px;padding:9px 10px}
 table.leadlista tr.nredecab .btn{margin-left:8px}
-.nredebox{display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-width:220px}
-.nredebox input{width:150px;border:1px solid var(--line);border-radius:5px;padding:4px 6px;font-size:12.5px}
+.nredesnav{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
+.nredesnav .ndiv{font-size:13px;padding:5px 12px}
+td.nredecel .sub{font-size:11.5px;max-width:110px;margin-top:2px}
+dialog.nrededlg{border:1px solid var(--line);border-radius:12px;padding:22px 24px;width:min(460px,92vw);background:var(--surface,#fff);color:inherit;box-shadow:0 20px 50px rgba(0,0,0,.25)}
+dialog.nrededlg::backdrop{background:rgba(15,23,42,.35)}
+dialog.nrededlg h3{margin:0 0 6px;font-size:18px}
+dialog.nrededlg input{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font:inherit;font-size:15px;margin:10px 0}
+dialog.nrededlg .nredejas{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px}
+dialog.nrededlg .nredejas .ndiv{font-size:12.5px;padding:4px 10px}
+dialog.nrededlg .leadsbotoes{margin-top:12px}
 .nduas{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
 .nduas h3{font-size:13px;margin:0 0 6px;color:var(--muted);font-weight:600}
 .nduas .tablewrap{max-height:340px;overflow:auto}
@@ -8508,7 +8516,7 @@ async function buscaEscolherFonteAtiva(){
 
 const M04 = { presente:false, ui:null, timer:null, importando:false, estado:null, verTodas:false };
 const NOVOS = { ui:null, filtro:{ busca:"", status:"aprovado", uf:"", cidade:"", naoEnviados:false, ramo:"" }, sel:new Set(), mostrar:200,
-  divisao:"leads", cli:null,
+  divisao:"leads", cli:null, redeSel:"",
   ordE:{ col:"n", dir:-1 }, ordCid:{ col:"empresa", dir:1 }, ordLista:{ col:"empresa", dir:1 }, cidAbertas:new Set() };
 /* ordenação das tabelas de leads: clicar no título da coluna ordena; clicar de novo inverte */
 const novosCmp = (a, b) => typeof a === "number" && typeof b === "number" ? a - b
@@ -9149,13 +9157,20 @@ function pickNovos(host){
   btXls.onclick = () => novosExportar("xlsx");
   const btRefazer = el("button","btn","Procurar CNPJ de novo");
   btRefazer.title = "Manda os leads Sem CNPJ (os marcados ou, se nenhum estiver marcado, todos do filtro) para a extensão procurar de novo";
+  const btRede = el("button","btn","Marcar como rede");
+  btRede.title = "Pergunta o nome da rede e leva os leads marcados para a divisão REDE";
+  btRede.onclick = async () => {
+    const lote = (NOVOS.lista || []).filter(x => NOVOS.sel.has(x.chave));
+    const redes = [...new Set((await NovosDB.todos()).filter(x => x.rede).map(x => x.rede))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+    novosPerguntarRede(lote, redes);
+  };
   const btCli = el("button","btn","Importar clientes (Excel/CSV)");
   btCli.title = "Planilha com os CNPJs que já são clientes: eles saem da lista e não vão na exportação";
   const inCli = el("input"); inCli.type = "file"; inCli.accept = ".xlsx,.csv"; inCli.hidden = true;
   btCli.onclick = () => inCli.click();
   inCli.onchange = async () => { const f = inCli.files[0]; inCli.value = ""; if(f){ btCli.disabled = true; await novosImportarClientes(f); btCli.disabled = false; } };
   const info = el("span","leadshint"); info.style.alignSelf = "center";
-  acoes.append(btEnviar, btCsv, btXls, btExcluir, btAtual, btRefazer, btCli, inCli, info);
+  acoes.append(btEnviar, btRede, btCsv, btXls, btExcluir, btAtual, btRefazer, btCli, inCli, info);
 
   const mostrando = el("div","nmostrando");
   const divisoes = el("div","ndivisoes");
@@ -9163,7 +9178,7 @@ function pickNovos(host){
   host.append(acoes);
 
   const corpo = el("div"); host.append(corpo);
-  NOVOS.ui = { inB, sSt, sUf, sCid, ckN, chips, corpo, info, btEnviar, btExcluir, ramos, mostrando, divisoes, btCsv, btXls };
+  NOVOS.ui = { inB, sSt, sUf, sCid, ckN, chips, corpo, info, btEnviar, btExcluir, ramos, mostrando, divisoes, btCsv, btXls, btRede };
 
   let t = null;
   inB.oninput = () => { clearTimeout(t); t = setTimeout(() => { NOVOS.filtro.busca = inB.value; NOVOS.mostrar = 200; novosDesenhar(); }, 250); };
@@ -9279,28 +9294,71 @@ async function novosMarcarRede(alvos, nome){
   else toast(alvos.length === 1 ? "Tirado da rede: voltou para a lista de leads." : alvos.length + " leads voltaram para a lista de leads.");
   novosDesenhar();
 }
-/* célula da coluna Rede: checkbox; ao marcar abre o campo do nome da rede */
+/* nome sugerido para um grupo de unidades: a rede que já têm em comum, senão as palavras iniciais em comum no nome */
+function novosSugerirRedeLote(lote, redes){
+  const ja = [...new Set(lote.map(x => x.rede).filter(Boolean))];
+  if(ja.length === 1) return ja[0];
+  const nomes = lote.map(x => (x.nomeMaps || x.nomeFantasia || x.razaoSocial || "").split(/[\s|–\-·,]+/).filter(Boolean));
+  const comum = [];
+  for(let i = 0; i < 3; i++){
+    const w = nomes[0] && nomes[0][i];
+    if(!w || !nomes.every(n => n[i] && baseChave(n[i]) === baseChave(w))) break;
+    comum.push(w);
+  }
+  if(comum.length) return comum.join(" ");
+  return novosSugerirRede(lote[0], redes);
+}
+/* janela que pergunta o nome da rede e leva as unidades para REDE › nome */
+function novosPerguntarRede(lote, redes){
+  if(!lote.length) return toast("Marque as unidades primeiro.");
+  const dlg = el("dialog","nrededlg");
+  dlg.append(el("h3",null,"Qual o nome dessa rede?"));
+  dlg.append(el("p","leadshint", lote.length + (lote.length === 1 ? " unidade vai" : " unidades vão") + " para a divisão REDE, dentro da rede com este nome."));
+  const inp = el("input"); inp.type = "text"; inp.placeholder = "ex.: Bestlaser";
+  inp.value = novosSugerirRedeLote(lote, redes);
+  dlg.append(inp);
+  if(redes.length){
+    const ja = el("div","nredejas");
+    ja.append(el("span","leadshint","Redes já criadas: "));
+    redes.forEach(n => { const b = el("button","ndiv",n); b.type = "button"; b.onclick = () => { inp.value = n; inp.focus(); }; ja.append(b); });
+    dlg.append(ja);
+  }
+  const bt = el("div","leadsbotoes");
+  const ok = el("button","btn primary","Levar para a rede"), cancela = el("button","btn","Cancelar");
+  ok.type = cancela.type = "button";
+  bt.append(ok, cancela);
+  if(lote.some(x => x.rede)){
+    const tira = el("button","btn danger","Tirar da rede"); tira.type = "button";
+    tira.onclick = () => { dlg.close(); NOVOS.sel.clear(); novosMarcarRede(lote, ""); };
+    bt.append(tira);
+  }
+  dlg.append(bt);
+  const salvar = () => {
+    const n = inp.value.trim().replace(/\s+/g, " ");
+    if(!n) return toast("Digite o nome da rede.");
+    /* mesma rede escrita de outro jeito (maiúsculas, acento): usa o nome que já existe */
+    const igual = redes.find(r => baseChave(r) === baseChave(n));
+    dlg.close(); NOVOS.sel.clear();
+    novosMarcarRede(lote, igual || n);
+  };
+  ok.onclick = salvar;
+  cancela.onclick = () => { dlg.close(); novosDesenhar(); };
+  inp.onkeydown = ev => { if(ev.key === "Enter"){ ev.preventDefault(); salvar(); } };
+  dlg.addEventListener("close", () => dlg.remove());
+  document.body.append(dlg);
+  dlg.showModal(); inp.focus(); inp.select();
+}
+/* célula da coluna Rede: marcar abre a pergunta do nome (vale para todos os marcados, se esta linha estiver marcada) */
 function novosCelulaRede(r, redes){
   const td = el("td","ck nredecel");
-  const ck = el("input"); ck.type = "checkbox"; ck.checked = !!r.rede; ck.title = r.rede ? "Rede: " + r.rede + " (desmarque para tirar da rede)" : "Marcar como unidade de rede";
+  const ck = el("input"); ck.type = "checkbox"; ck.checked = !!r.rede;
+  ck.title = r.rede ? "Rede: " + r.rede + " (clique para mudar o nome ou tirar da rede)" : "Marcar como unidade de rede";
   td.append(ck);
-  ck.onchange = () => {
-    const lote = NOVOS.sel.size > 1 && NOVOS.sel.has(r.chave) ? (NOVOS.lista || []).filter(x => NOVOS.sel.has(x.chave)) : [r];
-    if(!ck.checked){
-      if(!confirm("Tirar " + (lote.length > 1 ? lote.length + " leads" : "“" + (r.nomeMaps || r.razaoSocial) + "”") + " da rede " + (r.rede || "") + "? Volta para a lista de leads.")){ ck.checked = true; return; }
-      NOVOS.sel.clear(); return novosMarcarRede(lote, "");
-    }
-    td.innerHTML = "";
-    const box = el("div","nredebox");
-    const inp = el("input"); inp.type = "text"; inp.setAttribute("list","novosRedesLista");
-    inp.placeholder = "nome da rede"; inp.value = novosSugerirRede(r, redes);
-    const ok = el("button","btn sm primary","OK"), x = el("button","btn sm","×");
-    box.append(inp, ok, x);
-    if(lote.length > 1) box.append(el("div","sub","vale para os " + lote.length + " marcados"));
-    td.append(box); inp.focus(); inp.select();
-    const salvar = () => { if(!inp.value.trim()) return toast("Digite o nome da rede."); NOVOS.sel.clear(); novosMarcarRede(lote, inp.value); };
-    ok.onclick = salvar; x.onclick = () => novosDesenhar();
-    inp.onkeydown = ev => { if(ev.key === "Enter") salvar(); if(ev.key === "Escape") novosDesenhar(); };
+  if(r.rede) td.append(el("div","sub", r.rede));
+  ck.onclick = ev => {
+    ev.preventDefault();
+    const lote = NOVOS.sel.has(r.chave) && NOVOS.sel.size > 1 ? (NOVOS.lista || []).filter(x => NOVOS.sel.has(x.chave)) : [r];
+    novosPerguntarRede(lote, redes);
   };
   return td;
 }
@@ -9324,9 +9382,14 @@ async function novosDesenhar(){
   novosPainelRamos(u.ramos, todosRamos);
   const dv = NOVOS.divisao;
   const daDivisao = tudo.filter(x => divDe(x) === dv);
-  const todos = f.ramo ? daDivisao.filter(x => novosRamoKey(x) === f.ramo) : daDivisao;
-  NOVOS.lista = todos;
   const redes = [...new Set(tudo.filter(x => x.rede).map(x => x.rede))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  if(NOVOS.redeSel && !redes.includes(NOVOS.redeSel)) NOVOS.redeSel = "";
+  /* na REDE, cada rede é uma divisão própria */
+  const todos = (f.ramo ? daDivisao.filter(x => novosRamoKey(x) === f.ramo) : daDivisao)
+    .filter(x => dv !== "rede" || !NOVOS.redeSel || x.rede === NOVOS.redeSel);
+  NOVOS.lista = todos;
+  u.btRede.hidden = dv === "clientes";
+  u.btRede.textContent = dv === "rede" ? "Mudar a rede dos marcados" : "Marcar como rede";
 
   const nDiv = k => tudo.filter(x => divDe(x) === k).length;
   u.divisoes.innerHTML = "";
@@ -9371,7 +9434,7 @@ async function novosDesenhar(){
   NOVOS.filtrada = lista;
   u.sSt.value = f.status;
   u.mostrando.innerHTML = "";
-  const partes = [dv === "rede" ? "REDE" : dv === "clientes" ? "Já são clientes" : "", f.ramo ? ((NOVOS.nomesRamo || {})[f.ramo] || "") : "Todos os ramos", f.uf || "todos os estados", f.cidade].filter(Boolean);
+  const partes = [dv === "rede" ? "REDE" + (NOVOS.redeSel ? " › " + NOVOS.redeSel : "") : dv === "clientes" ? "Já são clientes" : "", f.ramo ? ((NOVOS.nomesRamo || {})[f.ramo] || "") : "Todos os ramos", f.uf || "todos os estados", f.cidade].filter(Boolean);
   u.mostrando.append(el("b",null, lista.length.toLocaleString("pt-BR") + (lista.length === 1 ? " lead" : " leads")),
     document.createTextNode(" · " + partes.join(" · ") + (f.status ? " · " + M04_STATUS[f.status][0].toLowerCase() : " · todas as situações")));
   if(f.uf || f.cidade){
@@ -9381,6 +9444,15 @@ async function novosDesenhar(){
   }
   u.info.textContent = NOVOS.sel.size ? NOVOS.sel.size + " marcados" : "";
   u.corpo.innerHTML = "";
+  if(dv === "rede" && redes.length){
+    const nav = el("div","nredesnav");
+    const pill = (rot, val, n) => { const b = el("button","ndiv" + ((NOVOS.redeSel || "") === val ? " on" : ""));
+      b.append(document.createTextNode(rot + " "), el("span",null, String(n)));
+      b.onclick = () => { NOVOS.redeSel = val; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); }; return b; };
+    nav.append(pill("Todas as redes", "", daDivisao.length));
+    redes.forEach(n => nav.append(pill(n, n, daDivisao.filter(x => x.rede === n).length)));
+    u.corpo.append(nav);
+  }
   if(dv === "clientes"){
     const bar = el("div","leadsacoes"); bar.style.margin = "0 0 10px";
     bar.append(el("span","leadshint", NOVOS.cli.n
@@ -9413,13 +9485,10 @@ async function novosDesenhar(){
   h.append(el("th"));
   h.append(el("th", "ck", dv === "clientes" ? "Cliente" : "Rede"));
   tb.append(h);
-  const dl = el("datalist"); dl.id = "novosRedesLista";
-  redes.forEach(n => { const o = el("option"); o.value = n; dl.append(o); });
-  u.corpo.append(dl);
 
   let redeAtual = null;
   visiveis.forEach(r => {
-    if(dv === "rede" && r.rede !== redeAtual){
+    if(dv === "rede" && !NOVOS.redeSel && r.rede !== redeAtual){
       redeAtual = r.rede;
       const unid = lista.filter(x => x.rede === redeAtual);
       const trc = el("tr","nredecab"), tdc = el("td"); tdc.colSpan = 10;
@@ -9429,7 +9498,9 @@ async function novosDesenhar(){
       br.onclick = () => { const n = prompt("Novo nome da rede “" + redeAtual + "”:", redeAtual); if(n && n.trim()) novosMarcarRede(unid, n); };
       const bm = el("button","btn sm","Marcar as unidades");
       bm.onclick = () => { unid.forEach(x => NOVOS.sel.add(x.chave)); novosDesenhar(); };
-      tdc.append(br, bm); trc.append(tdc); tb.append(trc);
+      const ba = el("button","btn sm","Abrir só esta rede");
+      const nomeR = redeAtual; ba.onclick = () => { NOVOS.redeSel = nomeR; NOVOS.sel.clear(); novosDesenhar(); };
+      tdc.append(br, bm, ba); trc.append(tdc); tb.append(trc);
     }
     const tr = el("tr"); if(NOVOS.sel.has(r.chave)) tr.classList.add("marcado");
     const tdc = el("td","ck"); const ck = el("input"); ck.type = "checkbox"; ck.checked = NOVOS.sel.has(r.chave);
