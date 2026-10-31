@@ -1311,6 +1311,11 @@ details.gsdr summary{cursor:pointer;font-size:13px}
 .m04cidades table.leadlista td{white-space:nowrap}
 /* Modelo 04: o andamento usa a largura inteira da tela */
 .leadsprog.m04prog{max-width:none}
+.m04cidbox{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.m04cidbox input{flex:1 1 280px;max-width:420px}
+.m04cidchips{flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.m04cidchip{display:inline-flex;align-items:center;gap:4px;background:var(--teal-soft,#e6f4f1);border:1px solid var(--teal,#0f766e);border-radius:999px;padding:3px 4px 3px 11px;font-size:13px}
+.m04cidchip button{border:0;background:transparent;cursor:pointer;font-size:15px;line-height:1;padding:0 5px;color:inherit}
 .m04prog .m04cidades{max-height:calc(100vh - 260px);min-height:320px}
 .m04prog .m04cidades table.leadlista{width:100%}
 .m04prog .m04cidades table.leadlista td:nth-child(2){white-space:normal;min-width:320px}
@@ -8825,7 +8830,7 @@ function pickModelo04(host){
 
   /* onde buscar: a capital (por zona) e as outras cidades são buscas separadas */
   const selEsc = el("select");
-  [["zona","Só a capital, por zona"],["demais","Só as outras cidades do estado (sem a capital)"],["estado","Estado inteiro (capital e outras cidades)"]]
+  [["cidades","Cidades que eu escolher"],["zona","Só a capital, por zona"],["demais","Só as outras cidades do estado (sem a capital)"],["estado","Estado inteiro (capital e outras cidades)"]]
     .forEach(([v, r]) => { const o = el("option",null,r); o.value = v; selEsc.append(o); });
   selEsc.value = (M04.campos && M04.campos.escopo) || "zona";
   campo("Onde buscar", selEsc, "");
@@ -8833,20 +8838,79 @@ function pickModelo04(host){
   M04_ZONAS.forEach(z => { const o = el("option",null,"Zona " + z); o.value = z; selZona.append(o); });
   selZona.value = (M04.campos && M04.campos.zonaInicial) || "Oeste";
   campo("Zona da capital", selZona, "");
+
+  /* cidades escolhidas: lista do estado (pela extensão, que já consulta o IBGE) com busca por nome */
+  const cidBox = el("div","m04cidbox");
+  const inCid = el("input"); inCid.type = "text"; inCid.placeholder = "digite o nome da cidade e aperte Enter"; inCid.setAttribute("list","m04ListaCidades");
+  const dlCid = el("datalist"); dlCid.id = "m04ListaCidades";
+  const btAddCid = el("button","btn sm","Adicionar"); btAddCid.type = "button";
+  const chipsCid = el("div","m04cidchips");
+  cidBox.append(inCid, btAddCid, dlCid, chipsCid);
+  campo("Cidades", cidBox, "", true);
+  const escolhidas = [];
+  ((M04.campos && M04.campos.uf === selUf.value && M04.campos.cidades) || []).forEach(c => escolhidas.push(c));
+  const listaUf = { uf:"", nomes:[] };
+  const pintaCidades = () => {
+    chipsCid.innerHTML = "";
+    if(!escolhidas.length) chipsCid.append(el("span","leadshint", listaUf.nomes.length ? listaUf.nomes.length + " cidades em " + selUf.value + ". Nenhuma escolhida ainda." : "Carregando as cidades de " + selUf.value + "…"));
+    escolhidas.forEach((c, i) => {
+      const ch = el("span","m04cidchip", c);
+      const x = el("button",null,"×"); x.type = "button"; x.title = "Tirar " + c;
+      x.onclick = () => { escolhidas.splice(i, 1); pintaCidades(); escAtualiza(); };
+      ch.append(x); chipsCid.append(ch);
+    });
+    if(escolhidas.length > 1){ const lp = el("button","btn sm","Limpar"); lp.type = "button"; lp.onclick = () => { escolhidas.length = 0; pintaCidades(); escAtualiza(); }; chipsCid.append(lp); }
+  };
+  const addCidade = () => {
+    const v = ramoNorm(inCid.value); if(!v) return;
+    const nome = listaUf.nomes.find(n => ramoNorm(n) === v);
+    if(!nome) return toast(listaUf.nomes.length ? "Não achei “" + inCid.value + "” nas cidades de " + selUf.value + ". Escolha um nome da lista." : "A lista de cidades ainda está carregando.");
+    if(!escolhidas.includes(nome)) escolhidas.push(nome);
+    inCid.value = ""; pintaCidades(); escAtualiza(); inCid.focus();
+  };
+  btAddCid.onclick = addCidade;
+  inCid.onkeydown = ev => { if(ev.key === "Enter"){ ev.preventDefault(); addCidade(); } };
+  inCid.addEventListener("change", () => { if(listaUf.nomes.some(n => n === inCid.value)) addCidade(); });
+  const carregaCidades = async () => {
+    const uf = selUf.value;
+    if(listaUf.uf === uf && listaUf.nomes.length) return;
+    listaUf.uf = uf; listaUf.nomes = []; dlCid.innerHTML = ""; pintaCidades();
+    let nomes = [];
+    const { resp } = await m04Enviar({ type:"cidades", uf }, 20000);
+    if(resp && Array.isArray(resp.cidades)) nomes = resp.cidades;
+    if(!nomes.length){ try { nomes = (await (await fetch("https://servicodados.ibge.gov.br/api/v1/localidades/estados/" + uf + "/municipios")).json()).map(m => m.nome); } catch(e){} }
+    if(selUf.value !== uf) return;
+    listaUf.nomes = nomes.slice().sort((a, b) => a.localeCompare(b, "pt-BR"));
+    listaUf.nomes.forEach(n => { const o = el("option"); o.value = n; dlCid.append(o); });
+    pintaCidades();
+  };
+
+  /* quantas cidades: vazio = todas */
+  const inQtd = el("input"); inQtd.type = "number"; inQtd.min = "1"; inQtd.step = "1"; inQtd.placeholder = "todas";
+  inQtd.value = (M04.campos && M04.campos.limiteCidades) || "";
+  campo("Quantas cidades", inQtd, "Deixe vazio para todas. Ex.: 10 = só as 10 primeiras da ordem (alfabética).");
+
   const escDica = el("span","leadshint");
   const escBox = el("div","leadscampo leadswide"); escBox.append(escDica); form.append(escBox);
   const escAtualiza = () => {
-    const cap = M04_CAPITAIS[selUf.value] || "a capital", z = selEsc.value === "zona";
+    const cap = M04_CAPITAIS[selUf.value] || "a capital", z = selEsc.value === "zona", ci = selEsc.value === "cidades";
     selZona.parentElement.style.display = z ? "" : "none";
-    escDica.textContent = z
+    cidBox.parentElement.style.display = ci ? "" : "none";
+    inQtd.parentElement.style.display = (selEsc.value === "demais" || selEsc.value === "estado") ? "" : "none";
+    if(ci) carregaCidades();
+    const qtd = parseInt(inQtd.value, 10) > 0 ? parseInt(inQtd.value, 10) : 0;
+    escDica.textContent = ci
+      ? (escolhidas.length ? "Busca só em: " + escolhidas.join(", ") + ", nesta ordem." : "Escolha uma ou mais cidades de " + selUf.value + ".")
+      : z
       ? (selUf.value === "SP"
           ? "Busca só em " + cap + ", só na Zona " + selZona.value + ": cada distrito da zona pelo nome e em 9 pedaços de ~2 km em volta, rolando cada lista até o fim. Ao terminar, para e pergunta se quer fazer outra zona. Nunca passa para outras cidades."
           : "Busca só em " + cap + ", só na Zona " + selZona.value + " (pela posição em relação ao centro), em pedaços de ~2,5 km. Ao terminar, para e pergunta se quer fazer outra zona. Nunca passa para outras cidades.")
       : selEsc.value === "demais"
-        ? "Busca todas as cidades de " + selUf.value + " em ordem alfabética, menos " + cap + "."
-        : "Começa por " + cap + " (busca da cidade inteira, em regiões) e depois segue para as outras cidades em ordem alfabética.";
+        ? "Busca " + (qtd ? "as " + qtd + " primeiras cidades" : "todas as cidades") + " de " + selUf.value + " em ordem alfabética, menos " + cap + "."
+        : "Começa por " + cap + " (busca da cidade inteira, em regiões) e depois segue para as outras cidades em ordem alfabética" + (qtd ? ", até completar " + qtd + " cidades (contando a capital)." : ".");
   };
-  selUf.addEventListener("change", escAtualiza); selEsc.onchange = escAtualiza; selZona.onchange = escAtualiza;
+  selUf.addEventListener("change", () => { escolhidas.length = 0; escAtualiza(); });
+  selEsc.onchange = escAtualiza; selZona.onchange = escAtualiza; inQtd.oninput = escAtualiza;
   escAtualiza();
 
   const selInt = el("select");
@@ -8946,15 +9010,23 @@ function pickModelo04(host){
     const termo = inTermo.value.trim();
     if(!termo) return toast("Digite o tipo de cliente.");
     /* o tipo de cliente é só o ramo: cidade e zona são escolhidas nos campos próprios */
-    if(/\bzona\b|\bcapital\b/i.test(termo) || ramoNorm(termo).includes(ramoNorm(M04_CAPITAIS[selUf.value] || "@@"))){
+    const tN = " " + ramoNorm(termo) + " ";
+    const cidadeNoTermo = (listaUf.uf === selUf.value ? listaUf.nomes : []).concat(M04_CAPITAIS[selUf.value] || [])
+      .find(n => ramoNorm(n).length >= 4 && tN.includes(" " + ramoNorm(n) + " "));
+    if(/\bzona\b|\bcapital\b/i.test(termo) || cidadeNoTermo){
       inTermo.focus();
-      return toast("Em “Tipo de cliente” digite só o ramo (ex.: clínica de depilação a laser). A cidade e a zona são escolhidas em “Onde buscar” e “Zona da capital”.");
+      return toast("Em “Tipo de cliente” digite só o ramo (ex.: clínica de depilação a laser)" + (cidadeNoTermo ? ", sem “" + cidadeNoTermo + "”" : "") +
+        ". A cidade é escolhida em “Onde buscar”: use “Cidades que eu escolher”.");
     }
-    M04.campos = { termo, uf: selUf.value, palavras: inPal.value.trim(), escopo: selEsc.value, zonaInicial: selZona.value, janela: selJan.value };
+    if(selEsc.value === "cidades" && !escolhidas.length){ inCid.focus(); return toast("Escolha pelo menos uma cidade."); }
+    const limiteCidades = parseInt(inQtd.value, 10) > 0 ? parseInt(inQtd.value, 10) : 0;
+    M04.campos = { termo, uf: selUf.value, palavras: inPal.value.trim(), escopo: selEsc.value, zonaInicial: selZona.value, janela: selJan.value,
+                   cidades: escolhidas.slice(), limiteCidades };
     m04PrefSet("pausaManual", false); M04_AUTO.tentativas = 0;
     btIniciar.disabled = true; btIniciar.textContent = "Carregando as cidades…";
     const { resp, erro } = await m04Enviar({ type:"iniciar", termo, uf: selUf.value,
-      opcoes:{ intervalo: +selInt.value, maxPorCidade: +selMax.value, dividir: ckDiv.checked, maisTpl: inTpl.value.trim(), palavras: inPal.value.trim(), escopo: selEsc.value, zonaInicial: selZona.value, janela: selJan.value } }, 30000);
+      opcoes:{ intervalo: +selInt.value, maxPorCidade: +selMax.value, dividir: ckDiv.checked, maisTpl: inTpl.value.trim(), palavras: inPal.value.trim(), escopo: selEsc.value, zonaInicial: selZona.value, janela: selJan.value,
+        cidades: escolhidas.slice(), limiteCidades: (selEsc.value === "demais" || selEsc.value === "estado") ? limiteCidades : 0 } }, 30000);
     btIniciar.disabled = false; btIniciar.textContent = "Começar a busca";
     if(erro || !resp) return m04SemExtensao(erro);
     m04Pinta(resp); m04Polling();
@@ -9021,7 +9093,7 @@ function m04Pinta(s){
   u.grande.textContent = prontas.toLocaleString("pt-BR");
   u.totalTxt.textContent = "de " + s.totalCidades.toLocaleString("pt-BR") + (s.escopo === "zona" ? " zonas prontas" : " cidades prontas");
   seloEstado(u.selo, s);
-  u.escopo.textContent = "“" + s.termo + "” em " + (s.escopo === "zona" ? (M04_CAPITAIS[s.uf] || s.uf) + " (capital, por zona)" : s.escopo === "demais" ? s.uf + " sem a capital" : s.uf) + (s.maisTpl ? " · busca do MaisCNPJ: " + s.maisTpl : "");
+  u.escopo.textContent = "“" + s.termo + "” em " + (s.escopo === "zona" ? (M04_CAPITAIS[s.uf] || s.uf) + " (capital, por zona)" : s.escopo === "demais" ? s.uf + " sem a capital" : s.escopo === "cidades" ? (s.cidades || []).map(c => c.nome).filter((n, i, a) => a.indexOf(n) === i).slice(0, 6).join(", ") + ((s.cidades || []).length > 6 ? "…" : "") + " (" + s.uf + ")" : s.uf) + (s.maisTpl ? " · busca do MaisCNPJ: " + s.maisTpl : "");
   const parcial = s.fase === "cnpj" && s.lugaresTotal ? s.li / s.lugaresTotal : 0;
   u.fill.style.width = (s.totalCidades ? ((prontas + (s.concluido ? 0 : parcial)) / s.totalCidades) * 100 : 0) + "%";
 
@@ -9032,7 +9104,7 @@ function m04Pinta(s){
    [t.outroRamo,"de outro ramo descartados",""], [s.refazer,"na fila para procurar o CNPJ de novo","novo"]]
     .forEach(([v, r, c]) => { const x = leadsChip(v, r, c); if(x) u.chips.append(x); });
 
-  u.atual.textContent = s.concluido ? (s.escopo === "zona" ? "Busca na capital concluída." : s.escopo === "demais" ? "Todas as outras cidades concluídas." : "Estado inteiro concluído.") : s.pausado ? (s.motivo || "Pausada.") : (s.atual || "Trabalhando…");
+  u.atual.textContent = s.concluido ? (s.escopo === "zona" ? "Busca na capital concluída." : s.escopo === "cidades" ? "Cidades escolhidas concluídas." : s.escopo === "demais" ? "Todas as outras cidades concluídas." : "Estado inteiro concluído.") : s.pausado ? (s.motivo || "Pausada.") : (s.atual || "Trabalhando…");
   u.bloqueio.hidden = !s.bloqueio;
   u.bloqueio.textContent = s.bloqueio ? s.bloqueio + (m04AutoLigado() && !m04PrecisaDeVoce(s)
     ? " Se for uma verificação, resolva na aba da busca (a aba fixada do Maps, no canto esquerdo das abas); a busca retoma sozinha." : " Resolva na aba da busca (a aba fixada do Maps, no canto esquerdo das abas) e clique em Continuar.") : "";
