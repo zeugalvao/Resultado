@@ -1260,6 +1260,14 @@ table.nclic tr.ncid td.ncid-nome{padding-left:34px}
 table.nclic tr.marcado td{background:var(--teal-soft)}
 .nmostrando{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:6px 0 12px;font-size:14px;scroll-margin-top:20px}
 .nmostrando b{font-size:16px}
+.ndivisoes{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:18px 0 4px}
+.ndiv{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 14px;font:inherit;font-size:14px;cursor:pointer;color:inherit}
+.ndiv span{font-weight:700;margin-left:4px}
+.ndiv.on{background:var(--teal,#0f766e);border-color:var(--teal,#0f766e);color:#fff}
+table.leadlista tr.nredecab td{background:var(--teal-soft,#e6f4f1);font-size:13.5px;padding:9px 10px}
+table.leadlista tr.nredecab .btn{margin-left:8px}
+.nredebox{display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-width:220px}
+.nredebox input{width:150px;border:1px solid var(--line);border-radius:5px;padding:4px 6px;font-size:12.5px}
 .nduas{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
 .nduas h3{font-size:13px;margin:0 0 6px;color:var(--muted);font-weight:600}
 .nduas .tablewrap{max-height:340px;overflow:auto}
@@ -8500,6 +8508,7 @@ async function buscaEscolherFonteAtiva(){
 
 const M04 = { presente:false, ui:null, timer:null, importando:false, estado:null, verTodas:false };
 const NOVOS = { ui:null, filtro:{ busca:"", status:"aprovado", uf:"", cidade:"", naoEnviados:false, ramo:"" }, sel:new Set(), mostrar:200,
+  divisao:"leads", cli:null,
   ordE:{ col:"n", dir:-1 }, ordCid:{ col:"empresa", dir:1 }, ordLista:{ col:"empresa", dir:1 }, cidAbertas:new Set() };
 /* ordenação das tabelas de leads: clicar no título da coluna ordena; clicar de novo inverte */
 const novosCmp = (a, b) => typeof a === "number" && typeof b === "number" ? a - b
@@ -8641,7 +8650,7 @@ async function m04Importar(est){
       const lista = (resp.registros || []).filter(doRamo).map(r => {
         const antigo = existentes.get(r.chave);
         const novo = Object.assign({}, r, { importadoEm: new Date().toISOString() });
-        if(antigo){ ["enviadoBase","enviadoBaseEm","cnpjManual"].forEach(p => { if(antigo[p]) novo[p] = antigo[p]; }); }
+        if(antigo){ ["enviadoBase","enviadoBaseEm","cnpjManual","rede"].forEach(p => { if(antigo[p]) novo[p] = antigo[p]; }); }
         else novos++;
         const d = cnpjDig(r.cnpj);
         if(d.length === 14 && r.receita){ try { qualifGravar(d, { receita: r.receita }); REQ.cache[d] = r.receita; } catch(e){} }
@@ -8832,6 +8841,12 @@ function pickModelo04(host){
   selInt.value = "1500";
   campo("Pausa entre ações", selInt, "Mais pausa, menos chance de o Google ou o MaisCNPJ pedirem verificação.");
 
+  const selJan = el("select");
+  [["fixada","Aba fixada nesta janela (nunca vem para a frente)"],["separada","Janela separada (vem para a frente ao ler as listas)"]]
+    .forEach(([v, r]) => { const o = el("option",null,r); o.value = v; selJan.append(o); });
+  selJan.value = (M04.campos && M04.campos.janela) || "fixada";
+  campo("Onde a busca roda", selJan, "Aba fixada: fica no canto das abas e você só abre quando quiser ver. Como a aba fica escondida, a extensão divide as áreas em pedaços menores: faz mais buscas, mas não atrapalha.");
+
   const selMax = el("select");
   [["120","até 120 por cidade"],["300","até 300 por cidade"],["600","até 600 por cidade"],["1500","até 1.500 por cidade"],["5000","até 5.000 por cidade"]]
     .forEach(([v, r]) => { const o = el("option",null,r); o.value = v; selMax.append(o); });
@@ -8854,7 +8869,7 @@ function pickModelo04(host){
   const btIniciar = el("button","btn primary","Começar a busca");
   acoes.append(btIniciar);
   config.append(acoes);
-  config.append(el("p","leadshint","Abre uma janela do Chrome só para a busca. Pode deixá-la atrás das outras, mas não minimize nem feche."));
+  config.append(el("p","leadshint","A busca abre uma aba fixada (ou uma janela, se escolher acima) só para ela. Não feche essa aba durante a busca."));
   host.append(config);
 
   /* --- progresso --- */
@@ -8892,6 +8907,17 @@ function pickModelo04(host){
   autoBox.append(ckAuto, document.createTextNode(" Retomar sozinha quando a busca parar (não precisa clicar em Continuar)"));
   ckAuto.onchange = () => { m04PrefSet("auto", ckAuto.checked); M04_AUTO.tentativas = 0; if(M04.estado) m04Pinta(M04.estado); };
   prog.append(autoBox);
+  const janBox = el("label","qualcheck"); janBox.style.cssText = "display:block;margin-top:8px";
+  const selJan2 = el("select"); selJan2.style.marginLeft = "6px";
+  [["fixada","aba fixada (não vem para a frente)"],["separada","janela separada"]].forEach(([v, r]) => { const o = el("option",null,r); o.value = v; selJan2.append(o); });
+  janBox.append(document.createTextNode("A busca roda em:"), selJan2);
+  selJan2.onchange = async () => {
+    const { resp, erro } = await m04Enviar({ type:"janela", modo: selJan2.value }, 15000);
+    if(erro) return toast("Não consegui falar com a extensão: " + erro);
+    toast(selJan2.value === "fixada" ? "A busca passa para uma aba fixada nesta janela." : "A busca passa para uma janela separada.");
+    if(resp) m04Pinta(resp);
+  };
+  prog.append(janBox);
   const autoInfo = el("p","leadshint"); autoInfo.style.margin = "4px 0 0"; prog.append(autoInfo);
 
   const tw = el("div","tablewrap m04cidades"); prog.append(tw);
@@ -8900,7 +8926,7 @@ function pickModelo04(host){
   host.append(prog);
 
   M04.ui = { aviso, config, prog, grande, totalTxt, selo, escopo, fill, bar, chips, atual, bloqueio,
-             btPausar, btSeguir, btPular, btParar, btNova, btTodas, tw, tplBox, autoInfo, zonaBox };
+             btPausar, btSeguir, btPular, btParar, btNova, btTodas, tw, tplBox, autoInfo, zonaBox, selJan2 };
 
   btIniciar.onclick = async () => {
     const termo = inTermo.value.trim();
@@ -8910,11 +8936,11 @@ function pickModelo04(host){
       inTermo.focus();
       return toast("Em “Tipo de cliente” digite só o ramo (ex.: clínica de depilação a laser). A cidade e a zona são escolhidas em “Onde buscar” e “Zona da capital”.");
     }
-    M04.campos = { termo, uf: selUf.value, palavras: inPal.value.trim(), escopo: selEsc.value, zonaInicial: selZona.value };
+    M04.campos = { termo, uf: selUf.value, palavras: inPal.value.trim(), escopo: selEsc.value, zonaInicial: selZona.value, janela: selJan.value };
     m04PrefSet("pausaManual", false); M04_AUTO.tentativas = 0;
     btIniciar.disabled = true; btIniciar.textContent = "Carregando as cidades…";
     const { resp, erro } = await m04Enviar({ type:"iniciar", termo, uf: selUf.value,
-      opcoes:{ intervalo: +selInt.value, maxPorCidade: +selMax.value, dividir: ckDiv.checked, maisTpl: inTpl.value.trim(), palavras: inPal.value.trim(), escopo: selEsc.value, zonaInicial: selZona.value } }, 30000);
+      opcoes:{ intervalo: +selInt.value, maxPorCidade: +selMax.value, dividir: ckDiv.checked, maisTpl: inTpl.value.trim(), palavras: inPal.value.trim(), escopo: selEsc.value, zonaInicial: selZona.value, janela: selJan.value } }, 30000);
     btIniciar.disabled = false; btIniciar.textContent = "Começar a busca";
     if(erro || !resp) return m04SemExtensao(erro);
     m04Pinta(resp); m04Polling();
@@ -8995,7 +9021,7 @@ function m04Pinta(s){
   u.atual.textContent = s.concluido ? (s.escopo === "zona" ? "Busca na capital concluída." : s.escopo === "demais" ? "Todas as outras cidades concluídas." : "Estado inteiro concluído.") : s.pausado ? (s.motivo || "Pausada.") : (s.atual || "Trabalhando…");
   u.bloqueio.hidden = !s.bloqueio;
   u.bloqueio.textContent = s.bloqueio ? s.bloqueio + (m04AutoLigado() && !m04PrecisaDeVoce(s)
-    ? " Se for uma verificação, resolva na janela da busca; a busca retoma sozinha." : " Resolva na janela da busca e clique em Continuar.") : "";
+    ? " Se for uma verificação, resolva na aba da busca (a aba fixada do Maps, no canto esquerdo das abas); a busca retoma sozinha." : " Resolva na aba da busca (a aba fixada do Maps, no canto esquerdo das abas) e clique em Continuar.") : "";
 
   const ativo = s.rodando && !s.pausado && !s.concluido;
   u.btPausar.hidden = !ativo;
@@ -9003,6 +9029,8 @@ function m04Pinta(s){
   u.btPular.hidden = s.concluido;
   u.btParar.hidden = s.concluido || !s.rodando;
   u.tplBox.hidden = !(s.pausado && /campo de busca do MaisCNPJ/.test(s.bloqueio || ""));
+
+  if(document.activeElement !== u.selJan2) u.selJan2.value = s.janela || "separada";
 
   /* capital por zona: terminou uma zona, escolher a próxima */
   const pendZ = s.zonasPendentes || [];
@@ -9073,7 +9101,7 @@ function m04Pinta(s){
       else if(!m04AutoLigado()) txt = "";
       else if(m04PrecisaDeVoce(s)) txt = "Esta parada precisa de você (endereço da busca do MaisCNPJ).";
       else if(M04_AUTO.proxima) txt = "Retomando sozinha em " + Math.max(0, Math.ceil((M04_AUTO.proxima - Date.now()) / 1000)) + " s" +
-        (s.bloqueio ? " (se houver verificação na janela da busca, resolver lá adianta)" : "") + ".";
+        (s.bloqueio ? " (se houver verificação na aba da busca, resolver lá adianta)" : "") + ".";
     }
     if(!txt && M04_AUTO.ultimoTxt) txt = M04_AUTO.ultimoTxt;
     if(s.ultimoErro && !s.concluido) txt = (txt ? txt + " " : "") + "Último erro da extensão: " + s.ultimoErro + ".";
@@ -9121,15 +9149,21 @@ function pickNovos(host){
   btXls.onclick = () => novosExportar("xlsx");
   const btRefazer = el("button","btn","Procurar CNPJ de novo");
   btRefazer.title = "Manda os leads Sem CNPJ (os marcados ou, se nenhum estiver marcado, todos do filtro) para a extensão procurar de novo";
+  const btCli = el("button","btn","Importar clientes (Excel/CSV)");
+  btCli.title = "Planilha com os CNPJs que já são clientes: eles saem da lista e não vão na exportação";
+  const inCli = el("input"); inCli.type = "file"; inCli.accept = ".xlsx,.csv"; inCli.hidden = true;
+  btCli.onclick = () => inCli.click();
+  inCli.onchange = async () => { const f = inCli.files[0]; inCli.value = ""; if(f){ btCli.disabled = true; await novosImportarClientes(f); btCli.disabled = false; } };
   const info = el("span","leadshint"); info.style.alignSelf = "center";
-  acoes.append(btEnviar, btCsv, btXls, btExcluir, btAtual, btRefazer, info);
+  acoes.append(btEnviar, btCsv, btXls, btExcluir, btAtual, btRefazer, btCli, inCli, info);
 
   const mostrando = el("div","nmostrando");
-  barra.before(mostrando);
+  const divisoes = el("div","ndivisoes");
+  barra.before(divisoes, mostrando);
   host.append(acoes);
 
   const corpo = el("div"); host.append(corpo);
-  NOVOS.ui = { inB, sSt, sUf, sCid, ckN, chips, corpo, info, btEnviar, btExcluir, ramos, mostrando };
+  NOVOS.ui = { inB, sSt, sUf, sCid, ckN, chips, corpo, info, btEnviar, btExcluir, ramos, mostrando, divisoes, btCsv, btXls };
 
   let t = null;
   inB.oninput = () => { clearTimeout(t); t = setTimeout(() => { NOVOS.filtro.busca = inB.value; NOVOS.mostrar = 200; novosDesenhar(); }, 250); };
@@ -9169,6 +9203,108 @@ function pickNovos(host){
   novosDesenhar();
 }
 
+/* ---------- clientes (CNPJs importados) e redes ---------- */
+function novosCnpjValido(d){
+  if(!/^\d{14}$/.test(d) || /^(\d)\1+$/.test(d)) return false;
+  const dv = n => { let s = 0, p = n - 7; for(let i = 0; i < n; i++){ s += +d[i] * p--; if(p < 2) p = 9; } const r = s % 11; return r < 2 ? 0 : 11 - r; };
+  return dv(12) === +d[12] && dv(13) === +d[13];
+}
+const novosFmtCnpj = d => d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
+/* texto de uma célula → CNPJ com 14 dígitos (o Excel guarda CNPJ como número e perde o zero da frente) */
+function novosCnpjCelula(v){
+  let t = String(v == null ? "" : v).trim();
+  if(!t) return "";
+  if(/^\d+(\.\d+)?e\+?\d+$/i.test(t)){ try { t = BigInt(Math.round(Number(t))).toString(); } catch(e){} }
+  t = t.replace(/\.0+$/, "");
+  let d = t.replace(/\D/g, "");
+  if(d.length >= 12 && d.length < 14) d = d.padStart(14, "0");
+  return d.length === 14 && novosCnpjValido(d) ? d : "";
+}
+async function novosCarregarClientes(){
+  if(NOVOS.cli) return NOVOS.cli;
+  let m = null; try { m = await NovosDB.meta("clientes"); } catch(e){}
+  const cnpjs = (m && m.cnpjs) || {};
+  NOVOS.cli = { cnpjs, raizes: new Set(Object.keys(cnpjs).map(d => d.slice(0, 8))), n: Object.keys(cnpjs).length,
+                em: m && m.em, arquivo: m && m.arquivo };
+  return NOVOS.cli;
+}
+/* "" = não é cliente; "cliente" = CNPJ na lista; "filial" = mesma empresa (raiz do CNPJ) de um cliente */
+function novosCliente(x){
+  const c = NOVOS.cli; if(!c || !c.n) return "";
+  const d = cnpjDig(x.cnpj); if(d.length !== 14) return "";
+  return c.cnpjs[d] != null ? "cliente" : c.raizes.has(d.slice(0, 8)) ? "filial" : "";
+}
+async function novosImportarClientes(file){
+  let rows;
+  try { rows = await SheetReader.read(file); } catch(e){ return toast("Não consegui ler a planilha: " + (e.message || e)); }
+  if(!rows || !rows.length) return toast("A planilha está vazia.");
+  /* procura a coluna com “CNPJ” no título; sem título, olha todas as células */
+  let hi = -1, col = -1, colNome = -1;
+  for(let i = 0; i < Math.min(8, rows.length) && col < 0; i++)
+    (rows[i] || []).forEach((c, j) => { if(col < 0 && /CNPJ/.test(baseChave(c))){ hi = i; col = j; } });
+  if(hi >= 0) (rows[hi] || []).forEach((c, j) => { if(colNome < 0 && j !== col && /RAZAO|NOME|EMPRESA|CLIENTE|FANTASIA/.test(baseChave(c))) colNome = j; });
+  const cnpjs = {}; let lidas = 0, invalidas = 0;
+  rows.slice(hi + 1).forEach(row => {
+    const cel = col >= 0 ? [row[col]] : (row || []);
+    let achou = false;
+    cel.forEach(v => { const d = novosCnpjCelula(v); if(d){ cnpjs[d] = colNome >= 0 ? String(row[colNome] || "") : ""; achou = true; } });
+    if(col >= 0 && String(row[col] || "").trim()){ lidas++; if(!achou) invalidas++; }
+  });
+  const n = Object.keys(cnpjs).length;
+  if(!n) return toast("Não achei nenhum CNPJ válido na planilha. Confira se há uma coluna com o título “CNPJ”.");
+  const atual = await novosCarregarClientes();
+  if(atual.n && !confirm("Substituir a lista de clientes atual (" + atual.n.toLocaleString("pt-BR") + " CNPJs) por esta planilha (" +
+      n.toLocaleString("pt-BR") + " CNPJs)?")) return;
+  await NovosDB.metaGravar("clientes", { cnpjs, em: new Date().toISOString(), arquivo: file.name });
+  NOVOS.cli = null;
+  await novosCarregarClientes();
+  const todos = await NovosDB.todos();
+  const bate = todos.filter(x => novosCliente(x)).length;
+  toast(n.toLocaleString("pt-BR") + " CNPJs de clientes carregados" + (invalidas ? " (" + invalidas + " linhas com CNPJ inválido ignoradas)" : "") +
+    ". " + bate.toLocaleString("pt-BR") + " leads do Cadastro já são clientes e saíram da lista e da exportação.");
+  novosDesenhar();
+}
+/* sugestão de nome de rede: uma rede já usada que apareça no nome, senão as duas primeiras palavras */
+function novosSugerirRede(r, redes){
+  const nome = r.nomeMaps || r.nomeFantasia || r.razaoSocial || "";
+  const n = baseChave(nome);
+  const ja = redes.find(x => x && n.includes(baseChave(x)));
+  if(ja) return ja;
+  return nome.split(/[\s|–\-·,]+/).filter(w => w.length > 1).slice(0, 2).join(" ");
+}
+async function novosMarcarRede(alvos, nome){
+  nome = String(nome || "").trim().replace(/\s+/g, " ");
+  await NovosDB.gravar(alvos.map(x => Object.assign({}, x, { rede: nome || undefined })));
+  if(nome) toast(alvos.length === 1 ? "Movido para REDE · " + nome + "." : alvos.length + " leads movidos para REDE · " + nome + ".");
+  else toast(alvos.length === 1 ? "Tirado da rede: voltou para a lista de leads." : alvos.length + " leads voltaram para a lista de leads.");
+  novosDesenhar();
+}
+/* célula da coluna Rede: checkbox; ao marcar abre o campo do nome da rede */
+function novosCelulaRede(r, redes){
+  const td = el("td","ck nredecel");
+  const ck = el("input"); ck.type = "checkbox"; ck.checked = !!r.rede; ck.title = r.rede ? "Rede: " + r.rede + " (desmarque para tirar da rede)" : "Marcar como unidade de rede";
+  td.append(ck);
+  ck.onchange = () => {
+    const lote = NOVOS.sel.size > 1 && NOVOS.sel.has(r.chave) ? (NOVOS.lista || []).filter(x => NOVOS.sel.has(x.chave)) : [r];
+    if(!ck.checked){
+      if(!confirm("Tirar " + (lote.length > 1 ? lote.length + " leads" : "“" + (r.nomeMaps || r.razaoSocial) + "”") + " da rede " + (r.rede || "") + "? Volta para a lista de leads.")){ ck.checked = true; return; }
+      NOVOS.sel.clear(); return novosMarcarRede(lote, "");
+    }
+    td.innerHTML = "";
+    const box = el("div","nredebox");
+    const inp = el("input"); inp.type = "text"; inp.setAttribute("list","novosRedesLista");
+    inp.placeholder = "nome da rede"; inp.value = novosSugerirRede(r, redes);
+    const ok = el("button","btn sm primary","OK"), x = el("button","btn sm","×");
+    box.append(inp, ok, x);
+    if(lote.length > 1) box.append(el("div","sub","vale para os " + lote.length + " marcados"));
+    td.append(box); inp.focus(); inp.select();
+    const salvar = () => { if(!inp.value.trim()) return toast("Digite o nome da rede."); NOVOS.sel.clear(); novosMarcarRede(lote, inp.value); };
+    ok.onclick = salvar; x.onclick = () => novosDesenhar();
+    inp.onkeydown = ev => { if(ev.key === "Enter") salvar(); if(ev.key === "Escape") novosDesenhar(); };
+  };
+  return td;
+}
+
 function novosTelefones(r){
   const out = [];
   [r.telMaps].concat(String(r.telMaisCnpj || "").split(" / "), r.telReceita || []).forEach(t => {
@@ -9179,11 +9315,32 @@ function novosTelefones(r){
 
 async function novosDesenhar(){
   const u = NOVOS.ui; if(!u || !document.body.contains(u.corpo)) return;
-  const todosRamos = await NovosDB.todos();
+  const tudo = await NovosDB.todos();
+  await novosCarregarClientes();
   const f = NOVOS.filtro;
+  /* três divisões: leads comuns, REDE (unidades marcadas como rede) e clientes (CNPJs importados) */
+  const divDe = x => novosCliente(x) ? "clientes" : x.rede ? "rede" : "leads";
+  const todosRamos = tudo.filter(x => divDe(x) === "leads");
   novosPainelRamos(u.ramos, todosRamos);
-  const todos = f.ramo ? todosRamos.filter(x => novosRamoKey(x) === f.ramo) : todosRamos;
+  const dv = NOVOS.divisao;
+  const daDivisao = tudo.filter(x => divDe(x) === dv);
+  const todos = f.ramo ? daDivisao.filter(x => novosRamoKey(x) === f.ramo) : daDivisao;
   NOVOS.lista = todos;
+  const redes = [...new Set(tudo.filter(x => x.rede).map(x => x.rede))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+
+  const nDiv = k => tudo.filter(x => divDe(x) === k).length;
+  u.divisoes.innerHTML = "";
+  [["leads","Leads"],["rede","REDE"],["clientes","Já são clientes"]].forEach(([k, rot]) => {
+    const b = el("button","ndiv" + (dv === k ? " on" : ""));
+    b.append(document.createTextNode(rot + " "), el("span",null, nDiv(k).toLocaleString("pt-BR")));
+    if(k === "rede" && redes.length) b.title = redes.length + " redes";
+    b.onclick = () => { NOVOS.divisao = k; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); };
+    u.divisoes.append(b);
+  });
+  if(NOVOS.cli.n) u.divisoes.append(el("span","leadshint", NOVOS.cli.n.toLocaleString("pt-BR") + " CNPJs de clientes carregados" +
+    (NOVOS.cli.em ? " em " + new Date(NOVOS.cli.em).toLocaleDateString("pt-BR") : "") + (NOVOS.cli.arquivo ? " (" + NOVOS.cli.arquivo + ")" : "")));
+  u.btCsv.disabled = u.btXls.disabled = dv === "clientes";
+  u.btCsv.title = u.btXls.title = dv === "clientes" ? "Clientes não são exportados" : "Baixa todos os leads da lista abaixo, com os filtros escolhidos (ramo, estado, cidade, situação e busca)";
 
   const ufs = [...new Set(todos.map(x => x.uf))].sort();
   u.sUf.innerHTML = '<option value="">Todos os estados</option>' + ufs.map(x => '<option>' + esc(x) + '</option>').join("");
@@ -9207,11 +9364,14 @@ async function novosDesenhar(){
      (qd.length >= 4 && (cnpjDig(x.cnpj).includes(qd) || cnpjDig(x.telMaps + x.telMaisCnpj).includes(qd)))))
     ;
   novosOrdenaLeads(lista, NOVOS.ordLista);
+  /* na REDE, as unidades ficam agrupadas pelo nome da rede */
+  if(dv === "rede"){ const pos = new Map(lista.map((x, i) => [x.chave, i]));
+    lista.sort((a, b) => a.rede.localeCompare(b.rede, "pt-BR") || pos.get(a.chave) - pos.get(b.chave)); }
 
   NOVOS.filtrada = lista;
   u.sSt.value = f.status;
   u.mostrando.innerHTML = "";
-  const partes = [f.ramo ? ((NOVOS.nomesRamo || {})[f.ramo] || "") : "Todos os ramos", f.uf || "todos os estados", f.cidade].filter(Boolean);
+  const partes = [dv === "rede" ? "REDE" : dv === "clientes" ? "Já são clientes" : "", f.ramo ? ((NOVOS.nomesRamo || {})[f.ramo] || "") : "Todos os ramos", f.uf || "todos os estados", f.cidade].filter(Boolean);
   u.mostrando.append(el("b",null, lista.length.toLocaleString("pt-BR") + (lista.length === 1 ? " lead" : " leads")),
     document.createTextNode(" · " + partes.join(" · ") + (f.status ? " · " + M04_STATUS[f.status][0].toLowerCase() : " · todas as situações")));
   if(f.uf || f.cidade){
@@ -9221,8 +9381,22 @@ async function novosDesenhar(){
   }
   u.info.textContent = NOVOS.sel.size ? NOVOS.sel.size + " marcados" : "";
   u.corpo.innerHTML = "";
+  if(dv === "clientes"){
+    const bar = el("div","leadsacoes"); bar.style.margin = "0 0 10px";
+    bar.append(el("span","leadshint", NOVOS.cli.n
+      ? "Estes leads têm CNPJ na lista de clientes (ou são outra unidade, mesma raiz de CNPJ, de um cliente). Não vão na exportação nem para a Base."
+      : "Nenhuma lista de clientes carregada. Use “Importar clientes (Excel/CSV)”: a planilha precisa de uma coluna com o título CNPJ."));
+    if(NOVOS.cli.n){
+      const bl = el("button","btn sm danger","Apagar a lista de clientes");
+      bl.onclick = async () => { if(!confirm("Apagar a lista de " + NOVOS.cli.n + " CNPJs de clientes? Esses leads voltam para a lista.")) return;
+        await NovosDB.metaGravar("clientes", { cnpjs:{} }); NOVOS.cli = null; novosDesenhar(); };
+      bar.append(bl);
+    }
+    u.corpo.append(bar);
+  }
   if(!todos.length){
-    u.corpo.append(el("p","kicker","Ainda não há leads aqui. Comece uma busca no Modelo 04: cada cidade concluída aparece nesta lista."));
+    u.corpo.append(el("p","kicker", dv === "rede" ? "Nenhuma unidade de rede ainda. Na lista de leads, marque a caixa da coluna Rede e digite o nome da rede."
+      : dv === "clientes" ? "Nenhum lead do Cadastro é cliente." : "Ainda não há leads aqui. Comece uma busca no Modelo 04: cada cidade concluída aparece nesta lista."));
     return;
   }
   if(!lista.length){ u.corpo.append(el("p","kicker","Nenhum lead com esses filtros.")); return; }
@@ -9237,9 +9411,26 @@ async function novosDesenhar(){
   [["Empresa","empresa"],["CNPJ","cnpj"],["Cidade","cidade"],["Endereço","endereco"],["Tel. Google Maps","telMaps"],["Tel. MaisCNPJ","telMaisCnpj"],["Requisito","situacao"]]
     .forEach(([rot, col]) => h.append(novosThOrd(rot, col, NOVOS.ordLista, () => novosDesenhar())));
   h.append(el("th"));
+  h.append(el("th", "ck", dv === "clientes" ? "Cliente" : "Rede"));
   tb.append(h);
+  const dl = el("datalist"); dl.id = "novosRedesLista";
+  redes.forEach(n => { const o = el("option"); o.value = n; dl.append(o); });
+  u.corpo.append(dl);
 
+  let redeAtual = null;
   visiveis.forEach(r => {
+    if(dv === "rede" && r.rede !== redeAtual){
+      redeAtual = r.rede;
+      const unid = lista.filter(x => x.rede === redeAtual);
+      const trc = el("tr","nredecab"), tdc = el("td"); tdc.colSpan = 10;
+      tdc.append(el("b",null, redeAtual), document.createTextNode(" · " + unid.length + (unid.length === 1 ? " unidade" : " unidades") +
+        " · " + unid.filter(x => x.status === "aprovado").length + " aprovadas · " + [...new Set(unid.map(x => x.cidade))].length + " cidades "));
+      const br = el("button","btn sm","Renomear");
+      br.onclick = () => { const n = prompt("Novo nome da rede “" + redeAtual + "”:", redeAtual); if(n && n.trim()) novosMarcarRede(unid, n); };
+      const bm = el("button","btn sm","Marcar as unidades");
+      bm.onclick = () => { unid.forEach(x => NOVOS.sel.add(x.chave)); novosDesenhar(); };
+      tdc.append(br, bm); trc.append(tdc); tb.append(trc);
+    }
     const tr = el("tr"); if(NOVOS.sel.has(r.chave)) tr.classList.add("marcado");
     const tdc = el("td","ck"); const ck = el("input"); ck.type = "checkbox"; ck.checked = NOVOS.sel.has(r.chave);
     ck.onchange = () => { ck.checked ? NOVOS.sel.add(r.chave) : NOVOS.sel.delete(r.chave); tr.classList.toggle("marcado", ck.checked); u.info.textContent = NOVOS.sel.size ? NOVOS.sel.size + " marcados" : ""; };
@@ -9279,6 +9470,12 @@ async function novosDesenhar(){
     if(r.link){ const a = el("a",null,"Maps"); a.href = r.link; a.target = "_blank"; a.rel = "noopener"; tdL.append(a); }
     if(r.linkMaisCnpj){ tdL.append(document.createTextNode(" · ")); const a = el("a",null,"MaisCNPJ"); a.href = r.linkMaisCnpj; a.target = "_blank"; a.rel = "noopener"; tdL.append(a); }
     tr.append(tdL);
+    if(dv === "clientes"){
+      const tc = el("td"); const tipo = novosCliente(r);
+      tc.append(el("span","pill st-done", tipo === "cliente" ? "cliente" : "outra unidade"));
+      const nm = NOVOS.cli.cnpjs[cnpjDig(r.cnpj)]; if(nm) tc.append(el("div","sub", nm));
+      tr.append(tc);
+    } else tr.append(novosCelulaRede(r, redes));
     tb.append(tr);
   });
   tw.append(tb); u.corpo.append(tw);
@@ -9453,28 +9650,29 @@ async function novosLimparRamo(g){
 
 /* exporta a lista filtrada (todas as páginas) em CSV ou Excel */
 function novosExportar(tipo){
-  const lista = NOVOS.filtrada || [];
-  if(!lista.length) return toast("Não há leads com esses filtros para baixar.");
+  /* clientes nunca vão na exportação */
+  const lista = (NOVOS.filtrada || []).filter(x => !novosCliente(x));
+  if(!lista.length) return toast(NOVOS.divisao === "clientes" ? "Clientes não são exportados." : "Não há leads com esses filtros para baixar.");
   const f = NOVOS.filtro;
   const data = d => d ? String(d).slice(0, 10).split("-").reverse().join("/") : "";
   const cab = ["Ramo","Situação","Motivo","Empresa (Google Maps)","Razão social","Nome fantasia","CNPJ","Natureza jurídica","Abertura","Situação cadastral",
-    "Porte","Capital social","Endereço (Google Maps)","Bairro","CEP","Cidade","UF","Zona","Distrito","Endereço (Receita)","Telefone Google Maps","Telefone MaisCNPJ",
+    "Porte","Capital social","Endereço (Google Maps)","Bairro","CEP","Cidade","UF","Zona","Distrito","Rede","Endereço (Receita)","Telefone Google Maps","Telefone MaisCNPJ",
     "Telefone Receita","E-mail","Site","Nota Google","Avaliações","Categoria","Link Google Maps","Link MaisCNPJ","Enviado à Base","Encontrado em"];
   const linhas = [cab].concat(lista.map(r => [
     r.termo || "", (M04_STATUS[r.status] || [r.status])[0], r.status === "aprovado" ? "" : (r.motivo || ""),
     r.nomeMaps || "", r.razaoSocial || "", r.nomeFantasia || "", r.cnpj || "", r.natureza || "", data(r.abertura), r.situacao || "",
-    r.porte || "", r.capital ? String(r.capital) : "", r.endereco || "", r.bairro || "", r.cep || "", r.cidade || "", r.uf || "", r.zona || "", r.distrito || "",
+    r.porte || "", r.capital ? String(r.capital) : "", r.endereco || "", r.bairro || "", r.cep || "", r.cidade || "", r.uf || "", r.zona || "", r.distrito || "", r.rede || "",
     r.enderecoReceita || "", r.telMaps || "", r.telMaisCnpj || "", (r.telReceita || []).join(" / "), r.email || "", r.site || "",
     r.nota || "", r.avaliacoes || "", r.categoria || "", r.link || "", r.linkMaisCnpj || "",
     r.enviadoBase ? "Sim" : "Não", r.encontradoEm ? new Date(r.encontradoEm).toLocaleDateString("pt-BR") : ""
   ].map(v => v == null ? "" : String(v))));
-  const nome = ["leads", f.ramo ? (NOVOS.nomesRamo || {})[f.ramo] : "todos-os-ramos", f.uf, f.cidade, f.status, stamp()]
+  const nome = ["leads", NOVOS.divisao === "rede" ? "rede" : "", f.ramo ? (NOVOS.nomesRamo || {})[f.ramo] : "todos-os-ramos", f.uf, f.cidade, f.status, stamp()]
     .filter(Boolean).join("_").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w\-]+/g, "-").toLowerCase();
   if(tipo === "csv"){
     const q = v => /[";\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
     download(nome + ".csv", "text/csv", linhas.map(l => l.map(q).join(";")).join("\r\n"));
   } else {
-    baixarXlsx(nome, linhas, [22,18,40,34,40,30,20,34,12,14,14,14,50,22,10,22,6,10,22,50,18,22,26,30,30,8,10,24,40,40,10,12]);
+    baixarXlsx(nome, linhas, [22,18,40,34,40,30,20,34,12,14,14,14,50,22,10,22,6,10,22,24,50,18,22,26,30,30,8,10,24,40,40,10,12]);
   }
   toast(lista.length.toLocaleString("pt-BR") + " leads baixados.");
 }
@@ -9510,8 +9708,8 @@ async function novosConferirManual(r, valor, bt){
 /* envia para a Base de Leads no mesmo formato das planilhas das fases 01 e 03 */
 async function novosEnviarBase(){
   const u = NOVOS.ui;
-  const marcados = (NOVOS.lista || []).filter(x => NOVOS.sel.has(x.chave));
-  if(!marcados.length) return toast("Marque os leads primeiro.");
+  const marcados = (NOVOS.lista || []).filter(x => NOVOS.sel.has(x.chave) && !novosCliente(x));
+  if(!marcados.length) return toast(NOVOS.divisao === "clientes" ? "Clientes não vão para a Base de Leads." : "Marque os leads primeiro.");
   const comCnpj = marcados.filter(x => cnpjDig(x.cnpj).length === 14);
   if(!comCnpj.length) return toast("Os marcados não têm CNPJ. Digite o CNPJ antes de enviar.");
   const registros = comCnpj.map(r => ({
