@@ -9308,6 +9308,19 @@ function novosSugerirRedeLote(lote, redes){
   if(comum.length) return comum.join(" ");
   return novosSugerirRede(lote[0], redes);
 }
+/* renomeia a rede inteira (todas as unidades, mesmo as escondidas pelos filtros); nome igual a outra rede = junta as duas */
+function novosRenomearRede(antigo, unid, redes){
+  const n = prompt("Novo nome da rede “" + antigo + "” (" + unid.length + (unid.length === 1 ? " unidade" : " unidades") +
+    "). Se digitar o nome de outra rede, as duas viram uma só:", antigo);
+  if(n == null) return;
+  const nome = n.trim().replace(/\s+/g, " ");
+  if(!nome) return toast("Digite o nome da rede.");
+  const igual = redes.find(r => r !== antigo && baseChave(r) === baseChave(nome));
+  const final = igual || nome;
+  if(final === antigo) return;
+  if(NOVOS.redeSel === antigo) NOVOS.redeSel = final;
+  novosMarcarRede(unid, final);
+}
 /* janela que pergunta o nome da rede e leva as unidades para REDE › nome */
 function novosPerguntarRede(lote, redes){
   if(!lote.length) return toast("Marque as unidades primeiro.");
@@ -9422,10 +9435,12 @@ async function novosDesenhar(){
   const ce = leadsChip(env, "já enviados à Base", ""); if(ce) u.chips.append(ce);
 
   const q = baseChave(f.busca), qd = cnpjDig(f.busca);
-  const lista = noRecorte.filter(x => (!f.status || x.status === f.status) && (!f.naoEnviados || !x.enviadoBase) &&
-    (!q || baseChave([x.nomeMaps, x.razaoSocial, x.nomeFantasia, x.cnpj, x.endereco, x.telMaps, x.telMaisCnpj, x.distrito, x.zona ? "zona " + x.zona : ""].join(" ")).includes(q) ||
-     (qd.length >= 4 && (cnpjDig(x.cnpj).includes(qd) || cnpjDig(x.telMaps + x.telMaisCnpj).includes(qd)))))
-    ;
+  /* filtros da barra (situação, só não enviados, busca); o estado e a cidade já vieram em noRecorte */
+  const passaFiltro = x => (!f.status || x.status === f.status) && (!f.naoEnviados || !x.enviadoBase) &&
+    (!q || baseChave([x.nomeMaps, x.razaoSocial, x.nomeFantasia, x.cnpj, x.endereco, x.telMaps, x.telMaisCnpj, x.distrito, x.rede, x.zona ? "zona " + x.zona : ""].join(" ")).includes(q) ||
+     (qd.length >= 4 && (cnpjDig(x.cnpj).includes(qd) || cnpjDig(x.telMaps + x.telMaisCnpj).includes(qd))));
+  const noLugar = x => (!f.uf || x.uf === f.uf) && (!f.cidade || x.cidade === f.cidade);
+  const lista = noRecorte.filter(passaFiltro);
   novosOrdenaLeads(lista, NOVOS.ordLista);
   /* na REDE, as unidades ficam agrupadas pelo nome da rede */
   if(dv === "rede"){ const pos = new Map(lista.map((x, i) => [x.chave, i]));
@@ -9445,12 +9460,24 @@ async function novosDesenhar(){
   u.info.textContent = NOVOS.sel.size ? NOVOS.sel.size + " marcados" : "";
   u.corpo.innerHTML = "";
   if(dv === "rede" && redes.length){
+    /* cada rede mostra quantas unidades passam nos filtros de cima e, se for diferente, o total dela */
+    const daRamo = f.ramo ? daDivisao.filter(x => novosRamoKey(x) === f.ramo) : daDivisao;
     const nav = el("div","nredesnav");
-    const pill = (rot, val, n) => { const b = el("button","ndiv" + ((NOVOS.redeSel || "") === val ? " on" : ""));
-      b.append(document.createTextNode(rot + " "), el("span",null, String(n)));
-      b.onclick = () => { NOVOS.redeSel = val; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); }; return b; };
-    nav.append(pill("Todas as redes", "", daDivisao.length));
-    redes.forEach(n => nav.append(pill(n, n, daDivisao.filter(x => x.rede === n).length)));
+    const pill = (rot, val, unid) => {
+      const vis = unid.filter(x => noLugar(x) && passaFiltro(x)).length;
+      const b = el("button","ndiv" + ((NOVOS.redeSel || "") === val ? " on" : ""));
+      b.append(document.createTextNode(rot + " "), el("span",null, vis === unid.length ? String(vis) : vis + " de " + unid.length));
+      if(vis !== unid.length) b.title = (unid.length - vis) + " unidades escondidas pelos filtros (situação, estado, cidade ou busca)";
+      b.onclick = () => { NOVOS.redeSel = val; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); };
+      return b;
+    };
+    nav.append(pill("Todas as redes", "", daRamo));
+    redes.forEach(n => nav.append(pill(n, n, daRamo.filter(x => x.rede === n))));
+    if(NOVOS.redeSel){
+      const br = el("button","btn sm","✎ Renomear “" + NOVOS.redeSel + "”");
+      br.onclick = () => novosRenomearRede(NOVOS.redeSel, tudo.filter(x => x.rede === NOVOS.redeSel), redes);
+      nav.append(br);
+    }
     u.corpo.append(nav);
   }
   if(dv === "clientes"){
@@ -9471,7 +9498,17 @@ async function novosDesenhar(){
       : dv === "clientes" ? "Nenhum lead do Cadastro é cliente." : "Ainda não há leads aqui. Comece uma busca no Modelo 04: cada cidade concluída aparece nesta lista."));
     return;
   }
-  if(!lista.length){ u.corpo.append(el("p","kicker","Nenhum lead com esses filtros.")); return; }
+  if(!lista.length){
+    const escondidos = todos.length;
+    const p = el("p","kicker", escondidos ? escondidos + (escondidos === 1 ? " unidade não aparece" : " unidades não aparecem") + " por causa dos filtros" +
+      (f.status ? " (situação: " + M04_STATUS[f.status][0].toLowerCase() + ")" : "") + ". " : "Nenhum lead com esses filtros. ");
+    if(escondidos){
+      const bt = el("button","btn sm","Mostrar todas as situações e lugares");
+      bt.onclick = () => { f.status = ""; f.uf = ""; f.cidade = ""; f.naoEnviados = false; f.busca = ""; u.inB.value = ""; u.ckN.checked = false; novosDesenhar(); };
+      p.append(bt);
+    }
+    u.corpo.append(p); return;
+  }
 
   const tw = el("div","tablewrap"), tb = el("table","leadlista");
   const h = el("tr");
@@ -9494,8 +9531,9 @@ async function novosDesenhar(){
       const trc = el("tr","nredecab"), tdc = el("td"); tdc.colSpan = 10;
       tdc.append(el("b",null, redeAtual), document.createTextNode(" · " + unid.length + (unid.length === 1 ? " unidade" : " unidades") +
         " · " + unid.filter(x => x.status === "aprovado").length + " aprovadas · " + [...new Set(unid.map(x => x.cidade))].length + " cidades "));
-      const br = el("button","btn sm","Renomear");
-      br.onclick = () => { const n = prompt("Novo nome da rede “" + redeAtual + "”:", redeAtual); if(n && n.trim()) novosMarcarRede(unid, n); };
+      const br = el("button","btn sm","✎ Renomear");
+      const nomeAtual = redeAtual;
+      br.onclick = async () => novosRenomearRede(nomeAtual, (await NovosDB.todos()).filter(x => x.rede === nomeAtual), redes);
       const bm = el("button","btn sm","Marcar as unidades");
       bm.onclick = () => { unid.forEach(x => NOVOS.sel.add(x.chave)); novosDesenhar(); };
       const ba = el("button","btn sm","Abrir só esta rede");
