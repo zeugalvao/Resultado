@@ -9291,7 +9291,10 @@ function pickNovos(host){
   btCli.onclick = () => inCli.click();
   inCli.onchange = async () => { const f = inCli.files[0]; inCli.value = ""; if(f){ btCli.disabled = true; await novosImportarClientes(f); btCli.disabled = false; } };
   const info = el("span","leadshint"); info.style.alignSelf = "center";
-  acoes.append(btEnviar, btRede, btCsv, btXls, btExcluir, btAtual, btRefazer, btCli, inCli, info);
+  /* limpeza: com uma cidade escolhida no filtro, apaga do Cadastro tudo o que não é dela */
+  const btManter = el("button","btn danger","Manter só esta cidade"); btManter.hidden = true;
+  btManter.onclick = () => novosManterSoCidade(NOVOS.filtro.uf, NOVOS.filtro.cidade);
+  acoes.append(btEnviar, btRede, btCsv, btXls, btExcluir, btManter, btAtual, btRefazer, btCli, inCli, info);
 
   const mostrando = el("div","nmostrando");
   const divisoes = el("div","ndivisoes");
@@ -9299,7 +9302,7 @@ function pickNovos(host){
   host.append(acoes);
 
   const corpo = el("div"); host.append(corpo);
-  NOVOS.ui = { inB, sSt, sUf, sCid, ckN, chips, corpo, info, btEnviar, btExcluir, ramos, mostrando, divisoes, btCsv, btXls, btRede };
+  NOVOS.ui = { inB, sSt, sUf, sCid, ckN, chips, corpo, info, btEnviar, btExcluir, ramos, mostrando, divisoes, btCsv, btXls, btRede, btManter };
 
   let t = null;
   inB.oninput = () => { clearTimeout(t); t = setTimeout(() => { NOVOS.filtro.busca = inB.value; NOVOS.mostrar = 200; novosDesenhar(); }, 250); };
@@ -9523,6 +9526,8 @@ async function novosDesenhar(){
     .filter(x => dv !== "rede" || !NOVOS.redeSel || x.rede === NOVOS.redeSel);
   NOVOS.lista = todos;
   u.btRede.hidden = dv === "clientes";
+  u.btManter.hidden = !(f.uf && f.cidade);
+  if(f.cidade) u.btManter.textContent = "Manter só " + f.cidade + " (apagar o resto)";
   u.btRede.textContent = dv === "rede" ? "Mudar a rede dos marcados" : "Marcar como rede";
 
   const nDiv = k => tudo.filter(x => divDe(x) === k).length;
@@ -9876,6 +9881,26 @@ async function novosLimparRamo(g){
   await NovosDB.excluir(fora.map(x => x.chave));
   NOVOS.sel.clear(); NOVOS.cidAbertas.clear();
   toast(fora.length.toLocaleString("pt-BR") + " leads de outros ramos apagados. Ficaram " + ficam.toLocaleString("pt-BR") + ".");
+  novosDesenhar();
+}
+
+/* apaga do Cadastro todos os leads que não são da cidade escolhida (todos os ramos e divisões) */
+async function novosManterSoCidade(uf, cidade){
+  if(!uf || !cidade) return toast("Escolha o estado e a cidade no filtro primeiro.");
+  const tudo = await NovosDB.todos();
+  const fica = tudo.filter(x => x.uf === uf && x.cidade === cidade);
+  const sai = tudo.filter(x => !(x.uf === uf && x.cidade === cidade));
+  if(!sai.length) return toast("O Cadastro já só tem leads de " + cidade + ".");
+  const porUf = {};
+  sai.forEach(x => { porUf[x.uf || "?"] = (porUf[x.uf || "?"] || 0) + 1; });
+  const resumoUf = Object.entries(porUf).sort((a, b) => b[1] - a[1]).map(([u, n]) => "  • " + u + ": " + n.toLocaleString("pt-BR")).join("\n");
+  if(!confirm("Ficam " + fica.length.toLocaleString("pt-BR") + " leads de " + cidade + "/" + uf + ".\n" +
+    "Vão ser apagados " + sai.length.toLocaleString("pt-BR") + " leads de todas as outras cidades, de todos os ramos " +
+    "(inclusive REDE, MEI e Já são clientes):\n" + resumoUf + "\n\nIsso não pode ser desfeito. Apagar?")) return;
+  if(prompt("Para confirmar, digite APAGAR") !== "APAGAR") return toast("Nada foi apagado.");
+  await NovosDB.excluir(sai.map(x => x.chave));
+  NOVOS.sel.clear(); NOVOS.cidAbertas.clear();
+  toast(sai.length.toLocaleString("pt-BR") + " leads apagados. Ficaram " + fica.length.toLocaleString("pt-BR") + " de " + cidade + ".");
   novosDesenhar();
 }
 
