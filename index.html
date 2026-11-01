@@ -8922,8 +8922,8 @@ function pickModelo04(host){
   const selJan = el("select");
   [["fixada","Aba fixada nesta janela (nunca vem para a frente)"],["separada","Janela separada (vem para a frente ao ler as listas)"]]
     .forEach(([v, r]) => { const o = el("option",null,r); o.value = v; selJan.append(o); });
-  selJan.value = (M04.campos && M04.campos.janela) || "fixada";
-  campo("Onde a busca roda", selJan, "Aba fixada: fica no canto das abas e você só abre quando quiser ver. Como a aba fica escondida, a extensão divide as áreas em pedaços menores: faz mais buscas, mas não atrapalha.");
+  selJan.value = (M04.campos && M04.campos.janela) || "separada";
+  campo("Onde a busca roda", selJan, "Janela separada acha mais clínicas: ela rola as listas do Maps até o fim. Na aba fixada o Chrome não desenha a página escondida e o Maps mostra só os primeiros resultados; a extensão compensa com buscas em pedaços menores, mas pode achar menos. Se usar a aba fixada, abrir a aba de vez em quando ajuda.");
 
   const selMax = el("select");
   [["120","até 120 por cidade"],["300","até 300 por cidade"],["600","até 600 por cidade"],["1500","até 1.500 por cidade"],["5000","até 5.000 por cidade"]]
