@@ -6277,6 +6277,7 @@ function desenhaPicker(){
   else if(pickEtapa === "redes") pickRedes(w);
   else if(pickEtapa === "base") pickBase(w);
   else if(pickEtapa === "modelo04") pickModelo04(w);
+  else if(pickEtapa === "modelo05") pickModelo04(w, "cnae");
   else if(pickEtapa === "novos") pickNovos(w);
   else if(pickEtapa === "receita") pickBuscar(w);
   else if(pickEtapa === "usuarios") pickUsuarios(w);
@@ -8563,7 +8564,8 @@ const M04_STATUS = {
   aguardando: ["Aguardando 6 meses", "st-doing"],
   fora:       ["Fora do requisito", "st-late"],
   verificar:  ["Conferir", "st-doing"],
-  sem_cnpj:   ["Sem CNPJ", "st-todo"]
+  sem_cnpj:   ["Sem CNPJ", "st-todo"],
+  mei:        ["MEI", "st-todo"]
 };
 
 window.addEventListener("message", ev => {
@@ -8665,7 +8667,7 @@ async function m04Importar(est){
       if(erro || !resp) break;
       /* segunda trava: mesmo que a extensão traga algo de outro ramo, só entra o ramo buscado */
       const pal = (est.palavras && est.palavras.length) ? est.palavras : ramoPalavras(est.termo, "");
-      const doRamo = r => ramoConfere(pal, [r.nomeMaps, r.nomeFantasia, r.razaoSocial, r.categoria].join(" "));
+      const doRamo = r => est.modo === "cnae" || r.origem === "cnae" || ramoConfere(pal, [r.nomeMaps, r.nomeFantasia, r.razaoSocial, r.categoria].join(" "));
       const lista = (resp.registros || []).filter(doRamo).map(r => {
         const antigo = existentes.get(r.chave);
         const novo = Object.assign({}, r, { importadoEm: new Date().toISOString() });
@@ -8781,14 +8783,23 @@ setInterval(async () => {
 }, 10000);
 
 /* ---------- tela do Modelo 04 ---------- */
-function pickModelo04(host){
-  trilha(host, ["Modelo 04 · Maps + MaisCNPJ"], "frentes");
+function pickModelo04(host, modo){
+  const cnae = modo === "cnae";
+  M04.tela = cnae ? "cnae" : "maps";
+  trilha(host, [cnae ? "Modelo 05 · CNAE primeiro" : "Modelo 04 · Maps + MaisCNPJ"], "frentes");
 
   const hd = el("div","pickhead");
-  hd.append(el("h1",null,"Buscar no Maps e achar o CNPJ, cidade por cidade"));
-  hd.append(el("p",null,"Digite o tipo de cliente e o estado. Começa pela capital e segue em ordem alfabética. " +
-    "Em cada cidade, procura no Google Maps, acha o CNPJ no MaisCNPJ pelo endereço, pega o telefone de lá e confere " +
-    "se é LTDA com 6 meses ou mais. Cada cidade que fecha já entra no Cadastro Leads Novos."));
+  if(cnae){
+    hd.append(el("h1",null,"Buscar pelo CNAE no MaisCNPJ, cidade por cidade"));
+    hd.append(el("p",null,"Digite o CNAE e escolha as cidades. Em cada cidade, lê todas as páginas da lista do CNAE no MaisCNPJ, " +
+      "separa LTDA de MEI, abre só as LTDA para conferir natureza, abertura (6 meses), telefone e filiais, e procura cada LTDA no Google Maps " +
+      "pelo nome e endereço. As MEI entram numa lista própria. Cada cidade que fecha já entra no Cadastro Leads Novos."));
+  } else {
+    hd.append(el("h1",null,"Buscar no Maps e achar o CNPJ, cidade por cidade"));
+    hd.append(el("p",null,"Digite o tipo de cliente e o estado. Começa pela capital e segue em ordem alfabética. " +
+      "Em cada cidade, procura no Google Maps, acha o CNPJ no MaisCNPJ pelo endereço, pega o telefone de lá e confere " +
+      "se é LTDA com 6 meses ou mais. Cada cidade que fecha já entra no Cadastro Leads Novos."));
+  }
   host.append(hd);
 
   const aviso = el("div","leadsaviso"); aviso.hidden = true; host.append(aviso);
@@ -8805,7 +8816,11 @@ function pickModelo04(host){
   };
   const inTermo = el("input"); inTermo.type = "text"; inTermo.placeholder = "clínica odontológica";
   inTermo.value = (M04.campos && M04.campos.termo) || "";
-  campo("Tipo de cliente", inTermo, "Do jeito que você procuraria no Google Maps.");
+  campo(cnae ? "Nome do ramo no Cadastro" : "Tipo de cliente", inTermo, cnae ? "Agrupa os leads no Cadastro Leads Novos (ex.: Clínica de depilação). Use o mesmo nome do ramo que já existe para juntar." : "Do jeito que você procuraria no Google Maps.");
+  const inCnae = el("input"); inCnae.type = "text"; inCnae.spellcheck = false;
+  inCnae.placeholder = "ex.: 9602502 (vários separados por vírgula) ou o link da lista no MaisCNPJ";
+  inCnae.value = (M04.campos && M04.campos.cnaeTxt) || "";
+  if(cnae){ inTermo.placeholder = "Clínica de depilação"; campo("CNAE", inCnae, "Código de 7 dígitos (com ou sem pontos) ou o endereço da lista da atividade no MaisCNPJ.", true); }
 
   const inPal = el("input"); inPal.type = "text"; inPal.spellcheck = false;
   inPal.value = (M04.campos && M04.campos.palavras) || "";
@@ -8822,6 +8837,7 @@ function pickModelo04(host){
   campo("Palavras do ramo (opcional, separe por vírgula)", inPal, "", true);
   inPal.parentElement.append(palDica);
   palAtualiza();
+  if(cnae) inPal.parentElement.style.display = "none";
 
   const selUf = el("select");
   M04_UFS.forEach(u => { const o = el("option",null,u); o.value = u; selUf.append(o); });
@@ -8831,8 +8847,10 @@ function pickModelo04(host){
   /* onde buscar: a capital (por zona) e as outras cidades são buscas separadas */
   const selEsc = el("select");
   [["cidades","Cidades que eu escolher"],["zona","Só a capital, por zona"],["demais","Só as outras cidades do estado (sem a capital)"],["estado","Estado inteiro (capital e outras cidades)"]]
+    .filter(([v]) => !(cnae && v === "zona"))
     .forEach(([v, r]) => { const o = el("option",null,r); o.value = v; selEsc.append(o); });
-  selEsc.value = (M04.campos && M04.campos.escopo) || "zona";
+  selEsc.value = (M04.campos && M04.campos.escopo) || (cnae ? "cidades" : "zona");
+  if(!selEsc.value) selEsc.value = "cidades";
   campo("Onde buscar", selEsc, "");
   const selZona = el("select");
   M04_ZONAS.forEach(z => { const o = el("option",null,"Zona " + z); o.value = z; selZona.append(o); });
@@ -8845,7 +8863,11 @@ function pickModelo04(host){
   const dlCid = el("datalist"); dlCid.id = "m04ListaCidades";
   const btAddCid = el("button","btn sm","Adicionar"); btAddCid.type = "button";
   const chipsCid = el("div","m04cidchips");
+  const lbViz = el("label","qualcheck"); lbViz.style.flexBasis = "100%";
+  const ckViz = el("input"); ckViz.type = "checkbox"; ckViz.checked = !!(M04.campos && M04.campos.vizinhas);
+  lbViz.append(ckViz, document.createTextNode(" Incluir as cidades vizinhas (que fazem divisa). Ex.: Sorocaba + Votorantim, onde fica o Shopping Iguatemi Esplanada."));
   cidBox.append(inCid, btAddCid, dlCid, chipsCid);
+  if(cnae) cidBox.append(lbViz);
   campo("Cidades", cidBox, "", true);
   const escolhidas = [];
   ((M04.campos && M04.campos.uf === selUf.value && M04.campos.cidades) || []).forEach(c => escolhidas.push(c));
@@ -8900,7 +8922,7 @@ function pickModelo04(host){
     if(ci) carregaCidades();
     const qtd = parseInt(inQtd.value, 10) > 0 ? parseInt(inQtd.value, 10) : 0;
     escDica.textContent = ci
-      ? (escolhidas.length ? "Busca só em: " + escolhidas.join(", ") + ", nesta ordem." : "Escolha uma ou mais cidades de " + selUf.value + ".")
+      ? (escolhidas.length ? "Busca só em: " + escolhidas.join(", ") + (cnae && ckViz.checked ? " e nas cidades vizinhas de cada uma" : "") + ", nesta ordem." : "Escolha uma ou mais cidades de " + selUf.value + ".")
       : z
       ? (selUf.value === "SP"
           ? "Busca só em " + cap + ", só na Zona " + selZona.value + ": cada distrito da zona pelo nome e em 9 pedaços de ~2 km em volta, rolando cada lista até o fim. Ao terminar, para e pergunta se quer fazer outra zona. Nunca passa para outras cidades."
@@ -8910,7 +8932,7 @@ function pickModelo04(host){
         : "Começa por " + cap + " (busca da cidade inteira, em regiões) e depois segue para as outras cidades em ordem alfabética" + (qtd ? ", até completar " + qtd + " cidades (contando a capital)." : ".");
   };
   selUf.addEventListener("change", () => { escolhidas.length = 0; escAtualiza(); });
-  selEsc.onchange = escAtualiza; selZona.onchange = escAtualiza; inQtd.oninput = escAtualiza;
+  selEsc.onchange = escAtualiza; selZona.onchange = escAtualiza; inQtd.oninput = escAtualiza; ckViz.onchange = escAtualiza;
   escAtualiza();
 
   const selInt = el("select");
@@ -8938,9 +8960,11 @@ function pickModelo04(host){
   config.append(form);
 
   const opc = el("div","qualopcoes");
+  if(cnae){ selMax.parentElement.style.display = "none"; inTpl.parentElement.style.display = "none"; }
   const lb = el("label","qualcheck"); const ckDiv = el("input"); ckDiv.type = "checkbox"; ckDiv.checked = true;
   lb.append(ckDiv, document.createTextNode(" Dividir cidades grandes em regiões (o Maps mostra no máximo uns 120 locais por busca)"));
   opc.append(lb);
+  if(cnae) lb.style.display = "none";
   config.append(opc);
 
   const acoes = el("div","leadsacoes");
@@ -9008,12 +9032,20 @@ function pickModelo04(host){
 
   btIniciar.onclick = async () => {
     const termo = inTermo.value.trim();
-    if(!termo) return toast("Digite o tipo de cliente.");
+    if(!termo) return toast(cnae ? "Digite o nome do ramo (ex.: Clínica de depilação)." : "Digite o tipo de cliente.");
+    /* CNAE: códigos de 7 dígitos ou o link da lista da atividade no MaisCNPJ */
+    const cnaes = !cnae ? [] : inCnae.value.split(/[,;\s]+(?=\d|https?:)/).map(x => x.trim()).filter(Boolean).map(x => {
+      const u = x.match(/maiscnpj\.com\.br\/empresas\/[a-z]{2}\/[a-z0-9-]+\/([a-z0-9-]+)/i);
+      if(u) return "slug:" + u[1].toLowerCase();
+      const d = x.replace(/\D/g, "");
+      return d.length === 7 ? d : "";
+    });
+    if(cnae && (!cnaes.length || cnaes.some(x => !x))){ inCnae.focus(); return toast("Confira o CNAE: use o código de 7 dígitos (ex.: 9602502) ou o link da lista no MaisCNPJ."); }
     /* o tipo de cliente é só o ramo: cidade e zona são escolhidas nos campos próprios */
     const tN = " " + ramoNorm(termo) + " ";
     const cidadeNoTermo = (listaUf.uf === selUf.value ? listaUf.nomes : []).concat(M04_CAPITAIS[selUf.value] || [])
       .find(n => ramoNorm(n).length >= 4 && tN.includes(" " + ramoNorm(n) + " "));
-    if(/\bzona\b|\bcapital\b/i.test(termo) || cidadeNoTermo){
+    if(!cnae && (/\bzona\b|\bcapital\b/i.test(termo) || cidadeNoTermo)){
       inTermo.focus();
       return toast("Em “Tipo de cliente” digite só o ramo (ex.: clínica de depilação a laser)" + (cidadeNoTermo ? ", sem “" + cidadeNoTermo + "”" : "") +
         ". A cidade é escolhida em “Onde buscar”: use “Cidades que eu escolher”.");
@@ -9021,12 +9053,13 @@ function pickModelo04(host){
     if(selEsc.value === "cidades" && !escolhidas.length){ inCid.focus(); return toast("Escolha pelo menos uma cidade."); }
     const limiteCidades = parseInt(inQtd.value, 10) > 0 ? parseInt(inQtd.value, 10) : 0;
     M04.campos = { termo, uf: selUf.value, palavras: inPal.value.trim(), escopo: selEsc.value, zonaInicial: selZona.value, janela: selJan.value,
-                   cidades: escolhidas.slice(), limiteCidades };
+                   cidades: escolhidas.slice(), limiteCidades, cnaeTxt: inCnae.value.trim(), vizinhas: ckViz.checked };
     m04PrefSet("pausaManual", false); M04_AUTO.tentativas = 0;
     btIniciar.disabled = true; btIniciar.textContent = "Carregando as cidades…";
     const { resp, erro } = await m04Enviar({ type:"iniciar", termo, uf: selUf.value,
       opcoes:{ intervalo: +selInt.value, maxPorCidade: +selMax.value, dividir: ckDiv.checked, maisTpl: inTpl.value.trim(), palavras: inPal.value.trim(), escopo: selEsc.value, zonaInicial: selZona.value, janela: selJan.value,
-        cidades: escolhidas.slice(), limiteCidades: (selEsc.value === "demais" || selEsc.value === "estado") ? limiteCidades : 0 } }, 30000);
+        cidades: escolhidas.slice(), limiteCidades: (selEsc.value === "demais" || selEsc.value === "estado") ? limiteCidades : 0,
+        modo: cnae ? "cnae" : "maps", cnaes, vizinhas: cnae && selEsc.value === "cidades" && ckViz.checked } }, 60000);
     btIniciar.disabled = false; btIniciar.textContent = "Começar a busca";
     if(erro || !resp) return m04SemExtensao(erro);
     m04Pinta(resp); m04Polling();
@@ -9093,15 +9126,19 @@ function m04Pinta(s){
   u.grande.textContent = prontas.toLocaleString("pt-BR");
   u.totalTxt.textContent = "de " + s.totalCidades.toLocaleString("pt-BR") + (s.escopo === "zona" ? " zonas prontas" : " cidades prontas");
   seloEstado(u.selo, s);
-  u.escopo.textContent = "“" + s.termo + "” em " + (s.escopo === "zona" ? (M04_CAPITAIS[s.uf] || s.uf) + " (capital, por zona)" : s.escopo === "demais" ? s.uf + " sem a capital" : s.escopo === "cidades" ? (s.cidades || []).map(c => c.nome).filter((n, i, a) => a.indexOf(n) === i).slice(0, 6).join(", ") + ((s.cidades || []).length > 6 ? "…" : "") + " (" + s.uf + ")" : s.uf) + (s.maisTpl ? " · busca do MaisCNPJ: " + s.maisTpl : "");
+  u.escopo.textContent = (s.modo === "cnae" ? "Modelo 05 · CNAE " + (s.cnaes || []).map(x => String(x).replace(/^slug:/, "")).join(", ") + " · ramo " : "") + "“" + s.termo + "” em " + (s.escopo === "zona" ? (M04_CAPITAIS[s.uf] || s.uf) + " (capital, por zona)" : s.escopo === "demais" ? s.uf + " sem a capital" : s.escopo === "cidades" ? (s.cidades || []).map(c => c.nome).filter((n, i, a) => a.indexOf(n) === i).slice(0, 6).join(", ") + ((s.cidades || []).length > 6 ? "…" : "") + " (" + s.uf + ")" : s.uf) + (s.maisTpl ? " · busca do MaisCNPJ: " + s.maisTpl : "");
   const parcial = s.fase === "cnpj" && s.lugaresTotal ? s.li / s.lugaresTotal : 0;
   u.fill.style.width = (s.totalCidades ? ((prontas + (s.concluido ? 0 : parcial)) / s.totalCidades) * 100 : 0) + "%";
 
   const t = s.totais || {};
   u.chips.innerHTML = "";
-  [[t.aprovados,"aprovados","ok"],[t.aguardando,"aguardando 6 meses","novo"],[t.fora,"fora do requisito","alerta"],
+  (s.modo === "cnae"
+   ? [[t.aprovados,"aprovados","ok"],[t.aguardando,"aguardando 6 meses","novo"],[t.fora,"fora do requisito","alerta"],
+      [t.verificar,"para conferir","alerta"],[t.lista,"na lista do CNAE",""],[t.ltda,"LTDA",""],[t.mei,"MEI (fora do interesse)",""],
+      [t.noMaps,"achadas no Maps",""],[t.semMaps,"não achadas no Maps","alerta"]]
+   : [[t.aprovados,"aprovados","ok"],[t.aguardando,"aguardando 6 meses","novo"],[t.fora,"fora do requisito","alerta"],
    [t.semCnpj,"sem CNPJ","alerta"],[t.verificar,"para conferir","alerta"],[t.maps,"locais no Maps",""],
-   [t.outroRamo,"de outro ramo descartados",""], [s.refazer,"na fila para procurar o CNPJ de novo","novo"]]
+   [t.outroRamo,"de outro ramo descartados",""], [s.refazer,"na fila para procurar o CNPJ de novo","novo"]])
     .forEach(([v, r, c]) => { const x = leadsChip(v, r, c); if(x) u.chips.append(x); });
 
   u.atual.textContent = s.concluido ? (s.escopo === "zona" ? "Busca na capital concluída." : s.escopo === "cidades" ? "Cidades escolhidas concluídas." : s.escopo === "demais" ? "Todas as outras cidades concluídas." : "Estado inteiro concluído.") : s.pausado ? (s.motivo || "Pausada.") : (s.atual || "Trabalhando…");
@@ -9159,21 +9196,27 @@ function m04Pinta(s){
   u.btTodas.textContent = M04.verTodas ? "Mostrar só as em andamento" : "Mostrar todas as cidades";
   const tb = el("table","leadlista");
   const h = el("tr");
-  ["Cidade","Situação","No Maps","Com CNPJ","Aprovados","Aguardando","Fora","Sem CNPJ"].forEach(x => h.append(el("th",null,x)));
+  (s.modo === "cnae" ? ["Cidade","Situação","Na lista","LTDA","Aprovados","Aguardando","Fora","MEI","No Maps"]
+    : ["Cidade","Situação","No Maps","Com CNPJ","Aprovados","Aguardando","Fora","Sem CNPJ"]).forEach(x => h.append(el("th",null,x)));
   tb.append(h);
   linhas.forEach(c => {
     const tr = el("tr");
-    tr.append(el("td",null,c.nome + (c.zona ? " · Zona " + c.zona : "")));
+    tr.append(el("td",null,c.nome + (c.zona ? " · Zona " + c.zona : "") + (c.vizinhaDe ? " (vizinha de " + c.vizinhaDe + ")" : "")));
+    const cn = s.modo === "cnae";
     const st = c.status === "pronta" ? ["pill st-done", c.pulada ? "pulada" : "pronta"]
-      : c.status === "maps" ? ["pill st-doing","no Maps"] : c.status === "cnpj" ? ["pill st-doing","achando CNPJ"] : ["pill st-todo","na fila"];
+      : c.status === "maps" ? ["pill st-doing", cn ? "lendo a lista" : "no Maps"] : c.status === "cnpj" ? ["pill st-doing", cn ? "conferindo as LTDA" : "achando CNPJ"] : ["pill st-todo","na fila"];
     const td = el("td"); td.append(el("span", st[0], st[1]));
     if(c.status === "cnpj" && c.i === s.idx && s.lugaresTotal) td.append(el("div","sub", s.li + " de " + s.lugaresTotal));
     /* diagnóstico da busca no Maps: quantos vieram na lista, se rolou até o fim, se dividiu em regiões */
     if(c.diag || c.erroMaps){ const d = el("div","sub", c.diag || ""); if(c.erroMaps) d.textContent += (c.diag ? " · " : "") + "erro: " + c.erroMaps; tr.title = d.textContent; td.append(d); }
     tr.append(td);
+    if(cn){
+      [c.lista, c.ltda, c.aprovados, c.aguardando, c.fora, c.mei, c.noMaps].forEach(v => tr.append(el("td", v ? null : "muted", v ? String(v) : (c.status === "pronta" ? "0" : "—"))));
+    } else {
     if(c.mapsFeito && !c.maps){ tr.append(el("td",null,"0")); }
     else tr.append(el("td", c.maps ? null : "muted", c.maps ? String(c.maps) : "—"));
     [c.comCnpj, c.aprovados, c.aguardando, c.fora, c.semCnpj].forEach(v => tr.append(el("td", v ? null : "muted", v ? String(v) : "—")));
+    }
     tb.append(tr);
   });
   u.tw.innerHTML = ""; u.tw.append(tb);
@@ -9468,7 +9511,7 @@ async function novosDesenhar(){
   await novosCarregarClientes();
   const f = NOVOS.filtro;
   /* três divisões: leads comuns, REDE (unidades marcadas como rede) e clientes (CNPJs importados) */
-  const divDe = x => novosCliente(x) ? "clientes" : x.rede ? "rede" : "leads";
+  const divDe = x => novosCliente(x) ? "clientes" : x.status === "mei" ? "mei" : x.rede ? "rede" : "leads";
   const todosRamos = tudo.filter(x => divDe(x) === "leads");
   novosPainelRamos(u.ramos, todosRamos);
   const dv = NOVOS.divisao;
@@ -9484,7 +9527,7 @@ async function novosDesenhar(){
 
   const nDiv = k => tudo.filter(x => divDe(x) === k).length;
   u.divisoes.innerHTML = "";
-  [["leads","Leads"],["rede","REDE"],["clientes","Já são clientes"]].forEach(([k, rot]) => {
+  [["leads","Leads"],["rede","REDE"],["mei","MEI"],["clientes","Já são clientes"]].forEach(([k, rot]) => {
     const b = el("button","ndiv" + (dv === k ? " on" : ""));
     b.append(document.createTextNode(rot + " "), el("span",null, nDiv(k).toLocaleString("pt-BR")));
     if(k === "rede" && redes.length) b.title = redes.length + " redes";
@@ -9514,7 +9557,7 @@ async function novosDesenhar(){
 
   const q = baseChave(f.busca), qd = cnpjDig(f.busca);
   /* filtros da barra (situação, só não enviados, busca); o estado e a cidade já vieram em noRecorte */
-  const passaFiltro = x => (!f.status || x.status === f.status) && (!f.naoEnviados || !x.enviadoBase) &&
+  const passaFiltro = x => (!f.status || dv === "mei" || x.status === f.status) && (!f.naoEnviados || !x.enviadoBase) &&
     (!q || baseChave([x.nomeMaps, x.razaoSocial, x.nomeFantasia, x.cnpj, x.endereco, x.telMaps, x.telMaisCnpj, x.distrito, x.rede, x.zona ? "zona " + x.zona : ""].join(" ")).includes(q) ||
      (qd.length >= 4 && (cnpjDig(x.cnpj).includes(qd) || cnpjDig(x.telMaps + x.telMaisCnpj).includes(qd))));
   const noLugar = x => (!f.uf || x.uf === f.uf) && (!f.cidade || x.cidade === f.cidade);
@@ -9625,6 +9668,7 @@ async function novosDesenhar(){
 
     const te = el("td"); te.append(el("b",null, r.nomeMaps || r.nomeFantasia || r.razaoSocial || "—"));
     if(r.razaoSocial) te.append(el("div","sub", r.razaoSocial));
+    if(r.filiais > 1 && !r.rede) te.append(el("div","quem","possível rede: " + r.filiais + " unidades ativas"));
     if(r.enviadoBase) te.append(el("div","quem","enviado à Base em " + new Date(r.enviadoBaseEm).toLocaleDateString("pt-BR")));
     tr.append(te);
 
@@ -9895,8 +9939,8 @@ async function novosConferirManual(r, valor, bt){
 /* envia para a Base de Leads no mesmo formato das planilhas das fases 01 e 03 */
 async function novosEnviarBase(){
   const u = NOVOS.ui;
-  const marcados = (NOVOS.lista || []).filter(x => NOVOS.sel.has(x.chave) && !novosCliente(x));
-  if(!marcados.length) return toast(NOVOS.divisao === "clientes" ? "Clientes não vão para a Base de Leads." : "Marque os leads primeiro.");
+  const marcados = (NOVOS.lista || []).filter(x => NOVOS.sel.has(x.chave) && !novosCliente(x) && x.status !== "mei");
+  if(!marcados.length) return toast(NOVOS.divisao === "clientes" ? "Clientes não vão para a Base de Leads." : NOVOS.divisao === "mei" ? "MEI não vai para a Base de Leads." : "Marque os leads primeiro.");
   const comCnpj = marcados.filter(x => cnpjDig(x.cnpj).length === 14);
   if(!comCnpj.length) return toast("Os marcados não têm CNPJ. Digite o CNPJ antes de enviar.");
   const registros = comCnpj.map(r => ({
@@ -15072,6 +15116,10 @@ function pickFrentes(host){
     "Você digita o tipo de cliente e o estado. Cidade por cidade, acha no Google Maps, descobre o CNPJ no MaisCNPJ pelo endereço, junta os dois telefones e confere LTDA e 6 meses de abertura.",
     ["Capital primeiro","Leads prontos a cada cidade"], "modelo04");
 
+  cartaoLead("05","CNAE primeiro, cidade por cidade",
+    "Você digita o CNAE e escolhe as cidades. Lê a lista do CNAE no MaisCNPJ, separa LTDA de MEI, abre só as LTDA (natureza, abertura, telefone, filiais) e confirma cada uma no Google Maps. Acha até quem o Maps não mostra.",
+    ["LTDA e MEI separadas","Cidades vizinhas"], "modelo05");
+
   cartaoLead("","Base de Leads",
     "Guarda tudo que passou pelas três fases, por ramo, estado e cidade, e monta o cadastro de redes com o sócio administrador e os telefones.",
     ["Consulta por ramo e cidade","Cadastro de redes"], "base", " arquivo");
@@ -17512,6 +17560,7 @@ const INICIO_ITENS = [
   ["qualificar","Qualificar Leads","Conferência no Google Maps"],
   ["base","Base de Leads","Arquivo com tudo que passou pelas três fases"],
   ["modelo04","Modelo 04 · Maps + MaisCNPJ","Busca por tipo de cliente, cidade por cidade"],
+  ["modelo05","Modelo 05 · CNAE primeiro","Lista do CNAE no MaisCNPJ, LTDA e MEI separadas, confirmação no Maps"],
   ["novos","Cadastro Leads Novos","Leads que saem do Modelo 04"],
   ["transferir","Transferir leads","Marcar leads na Base e passar para um usuário"]
 ];
@@ -17624,7 +17673,7 @@ function podeFrente(f){ return ehAdm() || (pFrente(perfilAtual(), f) && (f.ramos
 function frentesVisiveis(){ return DB.frentes.filter(podeFrente); }
 function ramosVisiveis(f){ return (f.ramos || []).filter(r => podeRamo(f, r)); }
 function permMenu(id){ return ehAdm() ? permTotal() : (F && S ? pMenu(perfilAtual(), F, S, id) : permVazia()); }
-function podeInicio(k){ if(ehAdm()) return true; const p = perfilAtual(); return !!(p && p.inicio && p.inicio[k]); }
+function podeInicio(k){ if(ehAdm()) return true; const p = perfilAtual(); return !!(p && p.inicio && (p.inicio[k] || (k === "modelo05" && p.inicio.modelo04))); }
 function podeGestao(obj, acao){
   if(ehAdm()) return true;
   const p = perfilAtual();
