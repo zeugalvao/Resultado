@@ -1276,6 +1276,11 @@ dialog.nrededlg input{width:100%;box-sizing:border-box;border:1px solid var(--li
 dialog.nrededlg .nredejas{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px}
 dialog.nrededlg .nredejas .ndiv{font-size:12.5px;padding:4px 10px}
 dialog.nrededlg .leadsbotoes{margin-top:12px}
+.nqtd{display:inline-flex;align-items:center;gap:6px;font-size:13.5px;color:var(--muted,#64748b)}
+.nqtd input{width:90px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-size:14px}
+.ncampinfo{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 10px}
+.nfrio{color:#2563eb}
+.leadsacoes{flex-wrap:wrap}
 .nduas{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
 .nduas h3{font-size:13px;margin:0 0 6px;color:var(--muted);font-weight:600}
 .nduas .tablewrap{max-height:340px;overflow:auto}
@@ -8528,7 +8533,7 @@ async function buscaEscolherFonteAtiva(){
 
 const M04 = { presente:false, ui:null, timer:null, importando:false, estado:null, verTodas:false };
 const NOVOS = { ui:null, filtro:{ busca:"", status:"aprovado", uf:"", cidade:"", naoEnviados:false, ramo:"" }, sel:new Set(), mostrar:200,
-  divisao:"leads", cli:null, redeSel:"",
+  divisao:"leads", cli:null, redeSel:"", campSel:"", qtdExport:"",
   ordE:{ col:"n", dir:-1 }, ordCid:{ col:"empresa", dir:1 }, ordLista:{ col:"empresa", dir:1 }, cidAbertas:new Set() };
 /* ordenação das tabelas de leads: clicar no título da coluna ordena; clicar de novo inverte */
 const novosCmp = (a, b) => typeof a === "number" && typeof b === "number" ? a - b
@@ -8671,7 +8676,7 @@ async function m04Importar(est){
       const lista = (resp.registros || []).filter(doRamo).map(r => {
         const antigo = existentes.get(r.chave);
         const novo = Object.assign({}, r, { importadoEm: new Date().toISOString() });
-        if(antigo){ ["enviadoBase","enviadoBaseEm","cnpjManual","rede"].forEach(p => { if(antigo[p]) novo[p] = antigo[p]; }); }
+        if(antigo){ ["enviadoBase","enviadoBaseEm","cnpjManual","rede","campanha","campanhaEm","campanhasAnteriores"].forEach(p => { if(antigo[p]) novo[p] = antigo[p]; }); }
         else novos++;
         const d = cnpjDig(r.cnpj);
         if(d.length === 14 && r.receita){ try { qualifGravar(d, { receita: r.receita }); REQ.cache[d] = r.receita; } catch(e){} }
@@ -8908,7 +8913,7 @@ function pickModelo04(host, modo){
   };
 
   /* quantas cidades: vazio = todas */
-  const inQtd = el("input"); inQtd.type = "number"; inQtd.min = "1"; inQtd.step = "1"; inQtd.placeholder = "todas";
+  const inQtd = el("input"); inQtd.type = "text"; inQtd.inputMode = "numeric"; inQtd.placeholder = "todas";
   inQtd.value = (M04.campos && M04.campos.limiteCidades) || "";
   campo("Quantas cidades", inQtd, "Deixe vazio para todas. Ex.: 10 = só as 10 primeiras da ordem (alfabética).");
 
@@ -9273,9 +9278,15 @@ function pickNovos(host){
   const btExcluir = el("button","btn danger","Excluir marcados");
   const btAtual = el("button","btn","Buscar cidades novas da extensão");
   const btCsv = el("button","btn","Baixar CSV"), btXls = el("button","btn","Baixar Excel");
-  btCsv.title = btXls.title = "Baixa todos os leads da lista abaixo, com os filtros escolhidos (ramo, estado, cidade, situação e busca)";
+  btCsv.title = btXls.title = NOVOS_EXPORT_DICA;
   btCsv.onclick = () => novosExportar("csv");
   btXls.onclick = () => novosExportar("xlsx");
+  /* quantos leads exportar (vazio = todos os que passam nas regras) */
+  const lbQtd = el("label","nqtd"); const inQtd = el("input"); inQtd.type = "text"; inQtd.inputMode = "numeric";
+  inQtd.placeholder = "todos"; inQtd.value = NOVOS.qtdExport || "";
+  inQtd.title = "Quantos leads vão no Excel. Vazio = todos os aprovados com celular da lista.";
+  inQtd.oninput = () => { inQtd.value = inQtd.value.replace(/\D/g, ""); NOVOS.qtdExport = inQtd.value; };
+  lbQtd.append(document.createTextNode("Qtd. p/ exportar"), inQtd);
   const btRefazer = el("button","btn","Procurar CNPJ de novo");
   btRefazer.title = "Manda os leads Sem CNPJ (os marcados ou, se nenhum estiver marcado, todos do filtro) para a extensão procurar de novo";
   const btRede = el("button","btn","Marcar como rede");
@@ -9294,7 +9305,7 @@ function pickNovos(host){
   /* limpeza: com uma cidade escolhida no filtro, apaga do Cadastro tudo o que não é dela */
   const btManter = el("button","btn danger","Manter só esta cidade"); btManter.hidden = true;
   btManter.onclick = () => novosManterSoCidade(NOVOS.filtro.uf, NOVOS.filtro.cidade);
-  acoes.append(btEnviar, btRede, btCsv, btXls, btExcluir, btManter, btAtual, btRefazer, btCli, inCli, info);
+  acoes.append(btEnviar, btRede, lbQtd, btXls, btCsv, btExcluir, btManter, btAtual, btRefazer, btCli, inCli, info);
 
   const mostrando = el("div","nmostrando");
   const divisoes = el("div","ndivisoes");
@@ -9302,7 +9313,7 @@ function pickNovos(host){
   host.append(acoes);
 
   const corpo = el("div"); host.append(corpo);
-  NOVOS.ui = { inB, sSt, sUf, sCid, ckN, chips, corpo, info, btEnviar, btExcluir, ramos, mostrando, divisoes, btCsv, btXls, btRede, btManter };
+  NOVOS.ui = { inB, sSt, sUf, sCid, ckN, chips, corpo, info, btEnviar, btExcluir, ramos, mostrando, divisoes, btCsv, btXls, btRede, btManter, inQtd, lbQtd };
 
   let t = null;
   inB.oninput = () => { clearTimeout(t); t = setTimeout(() => { NOVOS.filtro.busca = inB.value; NOVOS.mostrar = 200; novosDesenhar(); }, 250); };
@@ -9514,35 +9525,43 @@ async function novosDesenhar(){
   await novosCarregarClientes();
   const f = NOVOS.filtro;
   /* três divisões: leads comuns, REDE (unidades marcadas como rede) e clientes (CNPJs importados) */
-  const divDe = x => novosCliente(x) ? "clientes" : x.status === "mei" ? "mei" : x.rede ? "rede" : "leads";
-  const todosRamos = tudo.filter(x => divDe(x) === "leads");
+  /* campanha: já exportado, não volta a aparecer até a campanha ir para remarketing; frios: só telefone fixo (sem celular) */
+  const divDe = x => novosCliente(x) ? "clientes" : x.status === "mei" ? "mei" : x.campanha ? "campanhas" : x.rede ? "rede" : !novosTemCelular(x) ? "frios" : "leads";
+  const todosRamos = tudo.filter(x => ["leads","frios","campanhas"].includes(divDe(x)));
   novosPainelRamos(u.ramos, todosRamos);
   const dv = NOVOS.divisao;
   const daDivisao = tudo.filter(x => divDe(x) === dv);
   const redes = [...new Set(tudo.filter(x => x.rede).map(x => x.rede))].sort((a, b) => a.localeCompare(b, "pt-BR"));
   if(NOVOS.redeSel && !redes.includes(NOVOS.redeSel)) NOVOS.redeSel = "";
   /* na REDE, cada rede é uma divisão própria */
+  const campanhas = [...new Set(tudo.filter(x => x.campanha).map(x => x.campanha))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  if(NOVOS.campSel && !campanhas.includes(NOVOS.campSel)) NOVOS.campSel = "";
   const todos = (f.ramo ? daDivisao.filter(x => novosRamoKey(x) === f.ramo) : daDivisao)
-    .filter(x => dv !== "rede" || !NOVOS.redeSel || x.rede === NOVOS.redeSel);
+    .filter(x => dv !== "rede" || !NOVOS.redeSel || x.rede === NOVOS.redeSel)
+    .filter(x => dv !== "campanhas" || !NOVOS.campSel || x.campanha === NOVOS.campSel);
   NOVOS.lista = todos;
-  u.btRede.hidden = dv === "clientes";
+  u.btRede.hidden = dv === "clientes" || dv === "campanhas";
   u.btManter.hidden = !(f.uf && f.cidade);
   if(f.cidade) u.btManter.textContent = "Manter só " + f.cidade + " (apagar o resto)";
   u.btRede.textContent = dv === "rede" ? "Mudar a rede dos marcados" : "Marcar como rede";
 
   const nDiv = k => tudo.filter(x => divDe(x) === k).length;
   u.divisoes.innerHTML = "";
-  [["leads","Leads"],["rede","REDE"],["mei","MEI"],["clientes","Já são clientes"]].forEach(([k, rot]) => {
+  [["leads","Leads"],["frios","Frios (só fixo)"],["campanhas","Campanhas"],["rede","REDE"],["mei","MEI"],["clientes","Já são clientes"]].forEach(([k, rot]) => {
     const b = el("button","ndiv" + (dv === k ? " on" : ""));
     b.append(document.createTextNode(rot + " "), el("span",null, nDiv(k).toLocaleString("pt-BR")));
     if(k === "rede" && redes.length) b.title = redes.length + " redes";
+    if(k === "frios") b.title = "Leads sem nenhum celular (só telefone fixo ou sem telefone): não vão na exportação";
+    if(k === "campanhas") b.title = campanhas.length + " campanhas · leads já exportados não aparecem de novo para exportar";
     b.onclick = () => { NOVOS.divisao = k; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); };
     u.divisoes.append(b);
   });
   if(NOVOS.cli.n) u.divisoes.append(el("span","leadshint", NOVOS.cli.n.toLocaleString("pt-BR") + " CNPJs de clientes carregados" +
     (NOVOS.cli.em ? " em " + new Date(NOVOS.cli.em).toLocaleDateString("pt-BR") : "") + (NOVOS.cli.arquivo ? " (" + NOVOS.cli.arquivo + ")" : "")));
-  u.btCsv.disabled = u.btXls.disabled = dv === "clientes";
-  u.btCsv.title = u.btXls.title = dv === "clientes" ? "Clientes não são exportados" : "Baixa todos os leads da lista abaixo, com os filtros escolhidos (ramo, estado, cidade, situação e busca)";
+  const semExport = { clientes:"Clientes não são exportados", frios:"Frios (só telefone fixo) não são exportados",
+    campanhas:"Leads de campanha já foram exportados. Use “Baixar de novo” na campanha ou volte a campanha para remarketing.", mei:"MEI não é exportado" }[dv];
+  u.btCsv.disabled = u.btXls.disabled = u.inQtd.disabled = !!semExport;
+  u.btCsv.title = u.btXls.title = semExport || NOVOS_EXPORT_DICA;
 
   const ufs = [...new Set(todos.map(x => x.uf))].sort();
   u.sUf.innerHTML = '<option value="">Todos os estados</option>' + ufs.map(x => '<option>' + esc(x) + '</option>').join("");
@@ -9575,7 +9594,8 @@ async function novosDesenhar(){
   NOVOS.filtrada = lista;
   u.sSt.value = f.status;
   u.mostrando.innerHTML = "";
-  const partes = [dv === "rede" ? "REDE" + (NOVOS.redeSel ? " › " + NOVOS.redeSel : "") : dv === "clientes" ? "Já são clientes" : "", f.ramo ? ((NOVOS.nomesRamo || {})[f.ramo] || "") : "Todos os ramos", f.uf || "todos os estados", f.cidade].filter(Boolean);
+  const partes = [dv === "rede" ? "REDE" + (NOVOS.redeSel ? " › " + NOVOS.redeSel : "") : dv === "clientes" ? "Já são clientes" :
+    dv === "frios" ? "Frios (só fixo)" : dv === "campanhas" ? "Campanha" + (NOVOS.campSel ? " › " + NOVOS.campSel : "s") : "", f.ramo ? ((NOVOS.nomesRamo || {})[f.ramo] || "") : "Todos os ramos", f.uf || "todos os estados", f.cidade].filter(Boolean);
   u.mostrando.append(el("b",null, lista.length.toLocaleString("pt-BR") + (lista.length === 1 ? " lead" : " leads")),
     document.createTextNode(" · " + partes.join(" · ") + (f.status ? " · " + M04_STATUS[f.status][0].toLowerCase() : " · todas as situações")));
   if(f.uf || f.cidade){
@@ -9606,6 +9626,12 @@ async function novosDesenhar(){
     }
     u.corpo.append(nav);
   }
+  if(dv === "campanhas") novosNavCampanhas(u.corpo, tudo, campanhas, f, noLugar, passaFiltro);
+  if(dv === "frios"){
+    const bar = el("div","ncampinfo");
+    bar.append(el("span","leadshint","Leads sem nenhum celular no Google Maps, MaisCNPJ ou Receita (só fixo ou sem telefone). Ficam separados como frios e não entram na exportação para Excel."));
+    u.corpo.append(bar);
+  }
   if(dv === "clientes"){
     const bar = el("div","leadsacoes"); bar.style.margin = "0 0 10px";
     bar.append(el("span","leadshint", NOVOS.cli.n
@@ -9621,7 +9647,8 @@ async function novosDesenhar(){
   }
   if(!todos.length){
     u.corpo.append(el("p","kicker", dv === "rede" ? "Nenhuma unidade de rede ainda. Na lista de leads, marque a caixa da coluna Rede e digite o nome da rede."
-      : dv === "clientes" ? "Nenhum lead do Cadastro é cliente." : "Ainda não há leads aqui. Comece uma busca no Modelo 04: cada cidade concluída aparece nesta lista."));
+      : dv === "clientes" ? "Nenhum lead do Cadastro é cliente." : dv === "campanhas" ? "Nenhuma campanha ainda. Ao exportar para Excel, o CRM pergunta o nome da campanha e os leads exportados vêm para cá."
+      : dv === "frios" ? "Nenhum lead frio: todos têm celular." : "Ainda não há leads aqui. Comece uma busca no Modelo 04: cada cidade concluída aparece nesta lista."));
     return;
   }
   if(!lista.length){
@@ -9675,6 +9702,9 @@ async function novosDesenhar(){
     if(r.razaoSocial) te.append(el("div","sub", r.razaoSocial));
     if(r.filiais > 1 && !r.rede) te.append(el("div","quem","possível rede: " + r.filiais + " unidades ativas"));
     if(r.enviadoBase) te.append(el("div","quem","enviado à Base em " + new Date(r.enviadoBaseEm).toLocaleDateString("pt-BR")));
+    if(r.campanha) te.append(el("div","quem","campanha " + r.campanha + (r.campanhaEm ? " · exportado em " + new Date(r.campanhaEm).toLocaleDateString("pt-BR") : "")));
+    else if((r.campanhasAnteriores || []).length) te.append(el("div","quem","remarketing · já esteve em " + r.campanhasAnteriores.map(c => c.nome).join(", ")));
+    if(dv === "frios") te.append(el("div","quem nfrio","frio · sem celular"));
     tr.append(te);
 
     const tdCnpj = el("td");
@@ -9904,33 +9934,166 @@ async function novosManterSoCidade(uf, cidade){
   novosDesenhar();
 }
 
-/* exporta a lista filtrada (todas as páginas) em CSV ou Excel */
-function novosExportar(tipo){
-  /* clientes nunca vão na exportação */
-  const lista = (NOVOS.filtrada || []).filter(x => !novosCliente(x));
-  if(!lista.length) return toast(NOVOS.divisao === "clientes" ? "Clientes não são exportados." : "Não há leads com esses filtros para baixar.");
-  const f = NOVOS.filtro;
+/* ---------- exportação para Excel: só aprovados, só com celular, sempre dentro de uma campanha ---------- */
+const NOVOS_EXPORT_DICA = "Exporta só leads Aprovados (válidos) com celular, na quantidade digitada. Pede o nome da campanha; " +
+  "os exportados vão para Campanhas e não aparecem de novo até a campanha voltar para remarketing.";
+/* celulares do lead (Google Maps, MaisCNPJ e Receita); fixo não conta */
+function novosCelulares(r){ return novosTelefones(r).filter(t => foneCelular(t)); }
+function novosTemCelular(r){ return novosCelulares(r).length > 0; }
+
+function novosLinhasExport(lista){
   const data = d => d ? String(d).slice(0, 10).split("-").reverse().join("/") : "";
-  const cab = ["Ramo","Situação","Motivo","Empresa (Google Maps)","Razão social","Nome fantasia","CNPJ","Natureza jurídica","Abertura","Situação cadastral",
+  const cab = ["Campanha","Exportado em","Celular (WhatsApp)","Outros telefones","Ramo","Situação","Empresa (Google Maps)","Razão social","Nome fantasia","CNPJ","Natureza jurídica","Abertura","Situação cadastral",
     "Porte","Capital social","Endereço (Google Maps)","Bairro","CEP","Cidade","UF","Zona","Distrito","Rede","Endereço (Receita)","Telefone Google Maps","Telefone MaisCNPJ",
     "Telefone Receita","E-mail","Site","Nota Google","Avaliações","Categoria","Link Google Maps","Link MaisCNPJ","Enviado à Base","Encontrado em"];
-  const linhas = [cab].concat(lista.map(r => [
-    r.termo || "", (M04_STATUS[r.status] || [r.status])[0], r.status === "aprovado" ? "" : (r.motivo || ""),
-    r.nomeMaps || "", r.razaoSocial || "", r.nomeFantasia || "", r.cnpj || "", r.natureza || "", data(r.abertura), r.situacao || "",
-    r.porte || "", r.capital ? String(r.capital) : "", r.endereco || "", r.bairro || "", r.cep || "", r.cidade || "", r.uf || "", r.zona || "", r.distrito || "", r.rede || "",
-    r.enderecoReceita || "", r.telMaps || "", r.telMaisCnpj || "", (r.telReceita || []).join(" / "), r.email || "", r.site || "",
-    r.nota || "", r.avaliacoes || "", r.categoria || "", r.link || "", r.linkMaisCnpj || "",
-    r.enviadoBase ? "Sim" : "Não", r.encontradoEm ? new Date(r.encontradoEm).toLocaleDateString("pt-BR") : ""
-  ].map(v => v == null ? "" : String(v))));
-  const nome = ["leads", NOVOS.divisao === "rede" ? "rede" : "", f.ramo ? (NOVOS.nomesRamo || {})[f.ramo] : "todos-os-ramos", f.uf, f.cidade, f.status, stamp()]
-    .filter(Boolean).join("_").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w\-]+/g, "-").toLowerCase();
+  return [cab].concat(lista.map(r => {
+    const cels = novosCelulares(r);
+    return [
+      r.campanha || "", r.campanhaEm ? new Date(r.campanhaEm).toLocaleDateString("pt-BR") : "",
+      cels.join(" / "), novosTelefones(r).filter(t => !cels.includes(t)).join(" / "),
+      r.termo || "", (M04_STATUS[r.status] || [r.status])[0],
+      r.nomeMaps || "", r.razaoSocial || "", r.nomeFantasia || "", r.cnpj || "", r.natureza || "", data(r.abertura), r.situacao || "",
+      r.porte || "", r.capital ? String(r.capital) : "", r.endereco || "", r.bairro || "", r.cep || "", r.cidade || "", r.uf || "", r.zona || "", r.distrito || "", r.rede || "",
+      r.enderecoReceita || "", r.telMaps || "", r.telMaisCnpj || "", (r.telReceita || []).join(" / "), r.email || "", r.site || "",
+      r.nota || "", r.avaliacoes || "", r.categoria || "", r.link || "", r.linkMaisCnpj || "",
+      r.enviadoBase ? "Sim" : "Não", r.encontradoEm ? new Date(r.encontradoEm).toLocaleDateString("pt-BR") : ""
+    ].map(v => v == null ? "" : String(v));
+  }));
+}
+const NOVOS_EXPORT_LARG = [18,12,22,26,22,12,34,40,30,20,34,12,14,14,14,50,22,10,22,6,10,22,24,50,18,22,26,30,30,8,10,24,40,40,10,12];
+function novosNomeArquivo(partes){
+  return partes.filter(Boolean).join("_").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^\w\-]+/g, "-").toLowerCase();
+}
+function novosBaixarArquivo(tipo, nome, linhas){
   if(tipo === "csv"){
     const q = v => /[";\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
     download(nome + ".csv", "text/csv", linhas.map(l => l.map(q).join(";")).join("\r\n"));
-  } else {
-    baixarXlsx(nome, linhas, [22,18,40,34,40,30,20,34,12,14,14,14,50,22,10,22,6,10,22,24,50,18,22,26,30,30,8,10,24,40,40,10,12]);
+  } else baixarXlsx(nome, linhas, NOVOS_EXPORT_LARG);
+}
+
+async function novosExportar(tipo){
+  const f = NOVOS.filtro, dv = NOVOS.divisao;
+  if(!["leads","rede"].includes(dv)) return toast("Nesta divisão não há exportação.");
+  /* regra 1: só leads válidos (Aprovados) */
+  if(f.status !== "aprovado")
+    return toast("Exportação recusada: escolha só “Aprovados” no filtro de situação. Apenas leads válidos podem ser exportados.");
+  let base = (NOVOS.filtrada || []).filter(x => !novosCliente(x) && !x.campanha && x.status !== "mei");
+  const marcados = base.filter(x => NOVOS.sel.has(x.chave));
+  if(marcados.length) base = marcados;
+  if(base.some(x => x.status !== "aprovado"))
+    return toast("Exportação recusada: há leads que não são Aprovados na seleção.");
+  if(!base.length) return toast("Não há leads aprovados com esses filtros para exportar.");
+  /* regra 2: só quem tem celular; fixos ficam como frios */
+  const comCel = base.filter(novosTemCelular), frios = base.length - comCel.length;
+  if(!comCel.length) return toast("Nenhum desses leads tem celular. Os " + base.length + " ficam como frios e não são exportados.");
+  /* regra 3: quantidade digitada */
+  const qtdTxt = String(NOVOS.qtdExport || "").trim();
+  let n = comCel.length;
+  if(qtdTxt){
+    const q = parseInt(qtdTxt, 10);
+    if(!(q > 0)) return toast("Digite uma quantidade válida (número maior que zero) ou deixe vazio para exportar todos.");
+    n = Math.min(q, comCel.length);
   }
-  toast(lista.length.toLocaleString("pt-BR") + " leads baixados.");
+  const lote = comCel.slice(0, n);
+  /* regra 4: nome da campanha */
+  const tudo = await NovosDB.todos();
+  const existentes = [...new Set(tudo.filter(x => x.campanha).map(x => x.campanha))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const resumo = lote.length.toLocaleString("pt-BR") + " leads aprovados com celular vão para o " + (tipo === "csv" ? "CSV" : "Excel") +
+    (qtdTxt && parseInt(qtdTxt, 10) > comCel.length ? " (você pediu " + parseInt(qtdTxt, 10) + ", mas só há " + comCel.length + " disponíveis)" : "") +
+    (frios ? ". " + frios + " só com fixo ficaram de fora (frios)" : "") + ".";
+  const campanha = await novosPerguntarCampanha(resumo, existentes);
+  if(!campanha) return;
+  const agora = new Date().toISOString();
+  const marcadosCamp = lote.map(r => Object.assign({}, r, { campanha, campanhaEm: agora }));
+  await NovosDB.gravar(marcadosCamp);
+  novosBaixarArquivo(tipo, novosNomeArquivo(["campanha", campanha, f.ramo ? (NOVOS.nomesRamo || {})[f.ramo] : "", f.uf, f.cidade, stamp()]), novosLinhasExport(marcadosCamp));
+  NOVOS.sel.clear();
+  toast(lote.length.toLocaleString("pt-BR") + " leads exportados na campanha " + campanha + ". Eles saíram da lista e não aparecem em futuras exportações.");
+  novosDesenhar();
+}
+
+/* janela que pergunta o nome da campanha; resolve com o nome ou null (cancelado) */
+function novosPerguntarCampanha(resumo, existentes){
+  return new Promise(ok => {
+    let resposta = null;
+    const dlg = el("dialog","nrededlg");
+    dlg.append(el("h3",null,"Nome da campanha"));
+    dlg.append(el("p","leadshint", resumo + " Eles ficam guardados dentro desta campanha."));
+    const inp = el("input"); inp.type = "text"; inp.placeholder = "ex.: RAZZA";
+    dlg.append(inp);
+    if(existentes.length){
+      const ja = el("div","nredejas");
+      ja.append(el("span","leadshint","Juntar a uma campanha existente: "));
+      existentes.forEach(n => { const b = el("button","ndiv",n); b.type = "button"; b.onclick = () => { inp.value = n; inp.focus(); }; ja.append(b); });
+      dlg.append(ja);
+    }
+    const bt = el("div","leadsbotoes");
+    const okB = el("button","btn primary","Exportar"), cancela = el("button","btn","Cancelar");
+    okB.type = cancela.type = "button";
+    bt.append(okB, cancela); dlg.append(bt);
+    const salvar = () => {
+      const n = inp.value.trim().replace(/\s+/g, " ");
+      if(!n) return toast("Digite o nome da campanha.");
+      const igual = existentes.find(r => baseChave(r) === baseChave(n));
+      resposta = igual || n; dlg.close();
+    };
+    okB.onclick = salvar;
+    cancela.onclick = () => dlg.close();
+    inp.onkeydown = ev => { if(ev.key === "Enter"){ ev.preventDefault(); salvar(); } };
+    dlg.addEventListener("close", () => { dlg.remove(); ok(resposta); });
+    document.body.append(dlg);
+    dlg.showModal(); inp.focus();
+  });
+}
+
+/* barra da divisão Campanhas: uma pílula por campanha, baixar de novo e voltar para remarketing */
+function novosNavCampanhas(host, tudo, campanhas, f, noLugar, passaFiltro){
+  if(!campanhas.length) return;
+  const daRamo = tudo.filter(x => x.campanha && (!f.ramo || novosRamoKey(x) === f.ramo));
+  const nav = el("div","nredesnav");
+  const pill = (rot, val, unid) => {
+    const vis = unid.filter(x => noLugar(x) && passaFiltro(x)).length;
+    const b = el("button","ndiv" + ((NOVOS.campSel || "") === val ? " on" : ""));
+    b.append(document.createTextNode(rot + " "), el("span",null, vis === unid.length ? String(vis) : vis + " de " + unid.length));
+    b.onclick = () => { NOVOS.campSel = val; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); };
+    return b;
+  };
+  nav.append(pill("Todas as campanhas", "", daRamo));
+  campanhas.forEach(n => nav.append(pill(n, n, daRamo.filter(x => x.campanha === n))));
+  host.append(nav);
+  const bar = el("div","ncampinfo");
+  if(!NOVOS.campSel){
+    bar.append(el("span","leadshint","Escolha uma campanha para baixar a lista de novo ou voltar a campanha inteira para remarketing."));
+  } else {
+    const nome = NOVOS.campSel, unid = tudo.filter(x => x.campanha === nome);
+    const datas = [...new Set(unid.map(x => (x.campanhaEm || "").slice(0, 10)).filter(Boolean))].sort();
+    bar.append(el("span","leadshint", unid.length + " leads na campanha " + nome +
+      (datas.length ? " · exportados em " + datas.map(d => d.split("-").reverse().join("/")).join(", ") : "")));
+    const bx = el("button","btn sm","Baixar Excel de novo");
+    bx.onclick = () => novosBaixarArquivo("xlsx", novosNomeArquivo(["campanha", nome, stamp()]), novosLinhasExport(unid));
+    const br = el("button","btn sm danger","Voltar campanha inteira para remarketing");
+    br.title = "Tira os " + unid.length + " leads da campanha: eles voltam para a lista de leads e podem ser exportados de novo";
+    br.onclick = () => novosRemarketing(nome);
+    bar.append(bx, br);
+  }
+  host.append(bar);
+}
+
+/* devolve a campanha inteira para a lista (remarketing); guarda o histórico da campanha no lead */
+async function novosRemarketing(nome){
+  const unid = (await NovosDB.todos()).filter(x => x.campanha === nome);
+  if(!unid.length) return toast("Campanha vazia.");
+  if(!confirm("Voltar os " + unid.length + " leads da campanha " + nome + " para remarketing? Eles saem da campanha, voltam para a lista de leads e podem ser exportados de novo.")) return;
+  const agora = new Date().toISOString();
+  await NovosDB.gravar(unid.map(x => {
+    const y = Object.assign({}, x);
+    y.campanhasAnteriores = (x.campanhasAnteriores || []).concat([{ nome: x.campanha, em: x.campanhaEm || "", voltouEm: agora }]);
+    delete y.campanha; delete y.campanhaEm;
+    return y;
+  }));
+  NOVOS.campSel = ""; NOVOS.sel.clear();
+  toast(unid.length + " leads da campanha " + nome + " voltaram para remarketing.");
+  novosDesenhar();
 }
 
 /* lead do Maps sem CNPJ: a equipe digita o CNPJ e a Receita confere os requisitos */
