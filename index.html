@@ -1497,7 +1497,13 @@ window.NUVEM = (() => {
     /* Pede o login sempre que a aba for aberta (sessão vale só enquanto a aba existir). */
     async exigirLogin(){
       if(!ativo) return null;
-      await auth.setPersistence(firebase.auth.Auth.Persistence.SESSION);
+      /* sessão só da aba; se o navegador não deixar (armazenamento bloqueado ou cheio), cai para a memória
+         em vez de travar o site inteiro sem dados */
+      try{ await auth.setPersistence(firebase.auth.Auth.Persistence.SESSION); }
+      catch(e){
+        console.warn("Login: sessão da aba indisponível (" + (e && e.code) + "), usando memória.", e);
+        try{ await auth.setPersistence(firebase.auth.Auth.Persistence.NONE); }catch(e2){}
+      }
       usuario = await new Promise(res => { const off = auth.onAuthStateChanged(u => { off(); res(u); }); });
       if(!usuario) usuario = await telaLogin();
       return usuario;
@@ -1581,8 +1587,17 @@ const Store = (() => {
       if(kind.startsWith("Firebase")){
         try{
           const t = await NUVEM.ler();
+          this.lidoOk = true; this.leituraFalhou = false;
           if(t) return JSON.parse(t);
-        }catch(e){ console.error("Erro lendo o Firebase:", e); }
+        }catch(e){
+          console.error("Erro lendo o Firebase:", e);
+          /* trava: se a primeira leitura falhar, nada é gravado na nuvem (senão um CRM vazio apagaria os dados de verdade) */
+          if(this.lidoOk) return null;
+          const jaAvisou = this.leituraFalhou;
+          this.leituraFalhou = true;
+          if(!jaAvisou) setTimeout(() => alert("Não consegui ler os dados do Firebase (" + ((e && (e.code || e.message)) || e) + ").\n\n" +
+            "Para proteger seus dados, nada será salvo na nuvem nesta aba. Recarregue a página e faça o login de novo."), 300);
+        }
         /* nuvem vazia: aproveita o que já existia neste navegador (migração) */
         try{ if(idb){ const v = await tx(idb, "readonly", s => s.get(KEY)); return v ? JSON.parse(v) : mem; } }catch(e){}
         return mem;
@@ -1598,6 +1613,7 @@ const Store = (() => {
       mem = obj;
       if(kind.startsWith("Firebase")){
         try{ if(idb) tx(idb, "readwrite", st => st.put(s, KEY)).catch(() => {}); }catch(e){}
+        if(this.leituraFalhou){ console.warn("Gravação no Firebase bloqueada: a leitura falhou ao abrir."); return false; }
         try{ await NUVEM.gravar(s); return true; }
         catch(e){ console.error("Erro gravando no Firebase:", e); return false; }
       }
