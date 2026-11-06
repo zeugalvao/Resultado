@@ -1113,6 +1113,23 @@ tr.ltmais td{text-align:center;padding:8px}
 .glegenda i{display:inline-block;width:10px;height:10px;border-radius:2px}
 .gfiltros{grid-template-columns:repeat(4,1fr)}
 @media(max-width:820px){ .gfiltros{grid-template-columns:1fr 1fr} }
+.gdatas{display:flex;gap:8px;align-items:center;margin-top:6px}
+.gdatas input{flex:1;min-width:0}
+.gdatas span{font-size:12px;color:var(--muted)}
+.gperiodo{margin:-6px 0 14px;font-size:12.5px;color:var(--muted)}
+.gperiodo b{color:inherit;font-weight:600}
+.gtrab-resumo{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:4px 0 6px}
+.gtrab-sdr{border:1px solid var(--line-soft);border-radius:7px;padding:12px 14px}
+.gtrab-sdr h5{margin:0 0 8px;font-size:13.5px;font-weight:600}
+.gtrab-num{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px}
+.gtrab-num div{display:flex;flex-direction:column}
+.gtrab-num b{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
+.gtrab-num span{font-size:11px;color:var(--muted)}
+.gtrab-num .ok b{color:var(--teal-deep)}
+.gtrab-num .nok b{color:var(--brick)}
+.gtrab-sdr ul{margin:8px 0 0;padding-left:18px;font-size:12.5px;line-height:1.55}
+.gtrab-sdr ul li small{color:var(--muted)}
+.gkpi[title]{cursor:help}
 table.gtab td{font-size:12px}
 .fcard.consol.dash{border-color:var(--ink);background:linear-gradient(180deg,#F1F4F6,#FFFFFF)}
 .fcard.consol.dash .tp{color:var(--ink)}
@@ -22047,7 +22064,23 @@ const GRAFICOS = [
   ["toquesDia","Contatos por dia","Contatos de cada usuário em cada dia, destacando os dias acima da meta"],
   ["sequencias","Cadências mais usadas","Sequências de canais mais comuns (ex.: WhatsApp, WhatsApp, Ligação + E-mail)"]
 ];
-const DASH = { dias:"30", frente:"", ramo:"", usuario:"" };
+const DASH = { dias:"30", de:"", ate:"", frente:"", ramo:"", usuario:"" };
+/* início e fim (ms) do período escolhido no painel; ate = Infinity quando vai até hoje */
+function dashPeriodo(){
+  const hj = new Date(), h0 = new Date(hj.getFullYear(), hj.getMonth(), hj.getDate()).getTime();
+  const v = DASH.dias;
+  if(v === "hoje") return { desde: h0, ate: Infinity };
+  if(v === "mes") return { desde: new Date(hj.getFullYear(), hj.getMonth(), 1).getTime(), ate: Infinity };
+  if(v === "mesant") return { desde: new Date(hj.getFullYear(), hj.getMonth() - 1, 1).getTime(),
+                              ate: new Date(hj.getFullYear(), hj.getMonth(), 1).getTime() - 1 };
+  if(v === "custom"){
+    const p = s => { const [y, m, d] = String(s || "").split("-").map(Number); return y ? new Date(y, m - 1, d).getTime() : null; };
+    const de = p(DASH.de), ate = p(DASH.ate);
+    return { desde: de || 0, ate: ate != null ? ate + DIA_MS - 1 : Infinity };
+  }
+  const dias = parseInt(v, 10);
+  return { desde: dias ? Date.now() - dias * 24 * HORA : 0, ate: Infinity };
+}
 
 function podeDash(){ return ehAdm() || !!(USR && (USR.graficos || []).length); }
 function graficosLiberados(){ return ehAdm() ? GRAFICOS.map(g => g[0]) : ((USR && USR.graficos) || []); }
@@ -22073,6 +22106,8 @@ function calcDash(f){
   const agora = Date.now();
   const R = { porStatus:{}, porUsuario:{}, trans:{}, atrasados:[], funil:{}, ciclo:[], ativos:0, mud:0, retornos:{}, retornosTot:0, perdas:{}, perdasTot:0,
               toqTot:0, toqCanal:{}, toqCombo:{}, toqDia:{}, seqs:{}, desde:f.desde, primeiroToque:null, reuTot:0, emailTot:0 };
+  const ATE = f.ate == null ? Infinity : f.ate;
+  R.ate = ATE;
   const U = id => R.porUsuario[id] || (R.porUsuario[id] = { mud:0, ganhos:0, perdidos:0, recebidos:0, repassados:0,
                                                            cumpridos:0, estourados:0, ativos:0, fora:0,
                                                            toq:0, toqCanal:{}, leadsToq:new Set(), avancos:0, dias:{}, reunioes:0, emails:0 });
@@ -22094,7 +22129,7 @@ function calcDash(f){
       .sort((x, y) => String(x.t).localeCompare(String(y.t)))
       .forEach(e => {
         const t = Date.parse(e.t), quem = e.por || e.dono;
-        if(isNaN(t) || t < f.desde || !doUsuario(quem)) return;
+        if(isNaN(t) || t < f.desde || t > ATE || !doUsuario(quem)) return;
         const u = U(quem), combo = CANAIS.map(c => c.id).filter(id => e.canais.includes(id));
         R.toqTot++; u.toq++; u.leadsToq.add(a.chave.split("@")[0]);
         combo.forEach(id => { R.toqCanal[id] = (R.toqCanal[id] || 0) + 1; u.toqCanal[id] = (u.toqCanal[id] || 0) + 1; });
@@ -22108,7 +22143,7 @@ function calcDash(f){
     if(seq.length){ const k = seq.join(">"); R.seqs[k] = (R.seqs[k] || 0) + 1; }
     log.forEach(e => {
       const t = Date.parse(e.t);
-      if(isNaN(t) || t < f.desde) return;
+      if(isNaN(t) || t < f.desde || t > ATE) return;
       if(e.tipo === "status"){
         const quem = e.por || e.dono;
         if(doUsuario(quem)){ U(quem).mud++; R.mud++; }
@@ -22138,7 +22173,7 @@ function calcDash(f){
       }
     });
     intervalosDe(a, agora).forEach(iv => {
-      if(iv.fim < f.desde || !doUsuario(iv.dono)) return;
+      if(iv.fim < f.desde || iv.ini > ATE || !doUsuario(iv.dono)) return;
       const st = statusPorId(iv.status);
       if(!st || st.tipo !== "aberto") return;
       const sla = slaMs(st), ss = SS(iv.status), uu = U(iv.dono);
@@ -22162,7 +22197,7 @@ function calcDash(f){
     if(!a.arquivado && doUsuario(a.usuarioId)) R.funil[a.andamento] = (R.funil[a.andamento] || 0) + 1;
     const ent = log.find(e => e.tipo === "entrada");
     const g = log.find(e => e.tipo === "status" && (statusPorId(e.status) || {}).tipo === "ganho");
-    if(ent && g && Date.parse(g.t) >= f.desde && doUsuario(g.dono)) R.ciclo.push(Date.parse(g.t) - Date.parse(ent.t));
+    if(ent && g && Date.parse(g.t) >= f.desde && Date.parse(g.t) <= ATE && doUsuario(g.dono)) R.ciclo.push(Date.parse(g.t) - Date.parse(ent.t));
   });
   R.atrasados.sort((x, y) => y.excesso - x.excesso);
   return R;
@@ -22396,7 +22431,7 @@ function graficoCanaisUsuario(R){
 }
 function graficoCapacidade(R){
   const c = gCard("Carga do SDR contra a capacidade","Média de contatos por dia útil no período, comparada com a meta diária de cada um (o traço). O pico é o dia com mais contatos.");
-  const agora = Date.now();
+  const agora = Math.min(Date.now(), R.ate == null ? Infinity : R.ate);
   /* conta a partir do 1º contato registrado no período, para não diluir a média antes de o time começar a registrar */
   const ini = R.primeiroToque || agora;
   const du = diasUteisEntre(ini, agora);
@@ -22659,7 +22694,8 @@ function graficoVolumeSdr(R){
     });
     t.append(tr);
     const ini = Math.max(R.desde || 0, primeiro);
-    const dias = sdrDiasUteis(lst, ini, agora - (new Date().getHours() < 18 ? DIA_MS : 0)).filter(d => d.util);
+    const fimP = R.ate != null && R.ate < agora ? R.ate : agora - (new Date().getHours() < 18 ? DIA_MS : 0);
+    const dias = sdrDiasUteis(lst, ini, fimP).filter(d => d.util);
     const na = dias.filter(d => d.lista.length >= meta * .9 && d.lista.length <= meta * 1.1).length;
     const acima = dias.filter(d => d.lista.length > meta * 1.1).length;
     resumoMeta.push({ id, meta, dias: dias.length, na, acima, abaixo: dias.length - na - acima,
@@ -22724,8 +22760,8 @@ function graficoHorarios(R){
     "Horário do 1º movimento de cada atendimento no período. 1º período = até 12h; 2º período = a partir de 12h. " +
     "O ritmo é atendimentos por hora em que o SDR trabalhou pelo menos um lead."); c.classList.add("glargo");
   const D = sdrDados(R);
-  const desde = R.desde || 0;
-  const lst = D.toques.filter(x => x.t >= desde);
+  const desde = R.desde || 0, ate = R.ate == null ? Infinity : R.ate;
+  const lst = D.toques.filter(x => x.t >= desde && x.t <= ate);
   if(!lst.length) return gVazio(c, "Nenhum atendimento no período.");
 
   const porHora = Array(24).fill(0);
@@ -22767,9 +22803,9 @@ function graficoHorarios(R){
   const tw2 = el("div","tablewrap"), t2 = el("table","leadlista gtab");
   const h2 = el("tr"); ["SDR","1º período","ritmo","reuniões","2º período","ritmo","reuniões","Leitura"].forEach(x => h2.append(el("th",null,x))); t2.append(h2);
   D.sdrs.forEach(id => {
-    const l = (D.porSdr[id] || []).filter(x => x.t >= desde);
+    const l = (D.porSdr[id] || []).filter(x => x.t >= desde && x.t <= ate);
     if(!l.length) return;
-    const reu = (D.reuPorSdr[id] || []).filter(x => x.t >= desde);
+    const reu = (D.reuPorSdr[id] || []).filter(x => x.t >= desde && x.t <= ate);
     const p1 = l.filter(x => new Date(x.t).getHours() < 12), p2 = l.filter(x => new Date(x.t).getHours() >= 12);
     const r1n = reu.filter(x => new Date(x.t).getHours() < 12).length, r2n = reu.length - r1n;
     const horasAtivas = a => new Set(a.map(x => sdrDiaKey(x.t) + "|" + new Date(x.t).getHours())).size || 1;
@@ -22933,10 +22969,10 @@ function graficoCapacidadeQualidade(R){
 
 /* "Carga do SDR" e "Contatos por dia" passam a contar atendimentos (mudança de status + contato registrado) */
 function sdrComAtendimentos(R){
-  const D = sdrDados(R), desde = R.desde || 0;
+  const D = sdrDados(R), desde = R.desde || 0, ate = R.ate == null ? Infinity : R.ate;
   const R2 = Object.assign({}, R, { porUsuario:{}, toqDia:{}, primeiroToque:null });
   D.sdrs.forEach(id => {
-    const l = D.porSdr[id].filter(x => x.t >= desde);
+    const l = D.porSdr[id].filter(x => x.t >= desde && x.t <= ate);
     if(!l.length) return;
     const dias = {};
     l.forEach(x => {
@@ -22981,23 +23017,224 @@ Object.assign(DESENHA_GRAFICO, {
   eficienciaSemana: graficoEficienciaSemana, capacidadeQualidade: graficoCapacidadeQualidade
 });
 
+/* ============================================================
+   LEADS ENVIADOS x TRABALHADOS
+   Enviado = o lead chegou para o SDR no período (entrada da Base ou repasse).
+   Trabalhado = o próprio SDR mudou o status desse lead depois de recebê-lo
+   (inclui nova tentativa de "Não atende"). Só registrar contato não conta.
+   Para os que não foram trabalhados, mostra o que aconteceu com cada um.
+   ============================================================ */
+GRAFICOS.unshift(["trabalhados","Leads enviados ao SDR: trabalhados e o que houve com o restante",
+  "Dos leads que cada SDR recebeu no período, quantos ele trabalhou (mudou o status) e o destino dos demais"]);
+
+const TRAB_RES = [
+  ["ganho","Ganho"],
+  ["reuniao","Reunião marcada"],
+  ["email","E-mail de apresentação"],
+  ["perdido","Perdido"],
+  ["retorno","Voltou ao ADM (número errado, não atende, CNPJ etc.)"],
+  ["andamento","Em andamento (status mudou, ainda sem desfecho)"]
+];
+const TRAB_NAO = [
+  ["parado","Ainda com o SDR, sem nenhuma ação","O lead está na lista dele e ninguém mexeu no status."],
+  ["soContato","Ainda com o SDR: registrou contato, mas não mudou o status","Houve contato (WhatsApp, ligação ou e-mail), mas o status ficou igual."],
+  ["repassado","Transferido a outro usuário antes de qualquer ação","Saiu da lista do SDR por transferência, sem ele ter mudado o status."],
+  ["outroMudou","Status mudado por outra pessoa (ex.: ADM)","Alguém mudou o status enquanto o lead estava com o SDR."],
+  ["sistema","Status ajustado pelo sistema","Correção automática (ex.: lead que voltou de retorno)."],
+  ["devolvido","Devolvido à Base sem ação","O lead saiu do ramo e voltou para a Base de Leads."],
+  ["cancelado","Cancelado","A atribuição foi cancelada."],
+  ["outro","Outro destino","Saiu da lista do SDR por outro motivo."]
+];
+
+function trabDados(R){
+  if(R._trab) return R._trab;
+  const f = R.f || {};
+  const desde = f.desde || 0, ate = R.ate == null ? Infinity : R.ate;
+  const ativos = Object.entries(atribs()).map(([k, a]) => Object.assign({ chave:k }, a));
+  const arq = Object.entries(DB.logArquivo || {}).map(([k, a]) => Object.assign({ chave:k, arquivado:true }, a));
+  const leads = ativos.concat(arq).filter(a =>
+    (!f.frente || a.frenteId === f.frente) && (!f.ramo || a.ramoId === f.ramo) && (!f.permitido || f.permitido(a)));
+  const doU = id => id && id !== "null" && (f.usuario ? id === f.usuario : !sdrEhAdm(id));
+  const S = {};
+  const SU = id => S[id] || (S[id] = { env:0, trab:0, depois:0, tempos:[], res:{}, nao:{}, lista:[] });
+  const vistos = new Set();   /* o mesmo lead conta uma vez por SDR, mesmo que tenha ido e voltado */
+
+  leads.forEach(a => {
+    const lead = a.chave.split("@")[0];
+    const log = (a.log || []).map(e => Object.assign({ _t: Date.parse(e.t) }, e)).filter(e => !isNaN(e._t)).sort((x, y) => x._t - y._t);
+    const desf = new Set(log.filter(e => e.tipo === "toque_x").map(e => e.id));
+    log.forEach((e, i) => {
+      if(e.tipo !== "entrada" && e.tipo !== "repasse") return;
+      const sdr = e.dono, t0 = e._t;
+      if(t0 < desde || t0 > ate || !doU(sdr)) return;
+      const k = sdr + "|" + lead;
+      if(vistos.has(k)) return;
+      vistos.add(k);
+      let com = true, primeira = null, destino = null, contato = false;
+      const fl = {};
+      for(let j = i + 1; j < log.length; j++){
+        const x = log[j];
+        if(x.tipo === "status"){
+          const st = statusPorId(x.status), mudou = x.anterior !== x.status;
+          if(x.por === sdr && (mudou || x.tentativa)){
+            if(!primeira) primeira = x;
+            if(st && st.tipo === "ganho" && mudou) fl.ganho = true;
+            else if(st && ehReuniao(st) && mudou) fl.reuniao = true;
+            else if(st && ehEmailApres(st) && mudou) fl.email = true;
+            else if(st && st.tipo === "perdido" && mudou) fl.perdido = true;
+            if(retornaAdm(st) || x.retorno) fl.retorno = true;
+          } else if(!primeira && !destino && com && mudou){
+            destino = { tipo: x.por ? "outroMudou" : "sistema", quem: x.por, t: x._t, para: x.status };
+          }
+        } else if(x.tipo === "repasse"){
+          if(x.de === sdr && com){ com = false; if(!primeira && !destino) destino = { tipo:"repassado", quem: x.dono, t: x._t }; }
+          if(x.dono === sdr) com = true;
+        } else if(x.tipo === "devolucao"){
+          if(com && !primeira && !destino) destino = { tipo: x.cancelado ? "cancelado" : "devolvido", t: x._t };
+          com = false;
+        } else if(x.tipo === "toque" && com && !desf.has(x.id) && (x.por || x.dono) === sdr) contato = true;
+      }
+      const u = SU(sdr);
+      u.env++;
+      if(primeira){
+        u.trab++;
+        if(primeira._t > ate) u.depois++;
+        u.tempos.push(msUteis(t0, primeira._t));
+        const r = fl.ganho ? "ganho" : fl.reuniao ? "reuniao" : fl.email ? "email" : fl.perdido ? "perdido" : fl.retorno ? "retorno" : "andamento";
+        u.res[r] = (u.res[r] || 0) + 1;
+      } else {
+        let tipo = destino ? destino.tipo : null;
+        if(!tipo) tipo = (!a.arquivado && a.usuarioId === sdr) ? (contato ? "soContato" : "parado") : "outro";
+        u.nao[tipo] = (u.nao[tipo] || 0) + 1;
+        u.lista.push({ a, tipo, t0, destino, fora: !a.arquivado && a.usuarioId === sdr && leadForaSla(a) });
+      }
+    });
+  });
+  Object.values(S).forEach(u => u.lista.sort((x, y) => x.t0 - y.t0));
+  R._trab = S;
+  return S;
+}
+
+function trabTextoDestino(x){
+  const d = x.destino;
+  if(x.tipo === "parado") return "Com o SDR, sem ação" + (x.fora ? " · fora do SLA" : "");
+  if(x.tipo === "soContato") return "Com o SDR, só contato registrado" + (x.fora ? " · fora do SLA" : "");
+  if(x.tipo === "repassado") return "Transferido para " + nomeUsuario(d.quem) + " em " + dataHora(d.t);
+  if(x.tipo === "outroMudou") return nomeUsuario(d.quem) + " mudou para " + nomeStatus(d.para) + " em " + dataHora(d.t);
+  if(x.tipo === "sistema") return "Sistema mudou para " + nomeStatus(d.para) + " em " + dataHora(d.t);
+  if(x.tipo === "devolvido") return "Devolvido à Base em " + dataHora(d.t);
+  if(x.tipo === "cancelado") return "Cancelado em " + dataHora(d.t);
+  return "Saiu da lista do SDR por outro motivo";
+}
+
+function graficoTrabalhados(R){
+  const c = gCard("Leads enviados ao SDR: trabalhados e o que houve com o restante",
+    "Enviado = lead que chegou para o SDR no período (da Base ou por transferência). Trabalhado = o próprio SDR mudou o status depois de receber " +
+    "(nova tentativa de Não atende também conta). Só registrar contato, sem mudar o status, não conta como trabalhado. Cada lead conta uma vez por SDR.");
+  c.classList.add("glargo");
+  const S = trabDados(R);
+  const ids = Object.keys(S).filter(id => S[id].env).sort((a, b) => S[b].env - S[a].env);
+  if(!ids.length) return gVazio(c, "Nenhum lead foi enviado a um SDR neste período.");
+  const pct = (a, b) => b ? Math.round(a / b * 100) + "%" : "—";
+  const plural = (n, s, p) => n + " " + (n === 1 ? s : p);
+
+  /* leitura geral, em texto corrido */
+  const env = ids.reduce((s, id) => s + S[id].env, 0), trab = ids.reduce((s, id) => s + S[id].trab, 0);
+  const naoTot = {}; ids.forEach(id => Object.entries(S[id].nao).forEach(([k, n]) => naoTot[k] = (naoTot[k] || 0) + n));
+  const foraTot = ids.reduce((s, id) => s + S[id].lista.filter(x => x.fora && (x.tipo === "parado" || x.tipo === "soContato")).length, 0);
+  const partes = TRAB_NAO.filter(([k]) => naoTot[k]).map(([k, rot]) => "<b>" + naoTot[k] + "</b> " + rot.charAt(0).toLowerCase() + rot.slice(1));
+  const dos = n => (n === 1 ? "Do " : "Dos ") + n;
+  const leit = el("div","gleitura");
+  leit.innerHTML = "<p>No período, <b>" + plural(env, "lead foi enviado", "leads foram enviados") + "</b> " +
+    (ids.length > 1 ? "aos " + ids.length + " SDRs" : "para " + nomeUsuario(ids[0])) + ". " +
+    "<b>" + trab + " (" + pct(trab, env) + ")</b> foram trabalhados e <b>" + (env - trab) + "</b> não tiveram o status mudado pelo SDR." +
+    (partes.length ? " O que houve com " + (env - trab === 1 ? "ele" : "esses " + (env - trab)) + ": " + partes.join("; ") + "." : "") +
+    (foraTot ? " <b>" + plural(foraTot, "lead parado com o SDR já está", "leads parados com o SDR já estão") + " fora do SLA.</b>" : "") + "</p>";
+  c.append(leit);
+
+  const grid = el("div","gtrab-resumo");
+  ids.forEach(id => {
+    const u = S[id], nao = u.env - u.trab;
+    const box = el("div","gtrab-sdr");
+    box.append(el("h5",null,nomeUsuario(id)));
+    const nums = el("div","gtrab-num");
+    [["", u.env, "enviados"], ["ok", u.trab + " (" + pct(u.trab, u.env) + ")", "trabalhados"], [nao ? "nok" : "", nao, "sem ação do SDR"]]
+      .forEach(([cls, v, l]) => { const d = el("div", cls); d.append(el("b",null,String(v)), el("span",null,l)); nums.append(d); });
+    box.append(nums);
+    const trk = el("div","gbtrk pilha");
+    [[u.trab, "bom", "trabalhados"], [nao, "ruim", "sem ação"]].forEach(([v, cls, tit]) => {
+      if(!v) return; const i = el("i", cls); i.style.width = (v / u.env * 100).toFixed(1) + "%"; i.title = v + " " + tit; trk.append(i);
+    });
+    box.append(trk);
+    if(u.tempos.length){
+      const ord = u.tempos.slice().sort((a, b) => a - b), med = ord[Math.floor(ord.length / 2)];
+      box.append(el("p","sub","Tempo até a 1ª mudança de status (mediana): " + fmtDur(med) + " úteis" +
+        (u.depois ? " · " + plural(u.depois, "foi trabalhado", "foram trabalhados") + " só depois do fim do período" : "")));
+      Object.assign(box.lastChild.style, { margin:"8px 0 0", fontSize:"12px", color:"var(--muted)" });
+    }
+    if(u.trab){
+      box.append(el("h5","gsub", dos(u.trab) + (u.trab === 1 ? " trabalhado, como está" : " trabalhados, como estão")));
+      const ul = el("ul");
+      TRAB_RES.forEach(([k, rot]) => { if(u.res[k]) { const li = el("li"); li.append(el("b",null,String(u.res[k])), document.createTextNode(" · " + rot + " "), el("small",null,"(" + pct(u.res[k], u.trab) + ")")); ul.append(li); } });
+      box.append(ul);
+    }
+    if(nao){
+      box.append(el("h5","gsub", dos(nao) + " sem ação, o que houve"));
+      const ul = el("ul");
+      TRAB_NAO.forEach(([k, rot, exp]) => {
+        if(!u.nao[k]) return;
+        const li = el("li"); li.title = exp;
+        li.append(el("b",null,String(u.nao[k])), document.createTextNode(" · " + rot));
+        if(k === "parado" || k === "soContato"){
+          const f = u.lista.filter(x => x.tipo === k && x.fora).length;
+          if(f) li.append(el("small",null," · " + f + " fora do SLA"));
+        }
+        ul.append(li);
+      });
+      box.append(ul);
+      const dt = el("details"); dt.append(el("summary",null, nao === 1 ? "Ver o lead sem ação" : "Ver os " + nao + " leads sem ação"));
+      const tw = el("div","tablewrap"), t = el("table","leadlista gtab");
+      const h = el("tr"); ["Empresa","Recebido em","O que houve"].forEach(x => h.append(el("th",null,x))); t.append(h);
+      u.lista.slice(0, 150).forEach(x => {
+        const tr = el("tr");
+        tr.append(el("td",null,((x.a.lead || {}).razaoSocial) || x.a.cnpj || "—"), el("td",null,dataHora(x.t0)));
+        const td = el("td"); const tx = trabTextoDestino(x);
+        if(x.fora) td.append(el("span","pill st-late", tx)); else td.append(document.createTextNode(tx));
+        tr.append(td); t.append(tr);
+      });
+      tw.append(t); dt.append(tw);
+      if(u.lista.length > 150) dt.append(el("p","leadshint","Mostrando os 150 mais antigos de " + u.lista.length + "."));
+      box.append(dt);
+    }
+    grid.append(box);
+  });
+  c.append(grid);
+  gLegenda(c, [["bom","trabalhado (SDR mudou o status)"],["ruim","sem ação do SDR"]]);
+  return c;
+}
+DESENHA_GRAFICO.trabalhados = graficoTrabalhados;
+
 function kpis(host, R){
   const tot = Object.values(R.porUsuario).reduce((s, u) => s + u.cumpridos + u.estourados, 0);
   const ok = Object.values(R.porUsuario).reduce((s, u) => s + u.cumpridos, 0);
   const ganhos = Object.values(R.porUsuario).reduce((s, u) => s + u.ganhos, 0);
   const ciclo = R.ciclo.length ? R.ciclo.reduce((s, v) => s + v, 0) / R.ciclo.length : 0;
   const k = el("div","gkpis");
-  [[String(R.ativos), "leads em aberto", ""],
-   [String(R.atrasados.length), "fora do SLA agora", R.atrasados.length ? "ruim" : ""],
-   [tot ? Math.round(ok / tot * 100) + "%" : "—", "das etapas no prazo", tot && ok / tot < .7 ? "ruim" : ""],
-   [String(R.mud), "mudanças de status", ""],
-   [String(R.toqTot), "contatos registrados", ""],
-   [String(R.reuTot), "reuniões marcadas", ""],
-   [String(R.emailTot), "e-mails de apresentação", ""],
-   [String(ganhos), "ganhos", ""],
-   [String(R.retornosTot), "retornos ao ADM", ""],
-   [ciclo ? fmtDur(ciclo) : "—", "da entrada até o ganho, em média", ""]
-  ].forEach(([v, l, cls]) => { const d = el("div","gkpi " + cls); d.append(el("b",null,v), el("span",null,l)); k.append(d); });
+  let env = 0, trab = 0;
+  if(R.f){ const S = trabDados(R); Object.values(S).forEach(u => { env += u.env; trab += u.trab; }); }
+  [[String(env), "leads enviados aos SDRs", "", "Leads que chegaram para os SDRs no período (da Base ou por transferência). Cada lead conta uma vez por SDR."],
+   [env ? trab + " (" + Math.round(trab / env * 100) + "%)" : "—", "trabalhados pelo SDR", env && trab / env < .7 ? "ruim" : "", "Dos leads enviados, quantos tiveram o status mudado pelo próprio SDR. O detalhe do restante está em \"Leads enviados ao SDR\"."],
+   [String(R.ativos), "leads em aberto agora", "", "Leads hoje em um status em aberto (ainda sem desfecho)."],
+   [String(R.atrasados.length), "fora do SLA agora", R.atrasados.length ? "ruim" : "", "Leads que estão hoje parados há mais tempo do que o prazo do status."],
+   [tot ? Math.round(ok / tot * 100) + "%" : "—", "das etapas no prazo", tot && ok / tot < .7 ? "ruim" : "", "De todas as passagens por um status com prazo, quantas saíram dentro do prazo."],
+   [String(R.mud), "mudanças de status", "", "Total de vezes que alguém mudou o status de um lead no período (um lead pode ter várias)."],
+   [String(R.toqTot), "contatos registrados", "", "Contatos registrados em + Registrar contato (WhatsApp, ligação, e-mail)."],
+   [String(R.reuTot), "reuniões marcadas", "", "Leads levados para o status de reunião no período."],
+   [String(R.emailTot), "e-mails de apresentação", "", "Leads levados para o status de e-mail de apresentação no período."],
+   [String(ganhos), "ganhos", "", "Leads que viraram ganho no período."],
+   [String(R.retornosTot), "retornos ao ADM", "", "Leads que o SDR devolveu ao ADM (ex.: número errado, limite de tentativas)."],
+   [ciclo ? fmtDur(ciclo) : "—", "da entrada até o ganho, em média", "", "Tempo médio entre o lead entrar e virar ganho."]
+  ].forEach(([v, l, cls, tit]) => { const d = el("div","gkpi " + cls); d.append(el("b",null,v), el("span",null,l)); if(tit) d.title = tit; k.append(d); });
   host.append(k);
 }
 
@@ -23041,9 +23278,25 @@ function pickDashboard(host){
   const filtros = el("div","leadsform gfiltros");
   const campo = (rot, e) => { const c = el("div","leadscampo"); c.append(el("label",null,rot), e); filtros.append(c); };
   const sp = el("select");
-  [["7","Últimos 7 dias"],["30","Últimos 30 dias"],["90","Últimos 90 dias"],["365","Últimos 12 meses"],["0","Desde o início"]]
+  [["hoje","Hoje"],["7","Últimos 7 dias"],["30","Últimos 30 dias"],["90","Últimos 90 dias"],["365","Últimos 12 meses"],
+   ["mes","Este mês"],["mesant","Mês passado"],["0","Desde o início"],["custom","Período específico (de/até)…"]]
     .forEach(([v, l]) => sp.append(Object.assign(el("option",null,l), {value:v})));
-  sp.value = DASH.dias; campo("Período", sp);
+  sp.value = DASH.dias;
+  /* período específico: duas datas, de e até */
+  const cp = el("div","leadscampo"); cp.append(el("label",null,"Período"), sp);
+  let dDe = null, dAte = null;
+  if(DASH.dias === "custom"){
+    const iso = d => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+    const hj = new Date();
+    if(!DASH.de) DASH.de = iso(new Date(hj.getFullYear(), hj.getMonth(), 1));
+    if(!DASH.ate) DASH.ate = iso(hj);
+    const box = el("div","gdatas");
+    dDe = el("input"); dDe.type = "date"; dDe.value = DASH.de; dDe.title = "De";
+    dAte = el("input"); dAte.type = "date"; dAte.value = DASH.ate; dAte.title = "Até";
+    box.append(dDe, el("span",null,"a"), dAte);
+    cp.append(box);
+  }
+  filtros.append(cp);
   const sf = el("select");
   sf.append(Object.assign(el("option",null,"Todas as verticais"), {value:""}));
   fvis.forEach(f => sf.append(Object.assign(el("option",null,f.nome), {value:f.id})));
@@ -23062,13 +23315,22 @@ function pickDashboard(host){
   }
   host.append(filtros);
   sp.onchange = () => { DASH.dias = sp.value; redesenharPicker(); };
+  if(dDe) dDe.onchange = () => { if(!dDe.value) return; DASH.de = dDe.value; if(DASH.ate && DASH.ate < DASH.de) DASH.ate = DASH.de; redesenharPicker(); };
+  if(dAte) dAte.onchange = () => { if(!dAte.value) return; DASH.ate = dAte.value; if(DASH.de && DASH.de > DASH.ate) DASH.de = DASH.ate; redesenharPicker(); };
   sf.onchange = () => { DASH.frente = sf.value; DASH.ramo = ""; redesenharPicker(); };
   sr.onchange = () => { DASH.ramo = sr.value; redesenharPicker(); };
   if(su) su.onchange = () => { DASH.usuario = su.value; redesenharPicker(); };
 
-  const dias = parseInt(DASH.dias, 10);
+  const per = dashPeriodo();
+  const fmtD = t => new Date(t).toLocaleDateString("pt-BR");
+  const pp = el("p","gperiodo");
+  pp.innerHTML = per.desde
+    ? "Mostrando de <b>" + fmtD(per.desde) + "</b> a <b>" + fmtD(Math.min(per.ate, Date.now())) + "</b>. " +
+      "Indicadores marcados com \"agora\" mostram a situação de hoje, independente do período."
+    : "Mostrando <b>todo o histórico</b>. Indicadores marcados com \"agora\" mostram a situação de hoje.";
+  host.append(pp);
   const R = calcDash({
-    desde: dias ? Date.now() - dias * 24 * HORA : 0,
+    desde: per.desde, ate: per.ate,
     frente: DASH.frente, ramo: DASH.ramo,
     usuario: veEquipe() ? DASH.usuario : USR.id,
     permitido: ehAdm() ? null : (a => { const x = acharRamo(a.frenteId, a.ramoId); return !!x && podeRamo(x.f, x.r); })
