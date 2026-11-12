@@ -7837,6 +7837,7 @@ function pickBase(host){
   arquivoCopia.onchange = () => { baseRestaurar(arquivoCopia.files[0]); arquivoCopia.value = ""; };
 
   BASE.niveis = new Set(["Quente","Morno","Frio"]);            /* ao abrir a Base, mostra todos os níveis de score */
+  BASE.ordem = "recentes";                                      /* ao abrir a Base, os enviados mais recentes vêm primeiro */
   BASE.ui = { aviso, selRamo, selUf, selCidade, estados, numeros, conteudo, abaEmpresas, abaRedes,
               btBaixar, btImportar, relatorio, btCopia, btRestaurar };
 
@@ -7953,7 +7954,7 @@ function basePintarEstados(resumo){
       linha.title = "Abrir os leads de " + e.uf;
       linha.onclick = () => {
         BASE.visao = "empresas"; BASE.rolar = true; BASE.mostrar = "disp"; BASE.niveis = new Set(["Quente","Morno","Frio"]); BASE.pag = 0;
-        BASE.tipos = new Set(TIPOS_FONE.map(t => t[0])); BASE.ordem = "grupo";
+        BASE.tipos = new Set(TIPOS_FONE.map(t => t[0])); BASE.ordem = "recentes";
         u.selUf.value = e.uf;
         u.selCidade.value = "";
         BASE.filtro = { ramo: u.selRamo.value, uf: e.uf, cidade: "" };
@@ -8578,7 +8579,8 @@ const NOVOS_LEAD_COLS = {
   endereco:    r => r.endereco || "",
   telMaps:     r => r.telMaps || "",
   telMaisCnpj: r => r.telMaisCnpj || (r.telReceita || []).join(" / "),
-  situacao:    r => (M04_STATUS[r.status] || [r.status || ""])[0]
+  situacao:    r => (M04_STATUS[r.status] || [r.status || ""])[0],
+  enviado:     r => r.enviadoBaseEm || ""
 };
 function novosOrdenaLeads(l, ord){
   const f = NOVOS_LEAD_COLS[ord.col] || NOVOS_LEAD_COLS.empresa, nome = NOVOS_LEAD_COLS.empresa;
@@ -8596,6 +8598,27 @@ function novosThOrd(rot, col, ord, aoMudar, numerica, cls){
   return th;
 }
 function novosRamoKey(x){ return baseChave(x.termo || "sem ramo"); }
+
+/* Classifica o lead no ramo da Base de Leads. Olha primeiro o ramo da busca,
+   depois o CNAE e por fim nome, razão social e categoria do Google Maps.
+   CNAE 8630-5/04 = atividade odontológica. */
+const RAMOS_BASE = [
+  { nome:"ODONTOLOGIA",          cnae:/^86305/, termos:/\b(ODONTO|DENT|ORTODON|IMPLANTOD|PROTESE DENT|SORRISO)/ },
+  { nome:"CLÍNICA DE DEPILAÇÃO", cnae:null,     termos:/\b(DEPIL|LASER|CERA\b|FOTODEPIL)/ }
+];
+function classificarRamo(r){
+  const cnae = String(r.cnae || "").replace(/\D/g,"");
+  const fontes = [r.termo, (r.cnae || "") + " " + (r.cnaeDesc || ""), [r.nomeMaps, r.nomeFantasia, r.razaoSocial, r.categoria].join(" ")];
+  for(const txt of fontes){
+    const t = baseChave(txt);
+    if(!t) continue;
+    const ach = RAMOS_BASE.find(x => x.termos.test(t));
+    if(ach) return ach.nome;
+  }
+  const porCnae = RAMOS_BASE.find(x => x.cnae && x.cnae.test(cnae));
+  if(porCnae) return porCnae.nome;
+  return String(r.termo || "").toUpperCase();
+}
 const M04_UFS = ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"];
 const M04_STATUS = {
   aprovado:   ["Aprovado", "st-done"],
@@ -9610,7 +9633,13 @@ async function novosDesenhar(){
     const c = leadsChip(n, rot.replace(/^[A-Z](?=[a-z])/, l => l.toLowerCase()), k === "aprovado" ? "ok" : k === "aguardando" ? "novo" : "alerta"); if(c) u.chips.append(c);
   });
   const env = noRecorte.filter(x => x.enviadoBase).length;
-  const ce = leadsChip(env, "já enviados à Base", ""); if(ce) u.chips.append(ce);
+  const ce = leadsChip(env, "já enviados à Base · ver mais recentes", "");
+  if(ce){
+    ce.style.cursor = "pointer";
+    ce.title = "Ordena a lista pelos enviados à Base mais recentes";
+    ce.onclick = () => { f.naoEnviados = false; u.ckN.checked = false; NOVOS.ordLista = { col:"enviado", dir:-1 }; NOVOS.mostrar = 200; novosDesenhar(); };
+    u.chips.append(ce);
+  }
 
   const q = baseChave(f.busca), qd = cnpjDig(f.busca);
   /* filtros da barra (situação, só não enviados, busca); o estado e a cidade já vieram em noRecorte */
@@ -9734,7 +9763,8 @@ async function novosDesenhar(){
     const te = el("td"); te.append(el("b",null, r.nomeMaps || r.nomeFantasia || r.razaoSocial || "—"));
     if(r.razaoSocial) te.append(el("div","sub", r.razaoSocial));
     if(r.filiais > 1 && !r.rede) te.append(el("div","quem","possível rede: " + r.filiais + " unidades ativas"));
-    if(r.enviadoBase) te.append(el("div","quem","enviado à Base em " + new Date(r.enviadoBaseEm).toLocaleDateString("pt-BR")));
+    if(r.enviadoBase) te.append(el("div","quem","enviado à Base em " + new Date(r.enviadoBaseEm).toLocaleString("pt-BR", { dateStyle:"short", timeStyle:"short" }) +
+      " · " + (r.ramoBase || classificarRamo(r))));
     if(r.campanha) te.append(el("div","quem","campanha " + r.campanha + (r.campanhaEm ? " · exportado em " + new Date(r.campanhaEm).toLocaleDateString("pt-BR") : "")));
     else if((r.campanhasAnteriores || []).length) te.append(el("div","quem","remarketing · já esteve em " + r.campanhasAnteriores.map(c => c.nome).join(", ")));
     if(dv === "frios") te.append(el("div","quem nfrio","frio · sem celular"));
@@ -10164,10 +10194,12 @@ async function novosEnviarBase(){
   if(!marcados.length) return toast(NOVOS.divisao === "clientes" ? "Clientes não vão para a Base de Leads." : NOVOS.divisao === "mei" ? "MEI não vai para a Base de Leads." : "Marque os leads primeiro.");
   const comCnpj = marcados.filter(x => cnpjDig(x.cnpj).length === 14);
   if(!comCnpj.length) return toast("Os marcados não têm CNPJ. Digite o CNPJ antes de enviar.");
+  const agora = new Date().toISOString();
   const registros = comCnpj.map(r => ({
+    enviadoEm: agora,
     cnpj: r.cnpj, razaoSocial: r.razaoSocial || "", nomeFantasia: r.nomeFantasia || r.nomeMaps || "",
     endereco: r.endereco || r.enderecoReceita || "", bairro: r.bairro || "", cep: r.cep || "",
-    cidade: r.cidade, uf: r.uf, ramo: r.termo || "", cnae: r.cnae ? r.cnae + (r.cnaeDesc ? " - " + r.cnaeDesc : "") : "",
+    cidade: r.cidade, uf: r.uf, ramo: classificarRamo(r), cnae: r.cnae ? r.cnae + (r.cnaeDesc ? " - " + r.cnaeDesc : "") : "",
     telefone: novosTelefones(r).join(" / "), site: r.site || "", nota: r.nota || "", avaliacoes: r.avaliacoes || "",
     categoria: r.categoria || "", horario: "", statusEndereco: "Confere", link: r.link || "",
     ...(r.porte ? { porte: r.porte } : {}), ...(r.abertura ? { abertura: r.abertura } : {}),
@@ -10178,10 +10210,15 @@ async function novosEnviarBase(){
   const { guardados, erro } = await baseGuardar(registros, ["busca","maps"]);
   u.btEnviar.disabled = false; u.btEnviar.textContent = "Enviar marcados para a Base de Leads";
   if(erro && !guardados) return toast("A Base de Leads não respondeu (" + erro + "). Confira se a extensão da Base está ativa.");
-  const agora = new Date().toISOString();
-  await NovosDB.gravar(comCnpj.map(r => Object.assign({}, r, { enviadoBase:true, enviadoBaseEm: agora })));
+  await NovosDB.gravar(comCnpj.map(r => Object.assign({}, r, { enviadoBase:true, enviadoBaseEm: agora, ramoBase: classificarRamo(r) })));
   NOVOS.sel.clear();
-  toast(guardados.toLocaleString("pt-BR") + " leads enviados para a Base de Leads" +
+  /* depois de enviar, a lista mostra os enviados mais recentes primeiro */
+  NOVOS.ordLista = { col:"enviado", dir:-1 }; NOVOS.mostrar = 200;
+  BASE.lista = null; BASE.ordem = "recentes";
+  const porRamo = {};
+  comCnpj.forEach(r => { const k = classificarRamo(r) || "sem ramo"; porRamo[k] = (porRamo[k] || 0) + 1; });
+  toast(guardados.toLocaleString("pt-BR") + " leads enviados para a Base de Leads (" +
+    Object.entries(porRamo).map(([k, n]) => n + " " + k).join(", ") + ")" +
     (marcados.length > comCnpj.length ? " (" + (marcados.length - comCnpj.length) + " sem CNPJ ficaram de fora)" : "") + ".");
   novosDesenhar();
 }
@@ -18798,6 +18835,11 @@ async function baseCarregarLista(){
   }
   qualifTodos();
   { const mapa = mapaFones(lista, r => r.telefone, r => r.cnpj); lista.forEach(r => aplicarFoneReceita(r, mapa)); }
+  /* data de envio: a que veio na Base ou, para envios antigos, a guardada no Cadastro Leads Novos */
+  try {
+    const envios = new Map((await NovosDB.todos()).filter(x => x.enviadoBaseEm).map(x => [cnpjDig(x.cnpj), x.enviadoBaseEm]));
+    lista.forEach(r => { if(!r.enviadoEm){ const e = envios.get(cnpjDig(r.cnpj)); if(e) r.enviadoEm = e; } });
+  } catch(e){ /* sem o cadastro local, ordena só pelo que veio da Base */ }
   BASE.lista = lista; BASE.listaChave = chave; BASE.sel = new Set(); BASE.pag = 0;
   return lista;
 }
@@ -18848,6 +18890,7 @@ async function baseListaEmpresas(){
   const buscando = !!String(BASE.busca || "").trim();
   if(buscando) visiveis = lista.filter(r => casaBuscaBase(r, BASE.busca));   /* a busca olha o recorte inteiro */
   if(BASE.ordem === "score") visiveis = visiveis.slice().sort((a, b) => scoreDe(b).pts - scoreDe(a).pts);
+  if(BASE.ordem === "recentes") visiveis = visiveis.slice().sort((a, b) => String(b.enviadoEm || "").localeCompare(String(a.enviadoEm || "")));
   const grupoDe = r => ordemGrupo(scoreDe(r).nivel, tipoDe(r));
   const porGrupo = {};
   if(BASE.ordem === "grupo"){
@@ -18895,7 +18938,7 @@ async function baseListaEmpresas(){
 
   const ord = el("span","ltord");
   ord.append(document.createTextNode("Ordem:"));
-  [["grupo","por grupo"],["","da lista"],["score","maior score"]].forEach(([v, rot]) => {
+  [["recentes","mais recentes"],["grupo","por grupo"],["","da lista"],["score","maior score"]].forEach(([v, rot]) => {
     const b = el("button","btn sm" + ((BASE.ordem || "") === v ? " primary" : " ghost"), rot);
     b.onclick = () => { BASE.ordem = v; BASE.pag = 0; baseListaEmpresas(); };
     ord.append(b);
@@ -19087,7 +19130,9 @@ async function baseListaEmpresas(){
       };
       td.append(cb); tr.append(td);
     }
-    tr.append(el("td",null,r.razaoSocial || r.nomeFantasia || ""));
+    { const tdE = el("td",null,r.razaoSocial || r.nomeFantasia || "");
+      if(r.enviadoEm) tdE.append(el("div","quem","enviado em " + new Date(r.enviadoEm).toLocaleString("pt-BR", { dateStyle:"short", timeStyle:"short" })));
+      tr.append(tdE); }
     const tsc = el("td"), sc = scoreDe(r);
     tsc.append(pillScore(sc));
     if(sc.motivos.length) tsc.append(el("div","scoremot", sc.motivos.slice(0, 3).join(" · ")));
