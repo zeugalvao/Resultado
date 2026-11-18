@@ -10044,6 +10044,34 @@ async function novosDesenhar(){
       : dv === "frios" ? "Nenhum lead frio: todos têm celular." : "Ainda não há leads aqui. Comece uma busca no Modelo 04: cada cidade concluída aparece nesta lista."));
     return;
   }
+  /* busca por nome sem resultado aqui: procura no Cadastro inteiro (todas as divisões, ramos, situações e lugares) */
+  if(!lista.length && (q || qd.length >= 4)){
+    const casa = x => (q && baseChave([x.nomeMaps, x.razaoSocial, x.nomeFantasia, x.cnpj, x.endereco, x.telMaps, x.telMaisCnpj, x.distrito, x.rede].join(" ")).includes(q)) ||
+      (qd.length >= 4 && (cnpjDig(x.cnpj).includes(qd) || cnpjDig(x.telMaps + x.telMaisCnpj).includes(qd)));
+    const achados = tudo.filter(casa);
+    const rotDiv = { leads:"Leads", frios:"Frios (só fixo)", campanhas:"Campanhas", rede:"REDE", mei:"MEI", clientes:"Já são clientes" };
+    const box = el("div","leadsmotivo"); box.style.margin = "0 0 12px";
+    if(!achados.length){
+      box.append(el("b",null,"“" + f.busca + "” não está no Cadastro Leads Novos."), el("br"),
+        document.createTextNode("A busca não trouxe essa empresa. No Modelo 05 (CNAE primeiro), só entra quem está na lista do CNAE digitado no MaisCNPJ: " +
+        "se a empresa tem outro CNAE principal (ex.: 9602-5/01, cabeleireiro/manicure, comum em depilação a cera), ela não aparece. " +
+        "Para pegar tudo o que o Google Maps mostra, use o Modelo 04 (Maps primeiro) com “clínica de depilação”, ou ponha os dois CNAEs separados por vírgula."));
+    } else {
+      box.append(el("b",null, achados.length + (achados.length === 1 ? " lead com “" : " leads com “") + f.busca + "” em outro lugar do Cadastro:"));
+      const linha = el("div","leadsbotoes"); linha.style.marginTop = "8px";
+      achados.slice(0, 12).forEach(x => {
+        const d = divDe(x), nome = x.nomeMaps || x.nomeFantasia || x.razaoSocial || x.cnpj;
+        const onde = [rotDiv[d], x.termo || "sem ramo", x.cidade + "/" + x.uf, (M04_STATUS[x.status] || [x.status])[0]].filter(Boolean).join(" · ");
+        const b = el("button","btn sm", nome + " — " + onde);
+        b.title = "Abrir onde este lead está" + (x.ramoMotivo ? " (filtro do ramo: " + x.ramoMotivo + ")" : "");
+        b.onclick = () => { NOVOS.divisao = d; f.ramo = novosRamoKey(x); f.status = ""; f.uf = ""; f.cidade = ""; f.naoEnviados = false;
+          u.ckN.checked = false; NOVOS.redeSel = ""; NOVOS.campSel = ""; NOVOS.mostrar = 200; novosDesenhar(); };
+        linha.append(b);
+      });
+      box.append(linha);
+    }
+    u.corpo.append(box);
+  }
   if(!lista.length){
     const escondidos = todos.length;
     const p = el("p","kicker", escondidos ? escondidos + (escondidos === 1 ? " unidade não aparece" : " unidades não aparecem") + " por causa dos filtros" +
