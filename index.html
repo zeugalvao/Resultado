@@ -1342,6 +1342,38 @@ details.gsdr summary{cursor:pointer;font-size:13px}
 .m04prog .m04cidades table.leadlista{width:100%}
 .m04prog .m04cidades table.leadlista td:nth-child(2){white-space:normal;min-width:320px}
 .m04prog .leadsatual{max-width:none}
+/* caixa de seleção dentro dos campos: não estica (o input do campo tem width:100%) */
+.leadscampo .qualcheck input,.m04cidbox .qualcheck input{width:auto;flex:none;max-width:none}
+
+/* ---------- meta de leads (dia, semana e mês em dias úteis) ---------- */
+.metabox{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:0 0 18px;max-width:1180px}
+.metatopo{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 18px;margin-bottom:12px}
+.metatopo h3{margin:0;font-size:15px;font-weight:600;flex:1 1 220px}
+.metatopo h3 span{display:block;font-size:11.5px;font-weight:400;color:var(--muted)}
+.metain{display:flex;flex-direction:column;gap:3px;font-size:11.5px;font-weight:600;color:var(--muted)}
+.metain input{width:110px;padding:6px 8px;border:1px solid var(--line);border-radius:5px;font-size:14px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
+.metain input.largo{width:230px;font-weight:400;font-size:12.5px}
+.metagrade{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.metacard{border:1px solid var(--line-soft);border-radius:6px;padding:10px 12px}
+.metacard .rot{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.metacard .num{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.metacard .num small{font-size:13px;font-weight:400;color:var(--muted)}
+.metacard .sub{font-size:12px;color:var(--muted);margin-top:2px}
+.metacard .leadsbar{margin-top:7px}
+.metacard.ok{border-color:var(--teal);background:var(--teal-soft)}
+.metacard.ok .leadsbar i{background:var(--teal-deep)}
+.metadias{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+.metadia{flex:1 1 90px;border:1px solid var(--line-soft);border-radius:5px;padding:5px 8px;font-size:11.5px;color:var(--muted)}
+.metadia b{display:block;font-size:15px;color:var(--ink);font-variant-numeric:tabular-nums}
+.metadia.hoje{border-color:var(--teal)}
+.metadia.folga{background:#F3F6F8;opacity:.75}
+.metadia.ok b{color:var(--teal-deep)}
+.metaaviso{margin-top:10px;padding:8px 11px;border-radius:6px;background:var(--teal-soft);color:var(--teal-deep);font-size:12.5px}
+.metaaviso.falta{background:var(--amber-soft);color:#8A5A12}
+.metamais{margin-top:10px;font-size:12px;color:var(--muted)}
+.metamais summary{cursor:pointer}
+.metamais .linha{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-top:8px}
+@media(max-width:820px){ .metagrade{grid-template-columns:1fr} }
 </style>
 </head>
 <body>
@@ -8626,7 +8658,8 @@ const M04_STATUS = {
   fora:       ["Fora do requisito", "st-late"],
   verificar:  ["Conferir", "st-doing"],
   sem_cnpj:   ["Sem CNPJ", "st-todo"],
-  mei:        ["MEI", "st-todo"]
+  mei:        ["MEI", "st-todo"],
+  outro_ramo: ["Outro ramo", "st-late"]
 };
 
 window.addEventListener("message", ev => {
@@ -8671,6 +8704,251 @@ function ramoConfere(palavras, texto){
   if(!palavras || !palavras.length) return true;
   const t = " " + ramoNorm(texto) + " ";
   return palavras.some(p => t.includes(" " + p));
+}
+
+/* ---- filtro do ramo no painel: confere cada lead que a extensão traz (Modelo 04 e Modelo 05) ----
+   Na lista de um CNAE amplo (ex.: 9602-5/02, estética e beleza) vem de tudo: dentista, salão, manicure.
+   O Google Maps só mostra depilação a laser porque procura pelo ramo; aqui a gente faz o mesmo:
+   olha nome no Maps, categoria do Maps, nome fantasia e razão social.
+     palavra forte do ramo (DEPIL…)            → do ramo
+     palavra de outro ramo (ODONTO, SALÃO…)    → outro ramo (não conta na meta)
+     palavra fraca do ramo (LASER…)            → do ramo
+     achado no Maps sem nenhuma palavra        → outro ramo
+     não achado no Maps e sem nenhuma palavra  → Conferir (não conta na meta) */
+const RAMO_EXTRAS = { DEPIL:["DEPIL","FOTODEPIL","DEPYL","PELLO","REMOCAO DE PELO","LASER"], LASER:["LASER","DEPIL","DEPYL","FOTODEPIL"] };
+/* palavras que, sozinhas, não bastam (aparecem em outros ramos: dentista com laser, estética geral) */
+const RAMO_FRACAS = new Set(["LASER","ESTET","BELEZA","SAUDE","BEM ESTAR","CORPO","PELE"]);
+const RAMO_EXCLUIR_PADRAO = {
+  DEPIL: "odonto, dentista, dental, dente, ortodontia, implante, sorriso, harmonização orofacial, cabeleireiro, cabelo, salão, barbearia, barber, " +
+         "manicure, unha, nail, esmalteria, sobrancelha, cílios, lash, maquiagem, make up, tatuagem, tattoo, piercing, podologia, fisioterapia, " +
+         "nutrição, nutricionista, psicologia, academia, pilates, farmácia, ótica, veterinária, pet shop, dermatologia, cirurgia plástica"
+};
+function ramoChaveTermo(termo){ return ramoNorm(termo); }
+function ramoCfgTodos(){ try { return JSON.parse(localStorage.getItem("m04_filtroRamo") || "{}") || {}; } catch(e){ return {}; } }
+function ramoCfg(termo){ return ramoCfgTodos()[ramoChaveTermo(termo)] || {}; }
+function ramoCfgGravar(termo, cfg){
+  try { const t = ramoCfgTodos(); t[ramoChaveTermo(termo)] = cfg; localStorage.setItem("m04_filtroRamo", JSON.stringify(t)); } catch(e){}
+}
+function ramoExcluirPadrao(termo){
+  const raizes = ramoPalavras(termo, "");
+  const k = Object.keys(RAMO_EXCLUIR_PADRAO).find(k => raizes.some(r => r.startsWith(k)));
+  return k ? RAMO_EXCLUIR_PADRAO[k] : "";
+}
+/* monta o filtro de um ramo: palavras do ramo (fortes e fracas) e palavras que tiram o lead */
+function ramoFiltroDe(termo, palavrasTxt, excluirTxt){
+  const cfg = ramoCfg(termo);
+  const pal = palavrasTxt != null ? palavrasTxt : (cfg.palavras || "");
+  const exc = excluirTxt != null ? excluirTxt : (cfg.excluir != null && cfg.excluir !== "" ? cfg.excluir : ramoExcluirPadrao(termo));
+  const pos = new Set(ramoPalavras(termo, pal));
+  [...pos].forEach(p => Object.keys(RAMO_EXTRAS).forEach(k => { if(p.startsWith(k)) RAMO_EXTRAS[k].forEach(s => pos.add(s)); }));
+  const fortes = [...pos].filter(p => !RAMO_FRACAS.has(p));
+  const neg = String(exc || "").split(/[,;\n]/).map(ramoNorm).filter(Boolean)
+    .map(x => x.includes(" ") ? x : ramoRaiz(x))
+    .filter(x => x.length >= 3 && ![...pos].some(p => x.startsWith(p) || p.startsWith(x)));
+  return { pos:[...pos], fortes, neg };
+}
+/* palavra do ramo: aceita dentro de marca colada (ESPACOLASER, MAISLASER); palavra de fora: só no começo da palavra */
+function ramoTem(lista, texto, dentro){
+  const t = " " + ramoNorm(texto) + " ";
+  return lista.find(p => dentro && p.length >= 5 ? t.includes(p) : t.includes(" " + p)) || "";
+}
+function ramoAvaliar(f, r){
+  const maps = [r.nomeMaps, r.categoria].filter(Boolean).join(" ");
+  const tudo = [maps, r.nomeFantasia, r.razaoSocial].filter(Boolean).join(" ");
+  if(!f || !f.pos.length) return { res:"ok" };
+  const forte = ramoTem(f.fortes, tudo, true);
+  if(forte) return { res:"ok", motivo:forte };
+  const fora = ramoTem(f.neg, tudo, false);
+  if(fora) return { res:"fora", motivo:"tem “" + fora.toLowerCase() + "” no nome ou categoria" };
+  const fraca = ramoTem(f.pos, tudo, true);
+  if(fraca) return { res:"ok", motivo:fraca };
+  if(maps) return { res:"fora", motivo:"no Maps não aparece como " + f.pos.slice(0, 3).join("/").toLowerCase() };
+  return { res:"conferir", motivo:"não achado no Maps e o nome não diz o ramo" };
+}
+/* aplica o filtro no lead e guarda o status original da extensão em statusExt (para poder voltar) */
+const RAMO_CONFERE_STATUS = new Set(["aprovado","aguardando","fora","verificar"]);
+function ramoAplicar(r, f){
+  const orig = r.statusExt || r.status;
+  if(r.ramoManual || !RAMO_CONFERE_STATUS.has(orig)){ if(r.statusExt){ r.status = r.statusExt; delete r.statusExt; } delete r.ramoMotivo; return r; }
+  const a = ramoAvaliar(f, r);
+  if(a.res === "ok"){ r.status = orig; delete r.statusExt; delete r.ramoMotivo; }
+  else { r.statusExt = orig; r.status = a.res === "fora" ? "outro_ramo" : "verificar"; r.ramoMotivo = a.motivo; }
+  return r;
+}
+
+/* ===================== Meta de leads: dia, semana e mês em dias úteis =====================
+   Conta só os leads que valem: aprovados (LTDA, 6 meses, do ramo), com celular, que não são cliente nem rede.
+   A data é a da primeira vez que o lead entrou no Cadastro (capturadoEm). Metas: dias úteis × meta diária,
+   tirando sábado, domingo e feriados (nacionais + os que você digitar). */
+const META = { ui:[], calc:null };
+function metaCfg(){
+  let c = {}; try { c = JSON.parse(localStorage.getItem("m04_meta") || "{}") || {}; } catch(e){}
+  return Object.assign({ diaria:100, carnaval:true, extras:"", pausar:"" }, c);
+}
+function metaCfgGravar(c){ try { localStorage.setItem("m04_meta", JSON.stringify(c)); } catch(e){} }
+const metaIso = d => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+const metaDia = (d, n) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); return x; };
+const metaFmt = n => Math.round(n).toLocaleString("pt-BR");
+function metaPascoa(a){
+  const b = a % 19, c = Math.floor(a / 100), d = a % 100, e = Math.floor(c / 4), f = c % 4, g = Math.floor((c + 8) / 25),
+    h = Math.floor((c - g + 1) / 3), i = (19 * b + c - e - h + 15) % 30, k = Math.floor(d / 4), l = d % 4,
+    m = (32 + 2 * f + 2 * k - i - l) % 7, n = Math.floor((b + 11 * i + 22 * m) / 451),
+    mes = Math.floor((i + m - 7 * n + 114) / 31), dia = ((i + m - 7 * n + 114) % 31) + 1;
+  return new Date(a, mes - 1, dia);
+}
+/* feriados do ano: nacionais, Carnaval (opcional) e os extras digitados (dd/mm ou dd/mm/aaaa) */
+function metaFeriados(ano, cfg){
+  const m = new Map(), p = metaPascoa(ano);
+  [["01-01","Confraternização"],["04-21","Tiradentes"],["05-01","Dia do Trabalho"],["09-07","Independência"],["10-12","N. Sra. Aparecida"],
+   ["11-02","Finados"],["11-15","Proclamação da República"],["11-20","Consciência Negra"],["12-25","Natal"]]
+    .forEach(([d, n]) => m.set(ano + "-" + d, n));
+  m.set(metaIso(metaDia(p, -2)), "Sexta-feira Santa");
+  m.set(metaIso(metaDia(p, 60)), "Corpus Christi");
+  if(cfg.carnaval){ m.set(metaIso(metaDia(p, -48)), "Carnaval"); m.set(metaIso(metaDia(p, -47)), "Carnaval"); }
+  String(cfg.extras || "").split(/[,;\s]+/).filter(Boolean).forEach(t => {
+    const x = t.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/); if(!x) return;
+    const a = x[3] ? (x[3].length === 2 ? 2000 + +x[3] : +x[3]) : ano; if(a !== ano) return;
+    m.set(a + "-" + x[2].padStart(2, "0") + "-" + x[1].padStart(2, "0"), "Feriado seu");
+  });
+  return m;
+}
+function metaUtil(d, cfg, cache){
+  const w = d.getDay(); if(w === 0 || w === 6) return false;
+  const a = d.getFullYear(); cache[a] = cache[a] || metaFeriados(a, cfg);
+  return !cache[a].has(metaIso(d));
+}
+/* lead que vale para a meta */
+function metaLeadConta(x){
+  return x.status === "aprovado" && !x.rede && novosTemCelular(x) && !novosCliente(x);
+}
+async function metaCalcular(){
+  const cfg = metaCfg(), diaria = Math.max(0, +cfg.diaria || 0), fer = {};
+  const tudo = await NovosDB.todos(); await novosCarregarClientes();
+  const porDia = new Map();
+  tudo.forEach(x => {
+    if(!metaLeadConta(x)) return;
+    const t = x.capturadoEm || x.importadoEm; if(!t) return;
+    const k = metaIso(new Date(t)); porDia.set(k, (porDia.get(k) || 0) + 1);
+  });
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const seg = metaDia(hoje, -((hoje.getDay() + 6) % 7));
+  const dias = [], soma = (a, b) => { let n = 0; for(let d = a; d <= b; d = metaDia(d, 1)) n += porDia.get(metaIso(d)) || 0; return n; };
+  const uteis = (a, b) => { let n = 0; for(let d = a; d <= b; d = metaDia(d, 1)) if(metaUtil(d, cfg, fer)) n++; return n; };
+  for(let i = 0; i < 7; i++){
+    const d = metaDia(seg, i), k = metaIso(d), n = porDia.get(k) || 0, util = metaUtil(d, cfg, fer);
+    if(i < 5 || n) dias.push({ d, k, n, util, hoje: k === metaIso(hoje), feriado: (fer[d.getFullYear()] || new Map()).get(k) || "" });
+  }
+  const dom = metaDia(seg, 6), ini = new Date(hoje.getFullYear(), hoje.getMonth(), 1), fim = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0);
+  const hojeUtil = metaUtil(hoje, cfg, fer);
+  const semUteis = uteis(seg, dom), mesUteis = uteis(ini, fim);
+  const semRest = uteis(hoje, dom), mesRest = uteis(hoje, fim);     /* incluindo hoje */
+  const mesAteHoje = uteis(ini, hoje);
+  const c = { cfg, diaria, hoje, hojeUtil, seg, dom, ini, fim, dias,
+    feitoHoje: porDia.get(metaIso(hoje)) || 0, feitoSem: soma(seg, dom), feitoMes: soma(ini, fim),
+    semUteis, mesUteis, semRest, mesRest, metaSem: semUteis * diaria, metaMes: mesUteis * diaria, esperadoMes: mesAteHoje * diaria };
+  META.calc = c;
+  return c;
+}
+function metaPainel(host){
+  const box = el("div","metabox");
+  const topo = el("div","metatopo");
+  const h = el("h3",null,"Meta de leads"); h.append(el("span",null,"Conta só aprovados do ramo, com celular, que não são cliente nem rede. Dias úteis: sem sábado, domingo e feriado."));
+  const cfg = metaCfg();
+  const mkIn = (rot, val, cls) => { const l = el("label","metain"); const i = el("input", cls || null); i.type = "text"; i.inputMode = "numeric"; i.value = val; l.append(document.createTextNode(rot), i); topo.append(l); return i; };
+  topo.append(h);
+  const inDia = mkIn("Meta diária", cfg.diaria);
+  const inSem = mkIn("ou semanal (÷ 5 dias)", (+cfg.diaria || 0) * 5);
+  const grade = el("div","metagrade");
+  const dias = el("div","metadias");
+  const aviso = el("div","metaaviso"); aviso.hidden = true;
+  const mais = el("details","metamais"); mais.append(el("summary",null,"Feriados e quando bater a meta"));
+  const linha = el("div","linha"); mais.append(linha);
+  const lEx = el("label","metain"); const inEx = el("input","largo"); inEx.type = "text"; inEx.value = cfg.extras || "";
+  inEx.placeholder = "ex.: 08/04, 24/12, 31/12, 25/01/2027"; lEx.append(document.createTextNode("Feriados da sua cidade / folgas (dd/mm)"), inEx); linha.append(lEx);
+  const lCa = el("label","qualcheck"); const ckCa = el("input"); ckCa.type = "checkbox"; ckCa.checked = !!cfg.carnaval;
+  lCa.append(ckCa, document.createTextNode(" Carnaval (segunda e terça) não é dia útil")); linha.append(lCa);
+  const lPa = el("label","metain"); const sPa = el("select");
+  [["","Continuar buscando"],["dia","Pausar a busca ao bater a meta do dia"],["semana","Pausar a busca ao bater a meta da semana"],["mes","Pausar a busca ao bater a meta do mês"]]
+    .forEach(([v, r]) => { const o = el("option",null,r); o.value = v; sPa.append(o); });
+  sPa.value = cfg.pausar || ""; sPa.style.cssText = "padding:6px 8px;border:1px solid var(--line);border-radius:5px;font-size:12.5px";
+  lPa.append(document.createTextNode("Quando bater a meta"), sPa); linha.append(lPa);
+  mais.append(el("div","leadshint","Já contam como feriado: 01/01, Sexta-feira Santa, 21/04, 01/05, Corpus Christi, 07/09, 12/10, 02/11, 15/11, 20/11 e 25/12."));
+  box.append(topo, grade, dias, aviso, mais);
+  host.append(box);
+
+  const salvar = () => { const c = metaCfg(); c.diaria = parseInt(inDia.value, 10) || 0; c.extras = inEx.value.trim(); c.carnaval = ckCa.checked; c.pausar = sPa.value; metaCfgGravar(c); metaAtualizar(); };
+  let t = null; const adiado = () => { clearTimeout(t); t = setTimeout(salvar, 300); };
+  inDia.oninput = () => { inDia.value = inDia.value.replace(/\D/g, ""); inSem.value = (parseInt(inDia.value, 10) || 0) * 5; adiado(); };
+  inSem.oninput = () => { inSem.value = inSem.value.replace(/\D/g, ""); inDia.value = Math.round((parseInt(inSem.value, 10) || 0) / 5); adiado(); };
+  inEx.oninput = adiado; ckCa.onchange = salvar; sPa.onchange = () => { try { localStorage.removeItem("m04_metaPausou"); } catch(e){} salvar(); };
+  META.ui = META.ui.filter(u => document.body.contains(u.box) || u.box === box);
+  META.ui.push({ box, grade, dias, aviso, inDia, inSem });
+  metaAtualizar();
+  return box;
+}
+function metaCard(rot, feito, meta, sub){
+  const ok = meta > 0 && feito >= meta;
+  const c = el("div","metacard" + (ok ? " ok" : ""));
+  c.append(el("div","rot",rot));
+  const n = el("div","num",metaFmt(feito)); n.append(el("small",null," de " + metaFmt(meta) + (ok ? " ✓" : ""))); c.append(n);
+  const b = el("div","leadsbar"), f = el("i"); f.style.width = (meta ? Math.min(100, feito / meta * 100) : 0) + "%"; b.append(f); c.append(b);
+  c.append(el("div","sub",sub));
+  return c;
+}
+async function metaAtualizar(){
+  META.ui = META.ui.filter(u => document.body.contains(u.box));
+  if(!META.ui.length) return;
+  let c; try { c = await metaCalcular(); } catch(e){ return; }
+  const dd = d => d.toLocaleDateString("pt-BR", { day:"2-digit", month:"2-digit" });
+  const porDia = (falta, rest) => rest > 0 ? " · ~" + metaFmt(Math.ceil(falta / rest)) + "/dia útil" : "";
+  const fSem = Math.max(0, c.metaSem - c.feitoSem), fMes = Math.max(0, c.metaMes - c.feitoMes), fHoje = Math.max(0, c.diaria - c.feitoHoje);
+  const mesNome = c.hoje.toLocaleDateString("pt-BR", { month:"long" });
+  const ritmo = c.feitoMes - c.esperadoMes;
+  META.ui.forEach(u => {
+    if(document.activeElement !== u.inDia && document.activeElement !== u.inSem){ u.inDia.value = c.diaria; u.inSem.value = c.diaria * 5; }
+    u.grade.innerHTML = "";
+    u.grade.append(
+      metaCard("Hoje · " + dd(c.hoje), c.feitoHoje, c.hojeUtil ? c.diaria : 0,
+        !c.hojeUtil ? "Hoje não é dia útil: o que entrar soma na semana e no mês." : fHoje ? "Faltam " + metaFmt(fHoje) + " para a meta de hoje." : "Meta de hoje batida" + (c.feitoHoje > c.diaria ? " (+" + metaFmt(c.feitoHoje - c.diaria) + ")" : "") + "."),
+      metaCard("Semana · " + dd(c.seg) + " a " + dd(metaDia(c.seg, 4)), c.feitoSem, c.metaSem,
+        c.semUteis + " dias úteis × " + metaFmt(c.diaria) + ". " + (fSem ? "Faltam " + metaFmt(fSem) + " em " + c.semRest + " dia" + (c.semRest === 1 ? "" : "s") + " úte" + (c.semRest === 1 ? "il" : "is") + porDia(fSem, c.semRest) + "." : "Batida" + (c.feitoSem > c.metaSem ? " (+" + metaFmt(c.feitoSem - c.metaSem) + ")" : "") + ".")),
+      metaCard("Mês · " + mesNome, c.feitoMes, c.metaMes,
+        c.mesUteis + " dias úteis × " + metaFmt(c.diaria) + ". " + (fMes ? "Faltam " + metaFmt(fMes) + " em " + c.mesRest + " dias úteis" + porDia(fMes, c.mesRest) + "." : "Batida" + (c.feitoMes > c.metaMes ? " (+" + metaFmt(c.feitoMes - c.metaMes) + ")" : "") + "."))
+    );
+    u.dias.innerHTML = "";
+    c.dias.forEach(x => {
+      const ok = x.util && c.diaria && x.n >= c.diaria;
+      const d = el("div","metadia" + (x.hoje ? " hoje" : "") + (!x.util ? " folga" : "") + (ok ? " ok" : ""));
+      d.append(document.createTextNode(x.d.toLocaleDateString("pt-BR", { weekday:"short" }).replace(".", "") + " " + dd(x.d) + (x.feriado ? " · " + x.feriado : !x.util ? " · folga" : "")));
+      d.append(el("b",null,metaFmt(x.n) + (x.util && c.diaria ? " / " + metaFmt(c.diaria) : "")));
+      u.dias.append(d);
+    });
+    let txt = "", falta = false;
+    if(!c.diaria) txt = "Digite a meta diária para acompanhar.";
+    else if(c.metaSem && c.feitoSem >= c.metaSem){
+      txt = fMes ? "Meta da semana batida. Para a meta de " + mesNome + " faltam " + metaFmt(fMes) + " leads em " + c.mesRest + " dias úteis" + porDia(fMes, c.mesRest) + "."
+                 : "Metas da semana e do mês batidas.";
+    } else {
+      falta = true;
+      txt = "Para a meta da semana faltam " + metaFmt(fSem) + "." + (fMes ? " Para a meta de " + mesNome + " faltam " + metaFmt(fMes) + "." : "") +
+        (ritmo >= 0 ? " No mês você está " + metaFmt(ritmo) + " à frente do ritmo." : " No mês você está " + metaFmt(-ritmo) + " atrás do ritmo (esperado até hoje: " + metaFmt(c.esperadoMes) + ").");
+    }
+    u.aviso.hidden = !txt; u.aviso.textContent = txt; u.aviso.className = "metaaviso" + (falta ? " falta" : "");
+  });
+}
+/* pausa a busca quando bate a meta escolhida (uma vez por dia/semana/mês) */
+async function metaConferePausa(est){
+  const c = META.calc || await metaCalcular().catch(() => null);
+  if(!c || !c.cfg.pausar || !c.diaria || !est || !est.rodando || est.pausado || est.concluido) return;
+  const [feito, meta, chave] = c.cfg.pausar === "dia" ? [c.feitoHoje, c.hojeUtil ? c.diaria : 0, metaIso(c.hoje)]
+    : c.cfg.pausar === "semana" ? [c.feitoSem, c.metaSem, "s" + metaIso(c.seg)] : [c.feitoMes, c.metaMes, "m" + metaIso(c.ini)];
+  if(!meta || feito < meta) return;
+  let ja = ""; try { ja = localStorage.getItem("m04_metaPausou") || ""; } catch(e){}
+  if(ja === c.cfg.pausar + chave) return;
+  try { localStorage.setItem("m04_metaPausou", c.cfg.pausar + chave); } catch(e){}
+  m04PrefSet("pausaManual", true);
+  await m04Enviar({ type:"pausar" }, 15000);
+  toast("Meta " + ({ dia:"do dia", semana:"da semana", mes:"do mês" })[c.cfg.pausar] + " batida (" + metaFmt(feito) + " leads). Busca pausada.");
 }
 
 const M04_ZONAS = ["Centro","Norte","Sul","Leste","Oeste"];
@@ -8729,11 +9007,17 @@ async function m04Importar(est){
       /* segunda trava: mesmo que a extensão traga algo de outro ramo, só entra o ramo buscado */
       const pal = (est.palavras && est.palavras.length) ? est.palavras : ramoPalavras(est.termo, "");
       const doRamo = r => est.modo === "cnae" || r.origem === "cnae" || ramoConfere(pal, [r.nomeMaps, r.nomeFantasia, r.razaoSocial, r.categoria].join(" "));
+      /* terceira trava (vale também para o CNAE): nome/categoria de outro ramo vira “Outro ramo” e não conta na meta */
+      const filtro = ramoFiltroDe(est.termo);
+      const agoraIso = new Date().toISOString();
       const lista = (resp.registros || []).filter(doRamo).map(r => {
         const antigo = existentes.get(r.chave);
-        const novo = Object.assign({}, r, { importadoEm: new Date().toISOString() });
-        if(antigo){ ["enviadoBase","enviadoBaseEm","cnpjManual","rede","campanha","campanhaEm","campanhasAnteriores"].forEach(p => { if(antigo[p]) novo[p] = antigo[p]; }); }
+        const novo = Object.assign({}, r, { importadoEm: agoraIso });
+        if(antigo){ ["enviadoBase","enviadoBaseEm","cnpjManual","rede","campanha","campanhaEm","campanhasAnteriores","ramoManual"].forEach(p => { if(antigo[p]) novo[p] = antigo[p]; }); }
         else novos++;
+        /* data em que o lead entrou pela primeira vez: é ela que conta na meta do dia/semana/mês */
+        novo.capturadoEm = (antigo && (antigo.capturadoEm || antigo.importadoEm)) || agoraIso;
+        ramoAplicar(novo, filtro);
         const d = cnpjDig(r.cnpj);
         if(d.length === 14 && r.receita){ try { qualifGravar(d, { receita: r.receita }); REQ.cache[d] = r.receita; } catch(e){} }
         return novo;
@@ -8748,6 +9032,7 @@ async function m04Importar(est){
     }
     if(M04.rodada && M04.rodada.cidades){
       const r = M04.rodada; M04.rodada = null;
+      metaAtualizar(); metaConferePausa(est);
       toast(r.cidades === 1 ? r.ultima + ": " + r.aprov + " leads aprovados no Cadastro Leads Novos."
         : r.cidades + " cidades importadas para o Cadastro Leads Novos (" + r.aprov + " aprovados).");
       novos = Math.max(novos, 1);
@@ -8769,13 +9054,16 @@ async function m04ImportarRefeitos(est){
   await NovosDB.excluir(velhas);
   await NovosDB.gravar(lista.map(r => {
     const x = Object.assign({}, r, { importadoEm: new Date().toISOString() });
+    if(!x.capturadoEm) x.capturadoEm = x.importadoEm;
     delete x.refazer; delete x.chaveAntiga;
+    ramoAplicar(x, ramoFiltroDe(x.termo || est.termo));
     const d = cnpjDig(x.cnpj);
     if(d.length === 14 && x.receita){ try { qualifGravar(d, { receita: x.receita }); REQ.cache[d] = x.receita; } catch(e){} }
     return x;
   }));
   await m04Enviar({ type:"refeitos_ok", n: lista.length }, 10000);
   const achados = lista.filter(r => cnpjDig(r.cnpj).length === 14).length;
+  metaAtualizar();
   toast("Procura de novo: CNPJ achado em " + achados + " de " + lista.length + ".");
   return achados;
 }
@@ -8862,6 +9150,7 @@ function pickModelo04(host, modo){
       "se é LTDA com 6 meses ou mais. Cada cidade que fecha já entra no Cadastro Leads Novos."));
   }
   host.append(hd);
+  metaPainel(host);
 
   const aviso = el("div","leadsaviso"); aviso.hidden = true; host.append(aviso);
 
@@ -8886,19 +9175,34 @@ function pickModelo04(host, modo){
   const inPal = el("input"); inPal.type = "text"; inPal.spellcheck = false;
   inPal.value = (M04.campos && M04.campos.palavras) || "";
   const palDica = el("span","leadshint");
+  /* palavras que tiram o lead do ramo (ex.: odonto, salão): o CNAE 9602-5/02 traz de tudo da área de beleza */
+  const inExc = el("input"); inExc.type = "text"; inExc.spellcheck = false;
+  const excDica = el("span","leadshint");
+  const cfgIni = ramoCfg(inTermo.value);
+  if(!inPal.value && cfgIni.palavras) inPal.value = cfgIni.palavras;
+  inExc.value = cfgIni.excluir || "";
   const palAtualiza = () => {
     const auto = ramoPalavras(inTermo.value, "");
     inPal.placeholder = auto.length ? "automático: " + auto.join(", ").toLowerCase() : "ex.: depilação, laser";
-    const usadas = ramoPalavras(inTermo.value, inPal.value);
-    palDica.textContent = usadas.length
-      ? "Só entram locais com nome ou categoria começando por: " + usadas.join(", ").toLowerCase() + ". Os demais são descartados sem abrir."
-      : "Sem palavras: entra qualquer negócio que o Maps mostrar.";
+    const f = ramoFiltroDe(inTermo.value, inPal.value, inExc.value.trim() ? inExc.value : null);
+    const padraoExc = ramoExcluirPadrao(inTermo.value);
+    inExc.placeholder = padraoExc ? "automático: " + padraoExc.slice(0, 90) + "…" : "ex.: odonto, salão, manicure";
+    palDica.textContent = f.pos.length
+      ? (cnae ? "Da lista do CNAE, só contam como lead os que tiverem no nome do Maps, na categoria do Maps, no nome fantasia ou na razão social: "
+              : "Só entram locais com nome ou categoria começando por: ") + f.fortes.join(", ").toLowerCase() +
+        (f.pos.length > f.fortes.length ? " (ou " + f.pos.filter(p => !f.fortes.includes(p)).join(", ").toLowerCase() + ", se não tiver palavra de outro ramo)" : "") + "."
+      : "Sem palavras: entra qualquer negócio que " + (cnae ? "estiver na lista do CNAE." : "o Maps mostrar.");
+    excDica.textContent = f.neg.length
+      ? "Com uma destas palavras (e sem “" + (f.fortes[0] || "").toLowerCase() + "”) o lead vai para “Outro ramo” e não conta na meta: " + f.neg.length + " palavras" + (inExc.value.trim() ? "." : " (lista automática; digite para trocar).")
+      : "Nenhuma palavra de exclusão.";
   };
-  inTermo.addEventListener("input", palAtualiza); inPal.addEventListener("input", palAtualiza);
+  inTermo.addEventListener("input", palAtualiza); inPal.addEventListener("input", palAtualiza); inExc.addEventListener("input", palAtualiza);
+  inTermo.addEventListener("change", () => { const c = ramoCfg(inTermo.value); if(c.palavras != null || c.excluir != null){ inPal.value = c.palavras || ""; inExc.value = c.excluir || ""; palAtualiza(); } });
   campo("Palavras do ramo (opcional, separe por vírgula)", inPal, "", true);
   inPal.parentElement.append(palDica);
+  campo("Palavras que tiram do ramo (opcional, separe por vírgula)", inExc, "", true);
+  inExc.parentElement.append(excDica);
   palAtualiza();
-  if(cnae) inPal.parentElement.style.display = "none";
 
   const selUf = el("select");
   M04_UFS.forEach(u => { const o = el("option",null,u); o.value = u; selUf.append(o); });
@@ -9115,6 +9419,7 @@ function pickModelo04(host, modo){
     const limiteCidades = parseInt(inQtd.value, 10) > 0 ? parseInt(inQtd.value, 10) : 0;
     M04.campos = { termo, uf: selUf.value, palavras: inPal.value.trim(), escopo: selEsc.value, zonaInicial: selZona.value, janela: selJan.value,
                    cidades: escolhidas.slice(), limiteCidades, cnaeTxt: inCnae.value.trim(), vizinhas: ckViz.checked };
+    ramoCfgGravar(termo, { palavras: inPal.value.trim(), excluir: inExc.value.trim() });
     m04PrefSet("pausaManual", false); M04_AUTO.tentativas = 0;
     btIniciar.disabled = true; btIniciar.textContent = "Carregando as cidades…";
     const { resp, erro } = await m04Enviar({ type:"iniciar", termo, uf: selUf.value,
@@ -9310,6 +9615,7 @@ function pickNovos(host){
   hd.append(el("p",null,"Os leads do Modelo 04, cidade por cidade, com o telefone do Google Maps e o do MaisCNPJ lado a lado. " +
     "Os aprovados são LTDA com 6 meses ou mais de CNPJ. Marque e envie para a Base de Leads, sem planilha."));
   host.append(hd);
+  metaPainel(host);
 
   const ramos = el("div","nramos"); host.append(ramos);
 
@@ -9318,7 +9624,7 @@ function pickNovos(host){
   inB.placeholder = "Empresa, CNPJ, telefone ou endereço"; inB.value = NOVOS.filtro.busca; busca.append(inB);
   const filtros = el("div","ltsel");
   const sSt = el("select"), sUf = el("select"), sCid = el("select");
-  [["aprovado","Aprovados"],["aguardando","Aguardando 6 meses"],["fora","Fora do requisito"],["verificar","Para conferir"],["sem_cnpj","Sem CNPJ"],["","Todos"]]
+  [["aprovado","Aprovados"],["aguardando","Aguardando 6 meses"],["fora","Fora do requisito"],["verificar","Para conferir"],["sem_cnpj","Sem CNPJ"],["outro_ramo","Outro ramo"],["","Todos"]]
     .forEach(([v, r]) => { const o = el("option",null,r); o.value = v; sSt.append(o); });
   sSt.value = NOVOS.filtro.status;
   const lbN = el("label","qualcheck"); const ckN = el("input"); ckN.type = "checkbox"; ckN.checked = NOVOS.filtro.naoEnviados;
@@ -9361,7 +9667,32 @@ function pickNovos(host){
   /* limpeza: com uma cidade escolhida no filtro, apaga do Cadastro tudo o que não é dela */
   const btManter = el("button","btn danger","Manter só esta cidade"); btManter.hidden = true;
   btManter.onclick = () => novosManterSoCidade(NOVOS.filtro.uf, NOVOS.filtro.cidade);
-  acoes.append(btEnviar, btRede, lbQtd, btXls, btCsv, btExcluir, btManter, btAtual, btRefazer, btCli, inCli, info);
+  /* filtro do ramo: reaplicar nos leads que já estão aqui e desfazer quando errar */
+  const btRamoOk = el("button","btn","É do ramo");
+  btRamoOk.title = "Os marcados voltam para a situação que a extensão deu (ex.: Aprovado) e o filtro do ramo não mexe mais neles";
+  btRamoOk.onclick = async () => {
+    const lote = (NOVOS.lista || []).filter(x => NOVOS.sel.has(x.chave));
+    if(!lote.length) return toast("Marque os leads que são do ramo.");
+    lote.forEach(x => { x.ramoManual = true; ramoAplicar(x, null); });
+    await NovosDB.gravar(lote); NOVOS.sel.clear(); toast(lote.length + " leads voltaram para o ramo."); novosDesenhar(); metaAtualizar();
+  };
+  const btRamoRe = el("button","btn","Reaplicar filtro do ramo");
+  btRamoRe.title = "Confere de novo todos os leads do Cadastro pelo nome, categoria do Maps, nome fantasia e razão social";
+  btRamoRe.onclick = async () => {
+    const tudo = await NovosDB.todos(), filtros = {};
+    let fora = 0, conf = 0, volta = 0; const mud = [];
+    tudo.forEach(x => {
+      const antes = x.status, k = ramoChaveTermo(x.termo);
+      filtros[k] = filtros[k] || ramoFiltroDe(x.termo || "");
+      ramoAplicar(x, filtros[k]);
+      if(x.status !== antes){ mud.push(x); if(x.status === "outro_ramo") fora++; else if(x.statusExt) conf++; else volta++; }
+    });
+    if(!mud.length) return toast("Nada mudou: todos os leads já passam no filtro do ramo.");
+    if(!confirm(mud.length + " leads mudam de situação: " + fora + " para “Outro ramo”, " + conf + " para “Conferir” e " + volta + " voltam para o ramo. Aplicar?")) return;
+    await NovosDB.gravar(mud); novosDesenhar(); metaAtualizar();
+    toast(mud.length + " leads atualizados pelo filtro do ramo.");
+  };
+  acoes.append(btEnviar, btRede, lbQtd, btXls, btCsv, btExcluir, btManter, btAtual, btRefazer, btRamoOk, btRamoRe, btCli, inCli, info);
 
   const mostrando = el("div","nmostrando");
   const divisoes = el("div","ndivisoes");
@@ -9794,6 +10125,8 @@ async function novosDesenhar(){
     const det = [r.natureza, r.abertura ? "aberta em " + fmtDataISO(r.abertura) : ""].filter(Boolean).join(" · ");
     if(det) tdR.append(el("div","sub", det));
     if(r.motivo && r.status !== "aprovado") tdR.append(el("div","sub", r.motivo));
+    if(r.ramoMotivo) tdR.append(el("div","sub", "ramo: " + r.ramoMotivo + (r.statusExt ? " · na extensão: " + (M04_STATUS[r.statusExt] || [r.statusExt])[0].toLowerCase() : "")));
+    if(r.ramoManual) tdR.append(el("div","sub", "marcado por você como do ramo"));
     tr.append(tdR);
     const tdL = el("td");
     if(r.link){ const a = el("a",null,"Maps"); a.href = r.link; a.target = "_blank"; a.rel = "noopener"; tdL.append(a); }
@@ -10181,6 +10514,8 @@ async function novosConferirManual(r, valor, bt){
     novo.status = "aguardando"; novo.completa6m = maisSeisMeses(novo.abertura);
     novo.motivo = "completa 6 meses em " + fmtDataISO(novo.completa6m);
   } else novo.status = "aprovado";
+  delete novo.statusExt; delete novo.ramoMotivo;
+  ramoAplicar(novo, ramoFiltroDe(novo.termo));
   await NovosDB.excluir([r.chave]);
   await NovosDB.gravar([novo]);
   toast(M04_STATUS[novo.status][0] + ": " + (novo.razaoSocial || novo.cnpj));
