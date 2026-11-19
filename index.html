@@ -10186,10 +10186,10 @@ async function novosDesenhar(){
   if(NOVOS.redeSel && !redes.includes(NOVOS.redeSel)) NOVOS.redeSel = "";
   /* na REDE, cada rede é uma divisão própria */
   const campanhas = [...new Set(tudo.filter(x => x.campanha).map(x => x.campanha))].sort((a, b) => a.localeCompare(b, "pt-BR"));
-  if(NOVOS.campSel && !campanhas.includes(NOVOS.campSel)) NOVOS.campSel = "";
+  if(NOVOS.campSel && NOVOS.campSel !== "__hoje" && !campanhas.includes(NOVOS.campSel)) NOVOS.campSel = "";
   const todos = (f.ramo ? daDivisao.filter(x => novosRamoKey(x) === f.ramo) : daDivisao)
     .filter(x => dv !== "rede" || !NOVOS.redeSel || x.rede === NOVOS.redeSel)
-    .filter(x => dv !== "campanhas" || !NOVOS.campSel || x.campanha === NOVOS.campSel);
+    .filter(x => dv !== "campanhas" || !NOVOS.campSel || (NOVOS.campSel === "__hoje" ? novosExportadoHoje(x) : x.campanha === NOVOS.campSel));
   NOVOS.lista = todos;
   u.btRede.hidden = dv === "clientes" || dv === "campanhas";
   u.btManter.hidden = !(f.uf && f.cidade);
@@ -10760,9 +10760,16 @@ function novosPerguntarCampanha(resumo, existentes){
 }
 
 /* barra da divisão Campanhas: uma pílula por campanha, baixar de novo e voltar para remarketing */
+/* exportado para Excel hoje (entrou numa campanha hoje) */
+function novosExportadoHoje(x){
+  if(!x.campanha || !x.campanhaEm) return false;
+  const d = new Date(x.campanhaEm), h = new Date();
+  return d.getFullYear() === h.getFullYear() && d.getMonth() === h.getMonth() && d.getDate() === h.getDate();
+}
 function novosNavCampanhas(host, tudo, campanhas, f, noLugar, passaFiltro){
   if(!campanhas.length) return;
   const daRamo = tudo.filter(x => x.campanha && (!f.ramo || novosRamoKey(x) === f.ramo));
+  const deHoje = daRamo.filter(novosExportadoHoje);
   const nav = el("div","nredesnav");
   const pill = (rot, val, unid) => {
     const vis = unid.filter(x => noLugar(x) && passaFiltro(x)).length;
@@ -10772,22 +10779,41 @@ function novosNavCampanhas(host, tudo, campanhas, f, noLugar, passaFiltro){
     return b;
   };
   nav.append(pill("Todas as campanhas", "", daRamo));
+  if(deHoje.length) nav.append(pill("Exportados hoje", "__hoje", deHoje));
   campanhas.forEach(n => nav.append(pill(n, n, daRamo.filter(x => x.campanha === n))));
   host.append(nav);
   const bar = el("div","ncampinfo");
-  if(!NOVOS.campSel){
+  /* tirar leads da exportação: voltam para a lista de leads (como se não tivessem sido exportados) */
+  const btVolta = el("button","btn sm","Tirar marcados da exportação");
+  btVolta.title = "Os leads marcados saem da campanha e voltam para a lista de leads (podem ser exportados de novo). Para apagar de vez, use Mais ações › Excluir marcados.";
+  btVolta.onclick = async () => {
+    const lote = (await NovosDB.todos()).filter(x => NOVOS.sel.has(x.chave) && x.campanha);
+    if(!lote.length) return toast("Marque na lista abaixo os leads que quer tirar da exportação.");
+    if(!confirm("Tirar " + lote.length + " leads da exportação? Eles voltam para a lista de leads.")) return;
+    await NovosDB.gravar(lote.map(x => { const y = Object.assign({}, x); delete y.campanha; delete y.campanhaEm; return y; }));
+    NOVOS.sel.clear(); toast(lote.length + " leads voltaram para a lista de leads. Baixe o Excel de novo para ficar sem eles."); novosDesenhar();
+  };
+  if(NOVOS.campSel === "__hoje"){
+    const unid = deHoje, nomes = [...new Set(unid.map(x => x.campanha))];
+    bar.append(el("span","leadshint", unid.length + " leads exportados hoje" + (nomes.length ? " · campanha" + (nomes.length > 1 ? "s " : " ") + nomes.join(", ") : "") +
+      ". Marque os que quer tirar e baixe o Excel de novo."));
+    const bx = el("button","btn sm","Baixar Excel de novo (" + unid.length + ")");
+    bx.onclick = () => novosBaixarArquivo("xlsx", novosNomeArquivo([nomes.length === 1 ? "campanha_" + nomes[0] : "exportados_hoje", stamp()]), novosLinhasExport(unid));
+    bar.append(bx, btVolta);
+  } else if(!NOVOS.campSel){
     bar.append(el("span","leadshint","Escolha uma campanha para baixar a lista de novo ou voltar a campanha inteira para remarketing."));
   } else {
     const nome = NOVOS.campSel, unid = tudo.filter(x => x.campanha === nome);
     const datas = [...new Set(unid.map(x => (x.campanhaEm || "").slice(0, 10)).filter(Boolean))].sort();
     bar.append(el("span","leadshint", unid.length + " leads na campanha " + nome +
       (datas.length ? " · exportados em " + datas.map(d => d.split("-").reverse().join("/")).join(", ") : "")));
-    const bx = el("button","btn sm","Baixar Excel de novo");
+    const bx = el("button","btn sm","Baixar Excel de novo (" + unid.length + ")");
     bx.onclick = () => novosBaixarArquivo("xlsx", novosNomeArquivo(["campanha", nome, stamp()]), novosLinhasExport(unid));
+    bar.append(bx, btVolta);
     const br = el("button","btn sm danger","Voltar campanha inteira para remarketing");
     br.title = "Tira os " + unid.length + " leads da campanha: eles voltam para a lista de leads e podem ser exportados de novo";
     br.onclick = () => novosRemarketing(nome);
-    bar.append(bx, br);
+    bar.append(br);
   }
   host.append(bar);
 }
