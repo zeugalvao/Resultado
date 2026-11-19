@@ -1345,6 +1345,10 @@ details.gsdr summary{cursor:pointer;font-size:13px}
 /* caixa de seleção dentro dos campos: não estica (o input do campo tem width:100%) */
 .leadscampo .qualcheck input,.m04cidbox .qualcheck input{width:auto;flex:none;max-width:none}
 
+a.nmaps{color:inherit;text-decoration:none;border-bottom:1px dashed var(--teal)}
+a.nmaps:hover{color:var(--teal-deep);border-bottom-style:solid}
+a.nmaps::after{content:" ↗";font-size:11px;color:var(--teal);font-weight:400}
+.nmapsbusca{font-size:11px;font-weight:400;color:var(--muted)}
 .abastela{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 18px;padding-bottom:12px;border-bottom:1px solid var(--line)}
 /* menu "Mais ações" do Cadastro */
 .maisacoes{position:relative}
@@ -8609,7 +8613,7 @@ async function buscaEscolherFonteAtiva(){
    os leads entram sozinhos no Cadastro Leads Novos (guardado neste navegador). */
 
 const M04 = { presente:false, ui:null, timer:null, importando:false, estado:null, verTodas:false };
-const NOVOS = { ui:null, filtro:{ busca:"", status:"aprovado", uf:"", cidade:"", naoEnviados:false, ramo:"", buscaId:"" }, sel:new Set(), mostrar:200,
+const NOVOS = { ui:null, filtro:{ busca:"", status:"aprovado", uf:"", cidade:"", naoEnviados:false, ramo:"", buscaId:"", diaMeta:"" }, sel:new Set(), mostrar:200,
   divisao:"leads", cli:null, redeSel:"", campSel:"", qtdExport:"",
   ordE:{ col:"n", dir:-1 }, ordCid:{ col:"empresa", dir:1 }, ordLista:{ col:"empresa", dir:1 }, cidAbertas:new Set() };
 /* ordenação das tabelas de leads: clicar no título da coluna ordena; clicar de novo inverte */
@@ -8794,7 +8798,7 @@ function ramoAplicar(r, f){
 const META = { ui:[], calc:null };
 function metaCfg(){
   let c = {}; try { c = JSON.parse(localStorage.getItem("m04_meta") || "{}") || {}; } catch(e){}
-  return Object.assign({ diaria:100, carnaval:true, extras:"", pausar:"" }, c);
+  return Object.assign({ diaria:100, carnaval:true, extras:"", pausar:"", ateMeta:true }, c);
 }
 function metaCfgGravar(c){ try { localStorage.setItem("m04_meta", JSON.stringify(c)); } catch(e){} }
 const metaIso = d => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
@@ -8835,13 +8839,35 @@ function metaLeadConta(x){
 async function metaCalcular(){
   const cfg = metaCfg(), diaria = Math.max(0, +cfg.diaria || 0), fer = {};
   const tudo = await NovosDB.todos(); await novosCarregarClientes();
-  const porDia = new Map();
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const hojeIso = metaIso(hoje);
+  /* Cada lead aprovado é de um dia da meta (diaMeta). Dia que já passou fica como está.
+     Hoje e os próximos dias são refeitos com a meta atual: enche hoje até a meta diária e o que passar
+     fica para o próximo dia útil (sobra para enviar amanhã). Lead antigo, sem diaMeta: conta no dia em que entrou. */
+  const proxUtil = d => { let x = new Date(d.getFullYear(), d.getMonth(), d.getDate()), g = 0; while(!metaUtil(x, cfg, fer) && g++ < 40) x = metaDia(x, 1); return x; };
+  const porDia = new Map(), aloc = new Map(), fila = [];
   tudo.forEach(x => {
     if(!metaLeadConta(x)) return;
     const t = x.capturadoEm || x.importadoEm; if(!t) return;
-    const k = metaIso(new Date(t)); porDia.set(k, (porDia.get(k) || 0) + 1);
+    const cap = metaIso(new Date(t));
+    const dia = x.diaMeta || cap;
+    if(dia < hojeIso && (x.diaMeta || cap < hojeIso)){ porDia.set(dia, (porDia.get(dia) || 0) + 1); aloc.set(x.chave, dia); }
+    else fila.push({ x, t: new Date(t) });
   });
-  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  fila.sort((a, b) => a.t - b.t);
+  const mudou = [];
+  let ponteiro = proxUtil(hoje);
+  fila.forEach(({ x, t }) => {
+    let d = proxUtil(t < hoje ? hoje : t);
+    if(d < ponteiro) d = ponteiro;
+    if(diaria > 0){ let g = 0; while((porDia.get(metaIso(d)) || 0) >= diaria && g++ < 500) d = proxUtil(metaDia(d, 1)); ponteiro = d; }
+    const k = metaIso(d);
+    porDia.set(k, (porDia.get(k) || 0) + 1); aloc.set(x.chave, k);
+    if(x.diaMeta !== k){ x.diaMeta = k; mudou.push(x); }
+  });
+  if(mudou.length){ try { await NovosDB.gravar(mudou); } catch(e){} }
+  const reserva = fila.filter(({ x }) => aloc.get(x.chave) > hojeIso).length;
+  const ultimoDia = fila.length ? aloc.get(fila[fila.length - 1].x.chave) : "";
   const seg = metaDia(hoje, -((hoje.getDay() + 6) % 7));
   const dias = [], soma = (a, b) => { let n = 0; for(let d = a; d <= b; d = metaDia(d, 1)) n += porDia.get(metaIso(d)) || 0; return n; };
   const uteis = (a, b) => { let n = 0; for(let d = a; d <= b; d = metaDia(d, 1)) if(metaUtil(d, cfg, fer)) n++; return n; };
@@ -8856,7 +8882,8 @@ async function metaCalcular(){
   const mesAteHoje = uteis(ini, hoje);
   const c = { cfg, diaria, hoje, hojeUtil, seg, dom, ini, fim, dias,
     feitoHoje: porDia.get(metaIso(hoje)) || 0, feitoSem: soma(seg, dom), feitoMes: soma(ini, fim),
-    semUteis, mesUteis, semRest, mesRest, metaSem: semUteis * diaria, metaMes: mesUteis * diaria, esperadoMes: mesAteHoje * diaria };
+    semUteis, mesUteis, semRest, mesRest, metaSem: semUteis * diaria, metaMes: mesUteis * diaria, esperadoMes: mesAteHoje * diaria,
+    aloc, reserva, ultimoDia, hojeIso, proxDia: metaIso(proxUtil(metaDia(hoje, 1))) };
   META.calc = c;
   return c;
 }
@@ -8878,20 +8905,24 @@ function metaPainel(host){
   inEx.placeholder = "ex.: 08/04, 24/12, 31/12, 25/01/2027"; lEx.append(document.createTextNode("Feriados da sua cidade / folgas (dd/mm)"), inEx); linha.append(lEx);
   const lCa = el("label","qualcheck"); const ckCa = el("input"); ckCa.type = "checkbox"; ckCa.checked = !!cfg.carnaval;
   lCa.append(ckCa, document.createTextNode(" Carnaval (segunda e terça) não é dia útil")); linha.append(lCa);
-  const lPa = el("label","metain"); const sPa = el("select");
-  [["","Continuar buscando"],["dia","Pausar a busca ao bater a meta do dia"],["semana","Pausar a busca ao bater a meta da semana"],["mes","Pausar a busca ao bater a meta do mês"]]
-    .forEach(([v, r]) => { const o = el("option",null,r); o.value = v; sPa.append(o); });
-  sPa.value = cfg.pausar || ""; sPa.style.cssText = "padding:6px 8px;border:1px solid var(--line);border-radius:5px;font-size:12.5px";
-  lPa.append(document.createTextNode("Quando bater a meta"), sPa); linha.append(lPa);
+  const lAte = el("label","qualcheck"); lAte.style.flexBasis = "100%"; const ckAte = el("input"); ckAte.type = "checkbox"; ckAte.checked = cfg.ateMeta !== false;
+  lAte.append(ckAte, document.createTextNode(" Buscar até bater a meta do dia: ao bater, termina a cidade em que está (procura todos os leads dela) e para — o que passar fica para o próximo dia útil. " +
+    "Se a busca acabar antes da meta, segue sozinha para as cidades vizinhas."));
+  linha.append(lAte);
   mais.append(el("div","leadshint","Já contam como feriado: 01/01, Sexta-feira Santa, 21/04, 01/05, Corpus Christi, 07/09, 12/10, 02/11, 15/11, 20/11 e 25/12."));
-  box.append(topo, grade, dias, aviso, mais);
+  const acoesMeta = el("div","leadsbotoes"); acoesMeta.style.marginTop = "10px";
+  const btHoje = el("button","btn sm","Ver os leads de hoje"); btHoje.title = "Abre o Cadastro só com os aprovados que contam na meta de hoje (para enviar/exportar)";
+  btHoje.onclick = () => { const f = NOVOS.filtro; Object.assign(f, { diaMeta: metaIso(new Date()), status:"aprovado", uf:"", cidade:"", buscaId:"", ramo:"", busca:"" });
+    NOVOS.divisao = "leads"; NOVOS.sel.clear(); NOVOS.mostrar = 200; pickEtapa = "novos"; desenhaPicker(); };
+  acoesMeta.append(btHoje);
+  box.append(topo, grade, dias, aviso, acoesMeta, mais);
   host.append(box);
 
-  const salvar = () => { const c = metaCfg(); c.diaria = parseInt(inDia.value, 10) || 0; c.extras = inEx.value.trim(); c.carnaval = ckCa.checked; c.pausar = sPa.value; metaCfgGravar(c); metaAtualizar(); };
+  const salvar = () => { const c = metaCfg(); c.diaria = parseInt(inDia.value, 10) || 0; c.extras = inEx.value.trim(); c.carnaval = ckCa.checked; c.ateMeta = ckAte.checked; metaCfgGravar(c); metaAtualizar(); };
   let t = null; const adiado = () => { clearTimeout(t); t = setTimeout(salvar, 300); };
   inDia.oninput = () => { inDia.value = inDia.value.replace(/\D/g, ""); inSem.value = (parseInt(inDia.value, 10) || 0) * 5; adiado(); };
   inSem.oninput = () => { inSem.value = inSem.value.replace(/\D/g, ""); inDia.value = Math.round((parseInt(inSem.value, 10) || 0) / 5); adiado(); };
-  inEx.oninput = adiado; ckCa.onchange = salvar; sPa.onchange = () => { try { localStorage.removeItem("m04_metaPausou"); } catch(e){} salvar(); };
+  inEx.oninput = adiado; ckCa.onchange = salvar; ckAte.onchange = salvar;
   META.ui = META.ui.filter(u => document.body.contains(u.box) || u.box === box);
   META.ui.push({ box, grade, dias, aviso, inDia, inSem });
   metaAtualizar();
@@ -8944,22 +8975,82 @@ async function metaAtualizar(){
       txt = "Para a meta da semana faltam " + metaFmt(fSem) + "." + (fMes ? " Para a meta de " + mesNome + " faltam " + metaFmt(fMes) + "." : "") +
         (ritmo >= 0 ? " No mês você está " + metaFmt(ritmo) + " à frente do ritmo." : " No mês você está " + metaFmt(-ritmo) + " atrás do ritmo (esperado até hoje: " + metaFmt(c.esperadoMes) + ").");
     }
+    if(c.reserva) txt += " Sobram " + metaFmt(c.reserva) + " leads aprovados para os próximos dias (próximo dia útil: " +
+      c.proxDia.split("-").reverse().slice(0, 2).join("/") + (c.ultimoDia && c.ultimoDia !== c.proxDia ? "; vão até " + c.ultimoDia.split("-").reverse().slice(0, 2).join("/") : "") + ").";
     u.aviso.hidden = !txt; u.aviso.textContent = txt; u.aviso.className = "metaaviso" + (falta ? " falta" : "");
   });
 }
-/* pausa a busca quando bate a meta escolhida (uma vez por dia/semana/mês) */
-async function metaConferePausa(est){
-  const c = META.calc || await metaCalcular().catch(() => null);
-  if(!c || !c.cfg.pausar || !c.diaria || !est || !est.rodando || est.pausado || est.concluido) return;
-  const [feito, meta, chave] = c.cfg.pausar === "dia" ? [c.feitoHoje, c.hojeUtil ? c.diaria : 0, metaIso(c.hoje)]
-    : c.cfg.pausar === "semana" ? [c.feitoSem, c.metaSem, "s" + metaIso(c.seg)] : [c.feitoMes, c.metaMes, "m" + metaIso(c.ini)];
-  if(!meta || feito < meta) return;
-  let ja = ""; try { ja = localStorage.getItem("m04_metaPausou") || ""; } catch(e){}
-  if(ja === c.cfg.pausar + chave) return;
-  try { localStorage.setItem("m04_metaPausou", c.cfg.pausar + chave); } catch(e){}
-  m04PrefSet("pausaManual", true);
-  await m04Enviar({ type:"pausar" }, 15000);
-  toast("Meta " + ({ dia:"do dia", semana:"da semana", mes:"do mês" })[c.cfg.pausar] + " batida (" + metaFmt(feito) + " leads). Busca pausada.");
+/* ---- busca até bater a meta do dia ----
+   meta do dia batida com a busca rodando: avisa a extensão para terminar a cidade atual e parar;
+   busca acabou sem bater a meta: começa sozinha uma busca nas cidades vizinhas (mesmo jeito de buscar). */
+function metaCidadesFeitas(termo, uf){ try { return (JSON.parse(localStorage.getItem("m04_cidadesFeitas") || "{}")[ramoNorm(termo) + "|" + uf]) || []; } catch(e){ return []; } }
+function metaCidadesFeitasAdd(termo, uf, nomes){
+  try { const t = JSON.parse(localStorage.getItem("m04_cidadesFeitas") || "{}"), k = ramoNorm(termo) + "|" + uf;
+    t[k] = [...new Set((t[k] || []).concat(nomes))]; localStorage.setItem("m04_cidadesFeitas", JSON.stringify(t)); } catch(e){}
+}
+function m04UltimaBusca(){ try { return JSON.parse(localStorage.getItem("m04_ultimaBusca") || "null"); } catch(e){ return null; } }
+function m04UltimaBuscaGravar(b){ try { localStorage.setItem("m04_ultimaBusca", JSON.stringify(b)); } catch(e){} }
+/* o que já está no Cadastro neste estado: a extensão pula sem abrir */
+async function m04Conhecidos(uf){
+  const doUf = (await NovosDB.todos()).filter(x => x.uf === uf && !x.preliminar);
+  const cnpjs = new Set(), lugares = new Set(), nomes = new Set();
+  doUf.forEach(x => {
+    const d = cnpjDig(x.cnpj); if(d.length === 14 && x.status !== "sem_cnpj") cnpjs.add(d);
+    if(x.status === "sem_cnpj") return;
+    const pid = String(x.link || "").match(/0x[0-9a-f]+:0x[0-9a-f]+/i); if(pid) lugares.add(pid[0].toLowerCase());
+    const nm = ramoNorm(x.nomeMaps); if(nm.length >= 4) nomes.add(nm + "|" + ramoNorm(x.cidade));
+  });
+  return { cnpjs:[...cnpjs], lugares:[...lugares], nomes:[...nomes] };
+}
+const META_AUTO = { ocupado:false, seguiu:{}, em:0 };
+async function metaControle(est){
+  if(META_AUTO.ocupado || !est || !est.existe) return;
+  if(Date.now() - (META_AUTO.em || 0) < 8000 && !est.concluido) return;
+  META_AUTO.em = Date.now();
+  const cfg = metaCfg(); if(cfg.ateMeta === false || !(+cfg.diaria > 0)) return;
+  META_AUTO.ocupado = true;
+  try {
+    const c = await metaCalcular();
+    if(!c.hojeUtil) return;
+    const bateu = c.feitoHoje >= c.diaria;
+    /* rodando e meta batida: termina a cidade atual e para */
+    if(bateu && est.rodando && !est.concluido && !est.pararAposCidade){
+      await m04Enviar({ type:"pararAposCidade" }, 15000);
+      const cid = (est.cidades || [])[est.idx];
+      toast("Meta do dia batida (" + metaFmt(c.feitoHoje) + " de " + metaFmt(c.diaria) + "). A busca termina " + (cid ? cid.nome : "a cidade atual") + " e para; o que passar fica para o próximo dia útil.");
+      return;
+    }
+    /* acabou sem bater a meta: segue para as cidades vizinhas */
+    if(bateu || !est.concluido || est.paradaMeta || META_AUTO.seguiu[est.criadoEm]) return;
+    let feitas = {}; try { feitas = await NovosDB.meta("importadas") || {}; } catch(e){}
+    const faltaImportar = (est.cidades || []).some((x, i) => x.status === "pronta" && !feitas[est.uf + "|" + est.termo + "|" + est.criadoEm + "|" + i]);
+    if(faltaImportar) return;
+    META_AUTO.seguiu[est.criadoEm] = true;
+    const ult = m04UltimaBusca();
+    if(!ult || ramoNorm(ult.termo) !== ramoNorm(est.termo) || ult.uf !== est.uf) return;
+    const daBusca = [...new Set((est.cidades || []).map(x => x.nome))];
+    metaCidadesFeitasAdd(est.termo, est.uf, daBusca);
+    const ja = new Set(metaCidadesFeitas(est.termo, est.uf));
+    const { resp } = await m04Enviar({ type:"vizinhas", uf: est.uf, nomes: daBusca }, 60000);
+    const viz = [...new Set(Object.values((resp && resp.vizinhas) || {}).flat())].filter(n => !ja.has(n)).sort((a, b) => a.localeCompare(b, "pt-BR"));
+    if(!viz.length){ toast("A meta do dia não foi batida (" + metaFmt(c.feitoHoje) + " de " + metaFmt(c.diaria) + ") e não há mais cidades vizinhas novas. Escolha outras cidades."); return; }
+    const prox = viz.slice(0, 2);
+    toast("Meta do dia: faltam " + metaFmt(c.diaria - c.feitoHoje) + ". Seguindo sozinha para " + prox.join(" e ") + ".");
+    if(ult.lista){
+      /* importar lista do MaisCNPJ: a mesma atividade na cidade vizinha */
+      const slugCid = mcSlugP(prox[0]);
+      Object.assign(LISTA, { url:"https://maiscnpj.com.br/empresas/" + ult.uf.toLowerCase() + "/" + slugCid + "/" + ult.atividade, itens:[], pg:0, total:0, fim:false, erro:"",
+        ramo: ult.termo, partes:{ uf: ult.uf, cidSlug: slugCid, atividade: ult.atividade }, pausa: ult.pausa || 1500, janela: ult.janela || "fixada",
+        mapsMei: !!ult.mapsMei, semFiltro: !!ult.semFiltro, soNovas: ult.soNovas !== false });
+      listaRodar();
+      return;
+    }
+    const opcoes = Object.assign({}, ult.opcoes, { escopo:"cidades", cidades: prox, vizinhas:false, limiteCidades:0 });
+    if(opcoes.soNovas !== false) opcoes.conhecidos = await m04Conhecidos(est.uf);
+    const r = await m04Enviar({ type:"iniciar", termo: ult.termo, uf: ult.uf, opcoes }, 60000);
+    if(r.erro || !r.resp) toast("Não consegui seguir para as cidades vizinhas: " + (r.erro || "sem resposta da extensão") + ".");
+    else if(M04.ui && document.body.contains(M04.ui.bar)){ m04Pinta(r.resp); m04Polling(); }
+  } catch(e){} finally { META_AUTO.ocupado = false; }
 }
 
 const M04_ZONAS = ["Centro","Norte","Sul","Leste","Oeste"];
@@ -9034,7 +9125,7 @@ async function m04Importar(est){
     const pendentes = (est.cidades || []).map((c, i) => i).filter(i => est.cidades[i].status === "pronta" && !feitas[chaveCid(i)]);
     /* lista importada do MaisCNPJ: atualiza os leads aos poucos, enquanto a cidade ainda está aberta (a cada 15 s) */
     const cAtual = (est.cidades || [])[est.idx];
-    const parcial = est.listaPronta && cAtual && cAtual.status !== "pronta" && est.fase === "cnpj" && est.li > 0 &&
+    const parcial = cAtual && cAtual.status !== "pronta" && est.fase === "cnpj" && est.li > 0 &&
       (!M04.parcialEm || Date.now() - M04.parcialEm > 15000) && !pendentes.includes(est.idx);
     if(!pendentes.length && !parcial){ novos += await m04ImportarRefeitos(est); return novos; }
     if(parcial) M04.parcialEm = Date.now();
@@ -9076,7 +9167,12 @@ async function m04Importar(est){
             else if(par.status === "sem_cnpj" && cnpjDig(r.cnpj).length === 14){
               if(par.chave !== r.chave) remover.push(par.chave);
               antigo = Object.assign({}, par, { capturadoEm: agoraIso }); st.completadas++; compCid++;
-            } else { st.repetidas++; repCid++; return null; }
+            } else {
+              /* conta cada ignorada uma vez só (a cidade aberta é relida a cada 15 s) */
+              M04.ignorados = M04.ignorados || {}; const ig = M04.ignorados[buscaId] = M04.ignorados[buscaId] || new Set();
+              if(!ig.has(r.chave)){ ig.add(r.chave); st.repetidas++; M04.repCidade = M04.repCidade || {}; M04.repCidade[buscaId + "|" + i] = (M04.repCidade[buscaId + "|" + i] || 0) + 1; }
+              return null;
+            }
           }
         }
         const novo = Object.assign({}, r, { importadoEm: agoraIso });
@@ -9097,7 +9193,9 @@ async function m04Importar(est){
       if(remover.length) await NovosDB.excluir(remover);
       if(lista.length) await NovosDB.gravar(lista);
       m04StatsGravar(buscaId, st);
-      if(!final){ if(lista.length) novos = Math.max(novos, 1); continue; }
+      M04.novasCidade = M04.novasCidade || {}; M04.novasCidade[buscaId + "|" + i] = (M04.novasCidade[buscaId + "|" + i] || 0) + novasCid;
+      novasCid = M04.novasCidade[buscaId + "|" + i]; repCid = (M04.repCidade || {})[buscaId + "|" + i] || 0;
+      if(!final){ if(lista.length){ novos = Math.max(novos, 1); metaAtualizar(); } continue; }
       feitas[k] = new Date().toISOString();
       await NovosDB.metaGravar("importadas", feitas);
       /* avisa a extensão que já pode apagar os resultados desta cidade (libera espaço) */
@@ -9108,7 +9206,7 @@ async function m04Importar(est){
     }
     if(M04.rodada && M04.rodada.cidades){
       const r = M04.rodada; M04.rodada = null;
-      metaAtualizar(); metaConferePausa(est);
+      metaAtualizar();
       toast((r.cidades === 1 ? r.ultima + ": " : r.cidades + " cidades: ") +
         (r.soNovas ? r.novas + (r.novas === 1 ? " unidade nova" : " unidades novas") + (r.comp ? " · " + r.comp + " Sem CNPJ completado" + (r.comp === 1 ? "" : "s") : "") +
            " (" + r.aprov + " aprovada" + (r.aprov === 1 ? "" : "s") + ")" + (r.rep ? " · " + r.rep + " já estava" + (r.rep === 1 ? "" : "m") + " no Cadastro e " + (r.rep === 1 ? "foi ignorada" : "foram ignoradas") : "") + "."
@@ -9206,7 +9304,7 @@ setInterval(async () => {
   if(!M04.presente || M04.importando) return;
   if(M04.ui && document.body.contains(M04.ui.bar)) return; /* com a tela aberta, o polling de 2s já faz isso */
   const { resp } = await m04Enviar({ type:"estado" }, 4000);
-  if(resp && resp.existe){ m04Importar(resp); m04Vigia(resp); }
+  if(resp && resp.existe){ m04Importar(resp).then(() => metaControle(resp)); m04Vigia(resp); }
 }, 10000);
 
 /* ---------- tela do Modelo 04 ---------- */
@@ -9525,23 +9623,14 @@ function pickModelo04(host, modo){
     btIniciar.disabled = true; btIniciar.textContent = "Carregando as cidades…";
     /* só unidades novas: manda para a extensão o que já está no Cadastro neste estado, para ela pular sem abrir */
     let conhecidos = null;
-    if(ckNov.checked){
-      try {
-        const doUf = (await NovosDB.todos()).filter(x => x.uf === selUf.value);
-        const cnpjs = new Set(), lugares = new Set(), nomes = new Set();
-        doUf.forEach(x => {
-          const d = cnpjDig(x.cnpj); if(d.length === 14 && x.status !== "sem_cnpj") cnpjs.add(d);
-          if(x.status === "sem_cnpj") return;            /* Sem CNPJ: deixa a extensão tentar achar o CNPJ de novo */
-          const pid = String(x.link || "").match(/0x[0-9a-f]+:0x[0-9a-f]+/i); if(pid) lugares.add(pid[0].toLowerCase());
-          const nm = ramoNorm(x.nomeMaps); if(nm.length >= 4) nomes.add(nm + "|" + ramoNorm(x.cidade));
-        });
-        conhecidos = { cnpjs:[...cnpjs], lugares:[...lugares], nomes:[...nomes] };
-      } catch(e){}
-    }
+    if(ckNov.checked){ try { conhecidos = await m04Conhecidos(selUf.value); } catch(e){} }
     const { resp, erro } = await m04Enviar({ type:"iniciar", termo, uf: selUf.value,
       opcoes:{ intervalo: +selInt.value, maxPorCidade: +selMax.value, dividir: ckDiv.checked, maisTpl: inTpl.value.trim(), palavras: inPal.value.trim(), escopo: selEsc.value, zonaInicial: selZona.value, janela: selJan.value,
         cidades: escolhidas.slice(), limiteCidades: (selEsc.value === "demais" || selEsc.value === "estado") ? limiteCidades : 0,
         modo: cnae ? "cnae" : "maps", cnaes, vizinhas: cnae && selEsc.value === "cidades" && ckViz.checked, conhecidos } }, 60000);
+    /* guarda como foi a busca, para seguir sozinha nas cidades vizinhas se acabar antes da meta do dia */
+    m04UltimaBuscaGravar({ termo, uf: selUf.value, opcoes:{ intervalo: +selInt.value, maxPorCidade: +selMax.value, dividir: ckDiv.checked, maisTpl: inTpl.value.trim(),
+      palavras: inPal.value.trim(), janela: selJan.value, modo: cnae ? "cnae" : "maps", cnaes, soNovas: ckNov.checked } });
     btIniciar.disabled = false; btIniciar.textContent = "Começar a busca";
     if(erro || !resp) return m04SemExtensao(erro);
     m04Pinta(resp); m04Polling();
@@ -9556,7 +9645,16 @@ function pickModelo04(host, modo){
     cmd("continuar", inTpl2.value.trim() ? { maisTpl: inTpl2.value.trim() } : {}); };
   btPular.onclick  = () => { if(confirm("Pular a cidade atual? O que já foi achado nela entra no Cadastro.")) cmd("pular"); };
   btParar.onclick  = () => { if(confirm("Parar a busca? As cidades já concluídas continuam no Cadastro Leads Novos.")){ m04PrefSet("pausaManual", true); cmd("parar"); } };
-  btVer.onclick    = () => { pickEtapa = "novos"; desenhaPicker(); };
+  /* abre o Cadastro já filtrado nesta busca (ramo, estado, cidade e só o que ela trouxe) */
+  btVer.onclick    = () => {
+    const s = M04.estado, f = NOVOS.filtro;
+    if(s && s.existe){
+      const cfgB = m04BuscaCfg(s.termo), cids = [...new Set((s.cidades || []).map(c => c.nome))];
+      Object.assign(f, { ramo: baseChave(cfgB.ramo || s.termo), uf: s.uf, cidade: cids.length === 1 ? cids[0] : "", buscaId:"", status:"", busca:"", diaMeta:"", naoEnviados:false });
+      NOVOS.divisao = "leads"; NOVOS.sel.clear(); NOVOS.mostrar = 200;
+    }
+    pickEtapa = "novos"; desenhaPicker();
+  };
   btTodas.onclick  = () => { M04.verTodas = !M04.verTodas; m04Pinta(M04.estado); };
   btNova.onclick   = async () => {
     if(!confirm("Começar uma busca nova? Pode ser na mesma cidade com outras palavras: com “Só trazer unidades novas”, o que já está no Cadastro é ignorado. A busca atual é apagada da extensão; os leads do Cadastro ficam.")) return;
@@ -9726,7 +9824,7 @@ function m04Pinta(s){
     u.autoInfo.textContent = txt; u.autoInfo.hidden = !txt;
   }
 
-  m04Importar(s);
+  m04Importar(s).then(() => metaControle(s));
   m04Vigia(s);
 }
 
@@ -9886,6 +9984,24 @@ function pickNovos(host){
     novosDesenhar();
   };
   novosDesenhar();
+}
+
+/* nome do lead clicável: abre o cliente no Google Maps (o local exato quando foi achado lá; senão, busca por nome e endereço) */
+function novosLinkMaps(r){
+  if(r.link && /google\.[^/]+\/maps/.test(r.link)) return r.link;
+  const nome = r.nomeMaps || r.nomeFantasia || String(r.razaoSocial || "").replace(/\b(LTDA|LIMITADA|ME|EPP|EIRELI)\b\.?/gi, "").trim();
+  const onde = r.endereco || r.enderecoReceita || [r.cidade, r.uf].filter(Boolean).join(" - ");
+  return nome ? "https://www.google.com/maps/search/" + encodeURIComponent(nome + " " + onde) : "";
+}
+function novosNomeMaps(r, texto){
+  const href = novosLinkMaps(r), b = el("b");
+  if(!href){ b.textContent = texto; return b; }
+  const a = el("a","nmaps", texto); a.href = href; a.target = "_blank"; a.rel = "noopener";
+  a.title = r.link ? "Abrir no Google Maps" : "Procurar no Google Maps (não foi achado lá na busca)";
+  a.onclick = ev => ev.stopPropagation();
+  b.append(a);
+  if(!r.link){ const s = el("span","nmapsbusca"," (buscar no Maps)"); b.append(s); }
+  return b;
 }
 
 /* ---------- clientes (CNPJs importados) e redes ---------- */
@@ -10117,7 +10233,11 @@ async function novosDesenhar(){
   u.sBus.innerHTML = '<option value="">Todas as buscas</option>' + [...buscas.entries()].sort((a, b) => String(b[0]).localeCompare(String(a[0])))
     .map(([id, b]) => '<option value="' + esc(id) + '">Novas de ' + esc(b.rot) + ' (' + b.n + ')</option>').join("");
   u.sBus.value = f.buscaId; u.sBus.hidden = !buscas.size;
-  const noRecorte = todos.filter(x => (!f.uf || x.uf === f.uf) && (!f.cidade || x.cidade === f.cidade) && (!f.buscaId || x.buscaId === f.buscaId));
+  /* leads do dia da meta (botão "Ver os leads de hoje" no painel da meta) */
+  let alocMeta = null;
+  if(f.diaMeta){ try { alocMeta = (await metaCalcular()).aloc; } catch(e){ alocMeta = new Map(); } }
+  const noRecorte = todos.filter(x => (!f.uf || x.uf === f.uf) && (!f.cidade || x.cidade === f.cidade) && (!f.buscaId || x.buscaId === f.buscaId) &&
+    (!alocMeta || alocMeta.get(x.chave) === f.diaMeta));
   u.chips.innerHTML = "";
   Object.entries(M04_STATUS).forEach(([k, [rot]]) => {
     const n = noRecorte.filter(x => x.status === k).length;
@@ -10149,9 +10269,15 @@ async function novosDesenhar(){
   u.mostrando.innerHTML = "";
   const partes = [dv === "rede" ? "REDE" + (NOVOS.redeSel ? " › " + NOVOS.redeSel : "") : dv === "clientes" ? "Já são clientes" :
     dv === "frios" ? "Frios (só fixo)" : dv === "campanhas" ? "Campanha" + (NOVOS.campSel ? " › " + NOVOS.campSel : "s") : "", f.ramo ? ((NOVOS.nomesRamo || {})[f.ramo] || "") : "Todos os ramos", f.uf || "todos os estados", f.cidade,
-    f.buscaId ? "só as novas da busca " + ((u.sBus.selectedOptions[0] || {}).textContent || "").replace(/^Novas de /, "") : ""].filter(Boolean);
+    f.buscaId ? "só as novas da busca " + ((u.sBus.selectedOptions[0] || {}).textContent || "").replace(/^Novas de /, "") : "",
+    f.diaMeta ? "só os leads da meta de " + f.diaMeta.split("-").reverse().slice(0, 2).join("/") : ""].filter(Boolean);
   u.mostrando.append(el("b",null, lista.length.toLocaleString("pt-BR") + (lista.length === 1 ? " lead" : " leads")),
     document.createTextNode(" · " + partes.join(" · ") + (f.status ? " · " + M04_STATUS[f.status][0].toLowerCase() : " · todas as situações")));
+  if(f.diaMeta){
+    const ld = el("button","btn sm","Tirar o filtro da meta");
+    ld.onclick = () => { f.diaMeta = ""; NOVOS.mostrar = 200; novosDesenhar(); };
+    u.mostrando.append(ld);
+  }
   if(f.uf || f.cidade){
     const lp = el("button","btn sm","Limpar estado e cidade");
     lp.onclick = () => { f.uf = ""; f.cidade = ""; NOVOS.mostrar = 200; novosDesenhar(); };
@@ -10239,7 +10365,7 @@ async function novosDesenhar(){
       (f.status ? " (situação: " + M04_STATUS[f.status][0].toLowerCase() + ")" : "") + ". " : "Nenhum lead com esses filtros. ");
     if(escondidos){
       const bt = el("button","btn sm","Mostrar todas as situações e lugares");
-      bt.onclick = () => { f.status = ""; f.uf = ""; f.cidade = ""; f.buscaId = ""; f.naoEnviados = false; f.busca = ""; u.inB.value = ""; u.ckN.checked = false; novosDesenhar(); };
+      bt.onclick = () => { f.status = ""; f.uf = ""; f.cidade = ""; f.buscaId = ""; f.diaMeta = ""; f.naoEnviados = false; f.busca = ""; u.inB.value = ""; u.ckN.checked = false; novosDesenhar(); };
       p.append(bt);
     }
     u.corpo.append(p); return;
@@ -10280,7 +10406,7 @@ async function novosDesenhar(){
     ck.onchange = () => { ck.checked ? NOVOS.sel.add(r.chave) : NOVOS.sel.delete(r.chave); tr.classList.toggle("marcado", ck.checked); u.info.textContent = NOVOS.sel.size ? NOVOS.sel.size + " marcados" : ""; };
     tdc.append(ck); tr.append(tdc);
 
-    const te = el("td"); te.append(el("b",null, r.nomeMaps || r.nomeFantasia || r.razaoSocial || "—"));
+    const te = el("td"); te.append(novosNomeMaps(r, r.nomeMaps || r.nomeFantasia || r.razaoSocial || "—"));
     if(r.razaoSocial) te.append(el("div","sub", r.razaoSocial));
     if(r.filiais > 1 && !r.rede) te.append(el("div","quem","possível rede: " + r.filiais + " unidades ativas"));
     if(r.enviadoBase) te.append(el("div","quem","enviado à Base em " + new Date(r.enviadoBaseEm).toLocaleString("pt-BR", { dateStyle:"short", timeStyle:"short" }) +
@@ -10442,7 +10568,7 @@ function novosPainelRamos(box, todos){
       tL.append(hL);
       novosOrdenaLeads(daUf.filter(x => x.cidade === cd), NOVOS.ordCid).forEach(r => {
         const t = el("tr");
-        const te = el("td"); te.append(el("b",null, NOVOS_LEAD_COLS.empresa(r) || "—"));
+        const te = el("td"); te.append(novosNomeMaps(r, NOVOS_LEAD_COLS.empresa(r) || "—"));
         if(r.razaoSocial && r.razaoSocial !== r.nomeMaps) te.append(el("div","sub", r.razaoSocial));
         t.append(te, el("td",null, r.cnpj || "—"));
         const ts = el("td"); const [rot, cls] = M04_STATUS[r.status] || [r.status, "st-todo"]; ts.append(el("span","pill " + cls, rot)); t.append(ts);
@@ -15940,10 +16066,11 @@ async function listaImportarEBuscar(){
   /* o que já está no Cadastro: a extensão pula (mesmo CNPJ) */
   const todos = await NovosDB.todos();
   const porCnpj = new Map(); todos.forEach(x => { const d = cnpjDig(x.cnpj); if(d.length === 14) porCnpj.set(d, x); });
-  const conhecidos = LISTA.soNovas ? { cnpjs: [...porCnpj.keys()].filter(d => !porCnpj.get(d).preliminar), lugares: [], nomes: [] } : null;
+  const conhecidos = LISTA.soNovas ? await m04Conhecidos(P.uf) : null;
   const itensExt = LISTA.itens.filter(it => !(LISTA.soNovas && porCnpj.has(it.cnpj) && !porCnpj.get(it.cnpj).preliminar))
     .map(({ slug, nome, end, cnpj, grupo }) => ({ slug, nome, end, cnpj, grupo }));
   m04BuscaCfgGravar(ramo, { ramo:"", soNovas: LISTA.soNovas, semFiltro: LISTA.semFiltro });
+  m04UltimaBuscaGravar({ lista:true, termo: ramo, uf: P.uf, atividade: P.atividade, pausa: LISTA.pausa, janela: LISTA.janela, mapsMei: LISTA.mapsMei, semFiltro: LISTA.semFiltro, soNovas: LISTA.soNovas });
   M04.campos = Object.assign({}, M04.campos || {}, { termo: ramo, uf: P.uf, escopo:"cidades", cidades:[cidade], cnaeTxt:"https://maiscnpj.com.br/empresas/" + P.uf.toLowerCase() + "/" + P.cidSlug + "/" + P.atividade });
   const { resp, erro } = await m04Enviar({ type:"iniciar", termo: ramo, uf: P.uf, opcoes:{ modo:"cnae", cnaes:["slug:" + P.atividade], escopo:"cidades", cidades:[cidade],
     intervalo: LISTA.pausa, janela: LISTA.janela, mapsMei: LISTA.mapsMei, listaItens: itensExt, conhecidos } }, 60000);
