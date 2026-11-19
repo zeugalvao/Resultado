@@ -1345,6 +1345,16 @@ details.gsdr summary{cursor:pointer;font-size:13px}
 /* caixa de seleção dentro dos campos: não estica (o input do campo tem width:100%) */
 .leadscampo .qualcheck input,.m04cidbox .qualcheck input{width:auto;flex:none;max-width:none}
 
+.abastela{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 18px;padding-bottom:12px;border-bottom:1px solid var(--line)}
+/* menu "Mais ações" do Cadastro */
+.maisacoes{position:relative}
+.maisacoes>summary{list-style:none;cursor:pointer}
+.maisacoes>summary::-webkit-details-marker{display:none}
+.maisacoes .menu{position:absolute;z-index:30;top:calc(100% + 4px);left:0;min-width:300px;background:var(--surface);border:1px solid var(--line);border-radius:8px;
+  box-shadow:0 8px 24px rgba(16,30,40,.14);padding:6px;display:flex;flex-direction:column;gap:2px}
+.maisacoes .menu .btn{width:100%;text-align:left;border:0;background:none;justify-content:flex-start}
+.maisacoes .menu .btn:hover{background:var(--paper)}
+.maisacoes .menu hr{border:0;border-top:1px solid var(--line-soft);margin:4px 0}
 /* ---------- meta de leads (dia, semana e mês em dias úteis) ---------- */
 .metabox{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:0 0 18px;max-width:1180px}
 .metatopo{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 18px;margin-bottom:12px}
@@ -6345,10 +6355,11 @@ function desenhaPicker(){
   else if(pickEtapa === "leads") pickBuscar(w);
   else if(pickEtapa === "qualificar") pickQualificar(w);
   else if(pickEtapa === "redes") pickRedes(w);
-  else if(pickEtapa === "base") pickBase(w);
-  else if(pickEtapa === "modelo04") pickModelo04(w);
-  else if(pickEtapa === "modelo05") pickModelo04(w, "cnae");
-  else if(pickEtapa === "novos") pickNovos(w);
+  else if(pickEtapa === "base") pickLeadsArquivo(w, "base");
+  else if(pickEtapa === "modelo04") pickBuscaCidade(w, "maps");
+  else if(pickEtapa === "modelo05") pickBuscaCidade(w, "cnae");
+  else if(pickEtapa === "lista") pickBuscaCidade(w, "lista");
+  else if(pickEtapa === "novos") pickLeadsArquivo(w, "novos");
   else if(pickEtapa === "receita") pickBuscar(w);
   else if(pickEtapa === "usuarios") pickUsuarios(w);
   else if(pickEtapa === "perfil") pickPerfil(w);
@@ -9021,7 +9032,12 @@ async function m04Importar(est){
     if(!feitas || typeof feitas !== "object" || feitas instanceof IDBRequest) feitas = {};
     const chaveCid = i => est.uf + "|" + est.termo + "|" + est.criadoEm + "|" + i;
     const pendentes = (est.cidades || []).map((c, i) => i).filter(i => est.cidades[i].status === "pronta" && !feitas[chaveCid(i)]);
-    if(!pendentes.length){ novos += await m04ImportarRefeitos(est); return novos; }
+    /* lista importada do MaisCNPJ: atualiza os leads aos poucos, enquanto a cidade ainda está aberta (a cada 15 s) */
+    const cAtual = (est.cidades || [])[est.idx];
+    const parcial = est.listaPronta && cAtual && cAtual.status !== "pronta" && est.fase === "cnpj" && est.li > 0 &&
+      (!M04.parcialEm || Date.now() - M04.parcialEm > 15000) && !pendentes.includes(est.idx);
+    if(!pendentes.length && !parcial){ novos += await m04ImportarRefeitos(est); return novos; }
+    if(parcial) M04.parcialEm = Date.now();
     const todosDB = await NovosDB.todos();
     const existentes = new Map(todosDB.map(x => [x.chave, x]));
     const cfgB = m04BuscaCfg(est.termo), soNovas = cfgB.soNovas !== false;
@@ -9031,7 +9047,8 @@ async function m04Importar(est){
     const assin = new Map();
     const indexa = x => m04Assinaturas(x).forEach(a => { if(!assin.has(a)) assin.set(a, x); });
     todosDB.forEach(indexa);
-    for(const i of pendentes){
+    for(const i of pendentes.concat(parcial ? [est.idx] : [])){
+      const final = pendentes.includes(i);
       const c = est.cidades[i];
       const k = chaveCid(i);
       const { resp, erro } = await m04Enviar({ type:"resultados", idx:i }, 20000);
@@ -9040,7 +9057,7 @@ async function m04Importar(est){
       const pal = (est.palavras && est.palavras.length) ? est.palavras : ramoPalavras(est.termo, "");
       const doRamo = r => est.modo === "cnae" || r.origem === "cnae" || ramoConfere(pal, [r.nomeMaps, r.nomeFantasia, r.razaoSocial, r.categoria].join(" "));
       /* terceira trava (vale também para o CNAE): nome/categoria de outro ramo vira “Outro ramo” e não conta na meta */
-      const filtro = ramoFiltroDe(ramoCad || est.termo);
+      const filtro = cfgB.semFiltro ? null : ramoFiltroDe(ramoCad || est.termo);
       const agoraIso = new Date().toISOString();
       const remover = [];
       let novasCid = 0, repCid = 0, compCid = 0;
@@ -9052,15 +9069,19 @@ async function m04Importar(est){
         if(soNovas){
           const par = antigo || m04Assinaturas(r).map(a => assin.get(a)).find(Boolean);
           if(par){
-            /* já estava: ignora. Exceção: estava "Sem CNPJ" e agora veio com CNPJ — completa o lead */
-            if(par.status === "sem_cnpj" && cnpjDig(r.cnpj).length === 14){
+            /* já estava: ignora. Exceções: veio da lista importada (preliminar) ou desta mesma busca — atualiza;
+               estava "Sem CNPJ" e agora veio com CNPJ — completa o lead */
+            if(par.preliminar){ antigo = par; st.novas++; novasCid++; if(r.status === "aprovado") st.aprovadas++; }
+            else if(par.buscaId === buscaId){ antigo = par; }
+            else if(par.status === "sem_cnpj" && cnpjDig(r.cnpj).length === 14){
               if(par.chave !== r.chave) remover.push(par.chave);
               antigo = Object.assign({}, par, { capturadoEm: agoraIso }); st.completadas++; compCid++;
             } else { st.repetidas++; repCid++; return null; }
           }
         }
         const novo = Object.assign({}, r, { importadoEm: agoraIso });
-        if(antigo){ ["enviadoBase","enviadoBaseEm","cnpjManual","rede","campanha","campanhaEm","campanhasAnteriores","ramoManual"].forEach(p => { if(antigo[p]) novo[p] = antigo[p]; }); }
+        if(antigo){ ["enviadoBase","enviadoBaseEm","cnpjManual","rede","campanha","campanhaEm","campanhasAnteriores","ramoManual"].forEach(p => { if(antigo[p]) novo[p] = antigo[p]; });
+          if(antigo.chave !== novo.chave && existentes.has(antigo.chave)) remover.push(antigo.chave); }
         else novos++;
         if(!antigo || !antigo.buscaId){ novo.buscaId = buscaId; novo.buscaRotulo = rotulo; }
         else { novo.buscaId = antigo.buscaId; novo.buscaRotulo = antigo.buscaRotulo; }
@@ -9076,6 +9097,7 @@ async function m04Importar(est){
       if(remover.length) await NovosDB.excluir(remover);
       if(lista.length) await NovosDB.gravar(lista);
       m04StatsGravar(buscaId, st);
+      if(!final){ if(lista.length) novos = Math.max(novos, 1); continue; }
       feitas[k] = new Date().toISOString();
       await NovosDB.metaGravar("importadas", feitas);
       /* avisa a extensão que já pode apagar os resultados desta cidade (libera espaço) */
@@ -9595,7 +9617,7 @@ function m04Pinta(s){
   (s.modo === "cnae"
    ? [[t.aprovados,"aprovados","ok"],[t.aguardando,"aguardando 6 meses","novo"],[t.fora,"fora do requisito","alerta"],
       [t.verificar,"para conferir","alerta"],[t.lista,"na lista do CNAE",""],[t.ltda,"LTDA",""],[t.mei,"MEI (fora do interesse)",""],
-      [t.noMaps,"achadas no Maps",""],[t.semMaps,"não achadas no Maps","alerta"],[t.jaCadastro,"já no Cadastro (puladas sem abrir)",""]]
+      [t.noMaps,"achadas no Maps",""],[t.semMaps,"não achadas no Maps","alerta"],[t.jaCadastro,"já no Cadastro (puladas sem abrir)",""],[t.endDif,"endereço do Maps diferente da Receita","alerta"]]
    : [[t.aprovados,"aprovados","ok"],[t.aguardando,"aguardando 6 meses","novo"],[t.fora,"fora do requisito","alerta"],
    [t.semCnpj,"sem CNPJ","alerta"],[t.verificar,"para conferir","alerta"],[t.maps,"locais no Maps",""],
    [t.outroRamo,"de outro ramo descartados",""], [t.jaCadastro,"já no Cadastro (puladas sem abrir)",""], [s.refazer,"na fila para procurar o CNPJ de novo","novo"]])
@@ -9794,7 +9816,30 @@ function pickNovos(host){
     await NovosDB.gravar(mud); novosDesenhar(); metaAtualizar();
     toast(mud.length + " leads atualizados pelo filtro do ramo.");
   };
-  acoes.append(btEnviar, btRede, lbQtd, btXls, btCsv, btExcluir, btManter, btAtual, btRefazer, btRamoOk, btRamoRe, btCli, inCli, info);
+  /* excluir todos os leads de uma cidade (no ramo escolhido): aprovados, MEI, frios, outro ramo, campanhas, rede */
+  const btExcCid = el("button","btn danger","Excluir leads da cidade"); btExcCid.hidden = true;
+  btExcCid.onclick = async () => {
+    const f = NOVOS.filtro; if(!f.uf || !f.cidade) return toast("Escolha a cidade primeiro (no filtro ou clicando na cidade da tabela).");
+    const alvo = (await NovosDB.todos()).filter(x => x.uf === f.uf && x.cidade === f.cidade && (!f.ramo || novosRamoKey(x) === f.ramo));
+    if(!alvo.length) return toast("Não há leads de " + f.cidade + " neste ramo.");
+    const nomeRamo = f.ramo ? ((NOVOS.nomesRamo || {})[f.ramo] || "este ramo") : "todos os ramos";
+    const cont = {}; alvo.forEach(x => { const r = (M04_STATUS[x.status] || [x.status || "outros"])[0].toLowerCase(); cont[r] = (cont[r] || 0) + 1; });
+    const env = alvo.filter(x => x.enviadoBase).length;
+    if(!confirm("Excluir os " + alvo.length + " leads de " + f.cidade + "/" + f.uf + " (" + nomeRamo + ")?\n\n" +
+      Object.entries(cont).map(([k, n]) => n + " " + k).join(" · ") +
+      "\n\nSai tudo da cidade: aprovados, MEI, frios, outro ramo, campanhas e rede." +
+      (env ? "\n" + env + " já foram enviados à Base de Leads e continuam lá." : "") + "\nNão dá para desfazer.")) return;
+    await NovosDB.excluir(alvo.map(x => x.chave));
+    NOVOS.sel.clear(); f.cidade = ""; NOVOS.mostrar = 200;
+    toast(alvo.length + " leads de " + (alvo[0].cidade) + " excluídos."); novosDesenhar(); metaAtualizar();
+  };
+  /* ações menos usadas ficam no menu "Mais ações" */
+  const mais = el("details","maisacoes"); const sm = el("summary","btn","Mais ações ▾"); const menu = el("div","menu");
+  menu.append(btRede, btExcluir, btRamoOk, btRamoRe, btRefazer, btAtual, el("hr"), btCli, btManter);
+  menu.addEventListener("click", ev => { if(ev.target.closest("button")) mais.open = false; });
+  document.addEventListener("click", ev => { if(mais.open && !mais.contains(ev.target)) mais.open = false; });
+  mais.append(sm, menu);
+  acoes.append(btEnviar, lbQtd, btXls, btCsv, btExcCid, mais, inCli, info);
 
   const mostrando = el("div","nmostrando");
   const divisoes = el("div","ndivisoes");
@@ -9802,7 +9847,7 @@ function pickNovos(host){
   host.append(acoes);
 
   const corpo = el("div"); host.append(corpo);
-  NOVOS.ui = { inB, sSt, sUf, sCid, sBus, ckN, chips, corpo, info, btEnviar, btExcluir, ramos, mostrando, divisoes, btCsv, btXls, btRede, btManter, inQtd, lbQtd };
+  NOVOS.ui = { btExcCid, inB, sSt, sUf, sCid, sBus, ckN, chips, corpo, info, btEnviar, btExcluir, ramos, mostrando, divisoes, btCsv, btXls, btRede, btManter, inQtd, lbQtd };
 
   let t = null;
   inB.oninput = () => { clearTimeout(t); t = setTimeout(() => { NOVOS.filtro.busca = inB.value; NOVOS.mostrar = 200; novosDesenhar(); }, 250); };
@@ -10032,6 +10077,8 @@ async function novosDesenhar(){
   NOVOS.lista = todos;
   u.btRede.hidden = dv === "clientes" || dv === "campanhas";
   u.btManter.hidden = !(f.uf && f.cidade);
+  u.btExcCid.hidden = !(f.uf && f.cidade);
+  if(f.cidade) u.btExcCid.textContent = "Excluir leads de " + f.cidade;
   if(f.cidade) u.btManter.textContent = "Manter só " + f.cidade + " (apagar o resto)";
   u.btRede.textContent = dv === "rede" ? "Mudar a rede dos marcados" : "Marcar como rede";
 
@@ -10269,6 +10316,8 @@ async function novosDesenhar(){
     if(r.motivo && r.status !== "aprovado") tdR.append(el("div","sub", r.motivo));
     if(r.ramoMotivo) tdR.append(el("div","sub", "ramo: " + r.ramoMotivo + (r.statusExt ? " · na extensão: " + (M04_STATUS[r.statusExt] || [r.statusExt])[0].toLowerCase() : "")));
     if(r.ramoManual) tdR.append(el("div","sub", "marcado por você como do ramo"));
+    if(r.preliminar) tdR.append(el("div","sub", "da lista do MaisCNPJ · aguardando conferência na Receita e no Maps"));
+    if(r.enderecoConfere) tdR.append(el("div","sub" + (r.enderecoConfere === "nao" ? " nfrio" : ""), r.enderecoConfere === "sim" ? "endereço do Maps confere com a Receita" : "endereço do Maps diferente da Receita"));
     tr.append(tdR);
     const tdL = el("td");
     if(r.link){ const a = el("a",null,"Maps"); a.href = r.link; a.target = "_blank"; a.rel = "noopener"; tdL.append(a); }
@@ -15733,7 +15782,201 @@ function exportarRelatorioPDF(dados){
   };
 })(typeof window !== 'undefined' ? window : self);
 
+/* telas unidas: a tela de fora desenha a trilha e as abas; as de dentro não repetem a trilha */
+let SEM_TRILHA = false;
+function abasTela(host, abas, atual, aoTrocar){
+  const bar = el("div","abastela");
+  abas.forEach(([k, rot, dica]) => {
+    const b = el("button","ndiv" + (k === atual ? " on" : ""), rot);
+    if(dica) b.title = dica;
+    b.onclick = () => { if(k !== atual) aoTrocar(k); };
+    bar.append(b);
+  });
+  host.append(bar);
+}
+/* Buscar por cidade: Modelo 04 (Maps), Modelo 05 (CNAE) e Exportar lista do MaisCNPJ numa tela só */
+function pickBuscaCidade(host, modo){
+  const abas = [["maps","Pelo Google Maps","Digite o tipo de cliente; procura no Maps e acha o CNPJ"],
+                ["cnae","Pelo CNAE (MaisCNPJ)","Digite o CNAE; lê a lista do MaisCNPJ e confirma no Maps"],
+                ["lista","Importar lista do MaisCNPJ","Cole o endereço de uma lista do MaisCNPJ: importa tudo e confere no Maps"]]
+    .filter(([k]) => podeInicio(k === "maps" ? "modelo04" : "modelo05"));
+  if(!abas.some(([k]) => k === modo)) modo = (abas[0] || ["maps"])[0];
+  trilha(host, ["Buscar por cidade"], "frentes");
+  abasTela(host, abas, modo, k => { pickEtapa = k === "maps" ? "modelo04" : k === "cnae" ? "modelo05" : "lista"; desenhaPicker(); });
+  SEM_TRILHA = true;
+  try {
+    if(modo === "lista"){ const hd = el("div","pickhead"); hd.append(el("h1",null,"Importar uma lista do MaisCNPJ")); host.append(hd); pickListaMais(host); }
+    else pickModelo04(host, modo === "cnae" ? "cnae" : undefined);
+  }
+  finally { SEM_TRILHA = false; }
+}
+/* Leads: Cadastro Leads Novos e Base de Leads numa tela só, em abas (os dados continuam onde estão) */
+function pickLeadsArquivo(host, aba){
+  const abas = [["novos","Novos (das buscas)","Os leads que as buscas por cidade trouxeram"],
+                ["base","Base de Leads (enviados)","O que já foi enviado para a Base, por ramo, estado e cidade"]]
+    .filter(([k]) => podeInicio(k));
+  if(!abas.some(([k]) => k === aba)) aba = (abas[0] || ["novos"])[0];
+  trilha(host, ["Leads"], "frentes");
+  abasTela(host, abas, aba, k => { pickEtapa = k; desenhaPicker(); });
+  SEM_TRILHA = true;
+  try { if(aba === "base") pickBase(host); else pickNovos(host); }
+  finally { SEM_TRILHA = false; }
+}
+
+/* ---------- Importar lista do MaisCNPJ ----------
+   1) o painel lê todas as páginas da lista (pela extensão) e já põe todas as empresas no Cadastro Leads Novos;
+   2) manda as empresas para a extensão, que abre cada LTDA (natureza, abertura, telefone) e procura no Google Maps
+      (telefone do Maps e endereço comparado com o da Receita); os leads vão sendo atualizados no Cadastro. */
+const LISTA = { rodando:false, parar:false, url:"", itens:[], pg:0, total:0, fim:false, erro:"", ui:null };
+const mcSlugP = t => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+function listaPartes(url){
+  const m = String(url || "").match(/maiscnpj\.com\.br\/empresas\/([a-z]{2})\/([a-z0-9-]+)\/([a-z0-9-]+)/i);
+  return m ? { uf: m[1].toUpperCase(), cidSlug: m[2].toLowerCase(), atividade: m[3].toLowerCase() } : null;
+}
+function pickListaMais(host){
+  const box = el("div");
+  box.append(el("p","leadshint","Cole o endereço de uma lista do MaisCNPJ (estado, cidade e atividade). O painel lê todas as páginas e já põe todas as empresas no Cadastro Leads Novos. " +
+    "Depois a extensão abre cada LTDA (natureza, abertura, telefone) e procura no Google Maps: pega o telefone de lá e compara o endereço do Maps com o da Receita. " +
+    "Os leads vão sendo atualizados no Cadastro enquanto a busca anda."));
+  const form = el("div","leadsform");
+  const campo = (rot, ctl, dica, largo) => { const c = el("div","leadscampo" + (largo ? " leadswide" : "")); c.append(el("label",null,rot), ctl); if(dica) c.append(el("span","leadshint",dica)); form.append(c); return ctl; };
+  const inUrl = el("input"); inUrl.type = "text"; inUrl.spellcheck = false; inUrl.placeholder = "https://maiscnpj.com.br/empresas/ms/ponta-pora/atividade-odontologica";
+  inUrl.value = LISTA.url || "";
+  campo("Endereço da lista no MaisCNPJ", inUrl, "Abra a lista no MaisCNPJ, copie o endereço da barra do navegador e cole aqui.", true);
+  const inRamo = el("input"); inRamo.type = "text"; inRamo.setAttribute("list", "listaRamos"); inRamo.placeholder = "ex.: Odontologia";
+  inRamo.value = LISTA.ramo || "";
+  const dl = el("datalist"); dl.id = "listaRamos";
+  campo("Ramo no Cadastro", inRamo, "Os leads entram neste ramo. Use o nome de um ramo que já existe para juntar.");
+  inRamo.parentElement.append(dl);
+  NovosDB.todos().then(l => [...new Set(l.map(x => x.termo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR")).forEach(n => { const o = el("option"); o.value = n; dl.append(o); })).catch(() => {});
+  const selP = el("select"); [["1000","1 segundo"],["1500","1,5 segundo"],["2500","2,5 segundos"],["4000","4 segundos"]].forEach(([v, r]) => { const o = el("option",null,r); o.value = v; selP.append(o); });
+  selP.value = "1500"; campo("Pausa entre ações", selP, "Mais pausa, menos chance de o MaisCNPJ ou o Google pedirem verificação.");
+  const selJan = el("select"); [["fixada","Aba fixada nesta janela"],["separada","Janela separada"]].forEach(([v, r]) => { const o = el("option",null,r); o.value = v; selJan.append(o); });
+  selJan.value = "fixada"; campo("Onde a busca roda", selJan, "");
+  box.append(form);
+  const opc = el("div","qualopcoes");
+  const mk = (txt, on) => { const l = el("label","qualcheck"), c = el("input"); c.type = "checkbox"; c.checked = on; l.append(c, document.createTextNode(" " + txt)); opc.append(l); return c; };
+  const ckMei = mk("Procurar no Maps também as MEI (mais lento; MEI não entra na meta)", false);
+  const ckFiltro = mk("Conferir o ramo pelo nome e pela categoria do Maps (quem for de outro ramo vai para “Outro ramo”)", true);
+  const ckNov = mk("Pular as empresas que já estão no Cadastro (mesmo CNPJ)", true);
+  box.append(opc);
+  const acoes = el("div","leadsacoes");
+  const btIni = el("button","btn primary","Ler a lista e importar"), btParar = el("button","btn","Parar"), btXls = el("button","btn","Baixar a lista em Excel");
+  acoes.append(btIni, btParar, btXls); box.append(acoes);
+  const prog = el("div","leadsprog"); const cab = el("div","leadscab"), grande = el("strong",null,"0"), sub = el("span",null,"empresas");
+  cab.append(grande, sub); const bar = el("div","leadsbar"), fill = el("i"); bar.append(fill);
+  const atual = el("p","leadsatual"), chips = el("div","leadschips"), aviso = el("div","leadsmotivo"); aviso.hidden = true;
+  prog.append(cab, bar, chips, atual, aviso); box.append(prog);
+  host.append(box);
+  LISTA.ui = { box, grande, sub, fill, atual, chips, aviso, btIni, btParar, btXls };
+  btIni.onclick = async () => {
+    const url = inUrl.value.trim().split("#")[0], partes = listaPartes(url), ramo = inRamo.value.trim();
+    if(!partes) return toast("Cole um endereço de lista do MaisCNPJ: https://maiscnpj.com.br/empresas/UF/cidade/atividade");
+    if(!ramo){ inRamo.focus(); return toast("Digite o ramo no Cadastro (ex.: Odontologia)."); }
+    /* a extensão roda uma busca por vez */
+    const { resp: est, erro } = await m04Enviar({ type:"estado" }, 5000);
+    if(erro) return toast("A extensão Elosgate · Modelo 04 não respondeu. Confira se está na versão 2.1 e recarregue esta página.");
+    if(est && est.existe && est.rodando && !est.concluido) return toast("Já tem uma busca rodando (aba Pelo Google Maps ou Pelo CNAE). Pare ou espere terminar.");
+    if(est && est.existe && !confirm("A extensão ainda guarda a busca anterior. Ela será trocada por esta (o que já entrou no Cadastro fica). Continuar?")) return;
+    if(est && est.existe) await m04Importar(est);
+    const base = url.split("?")[0];
+    if(LISTA.url !== base){ Object.assign(LISTA, { itens:[], pg:0, total:0, fim:false }); }
+    Object.assign(LISTA, { url: base, ramo, partes, pausa: +selP.value, janela: selJan.value, mapsMei: ckMei.checked, semFiltro: !ckFiltro.checked, soNovas: ckNov.checked, erro:"" });
+    listaRodar();
+  };
+  btParar.onclick = () => { LISTA.parar = true; listaPinta("Parando…"); };
+  btXls.onclick = listaExcel;
+  listaPinta(LISTA.rodando ? "Lendo…" : "");
+}
+function listaPinta(txt){
+  const u = LISTA.ui; if(!u || !document.body.contains(u.box)) return;
+  const n = LISTA.itens.length;
+  u.grande.textContent = n.toLocaleString("pt-BR");
+  u.sub.textContent = "empresas na lista" + (LISTA.total ? " · página " + Math.min(LISTA.pg, LISTA.total) + " de " + LISTA.total : LISTA.pg ? " · " + LISTA.pg + " páginas lidas" : "");
+  u.fill.style.width = (LISTA.total ? Math.min(1, LISTA.pg / LISTA.total) : LISTA.fim ? 1 : 0) * 100 + "%";
+  const g = k => LISTA.itens.filter(x => x.grupo === k).length;
+  u.chips.innerHTML = "";
+  [[g("ltda"),"LTDA","ok"],[g("mei") + g("pessoa"),"MEI / pessoa",""],[g("outra"),"outras naturezas",""],[LISTA.importadas,"novas no Cadastro","novo"],[LISTA.jaTinha,"já estavam no Cadastro",""]]
+    .forEach(([v, r, c]) => { const x = leadsChip(v, r, c); if(x) u.chips.append(x); });
+  u.atual.textContent = txt || (LISTA.rodando ? "Lendo…" : "");
+  u.aviso.hidden = !LISTA.erro; u.aviso.textContent = LISTA.erro;
+  u.btIni.disabled = LISTA.rodando; u.btParar.hidden = !LISTA.rodando; u.btXls.disabled = !n;
+  u.btIni.textContent = n && !LISTA.fim && !LISTA.rodando ? "Continuar a leitura" : "Ler a lista e importar";
+}
+async function listaRodar(){
+  if(LISTA.rodando) return;
+  LISTA.rodando = true; LISTA.parar = false;
+  const vistos = new Set(LISTA.itens.map(x => x.cnpj));
+  try {
+    /* 1) todas as páginas da lista */
+    while(!LISTA.fim && !LISTA.parar){
+      const pg = LISTA.pg + 1;
+      listaPinta("Lendo a página " + pg + (LISTA.total ? " de " + LISTA.total : "") + "…");
+      const { resp, erro } = await m04Enviar({ type:"mcLista", url: LISTA.url, page: pg }, 90000);
+      if(erro || !resp){ LISTA.erro = "A extensão não respondeu (" + (erro || "sem resposta") + "). Confira se a extensão Elosgate · Modelo 04 está na versão 2.1 e recarregue esta página."; break; }
+      if(resp.bloqueio){ LISTA.erro = resp.bloqueio; break; }
+      if(resp.naoExiste){ if(pg === 1) LISTA.erro = "Essa lista não existe no MaisCNPJ. Confira o endereço."; LISTA.fim = pg > 1; break; }
+      (resp.itens || []).forEach(it => { if(!vistos.has(it.cnpj)){ vistos.add(it.cnpj); LISTA.itens.push(Object.assign({ pagina: pg }, it)); } });
+      LISTA.pg = pg; if(resp.totalPaginas) LISTA.total = resp.totalPaginas;
+      if(!(resp.itens || []).length || (!(resp.proxima > pg) && !(LISTA.total > pg))) LISTA.fim = true;
+      listaPinta();
+      if(!LISTA.fim) await new Promise(r => setTimeout(r, LISTA.pausa + Math.random() * LISTA.pausa * .5));
+    }
+    if(LISTA.fim && !LISTA.parar && !LISTA.erro && LISTA.itens.length){
+      listaPinta("Importando as empresas no Cadastro e começando a conferência…");
+      await listaImportarEBuscar();
+    }
+  } finally { LISTA.rodando = false; listaPinta(); }
+}
+/* 2) importa tudo no Cadastro e manda a extensão conferir (MaisCNPJ + Google Maps) */
+async function listaImportarEBuscar(){
+  const P = LISTA.partes, ramo = LISTA.ramo;
+  /* nome certo da cidade (com acento) pela lista de cidades do estado */
+  let cidade = "";
+  const { resp: rc } = await m04Enviar({ type:"cidades", uf: P.uf }, 20000);
+  let nomes = (rc && rc.cidades) || [];
+  if(!nomes.length){ try { nomes = (await (await fetch("https://servicodados.ibge.gov.br/api/v1/localidades/estados/" + P.uf + "/municipios")).json()).map(m => m.nome); } catch(e){} }
+  cidade = nomes.find(n => mcSlugP(n) === P.cidSlug) || P.cidSlug.split("-").map(w => w.length > 2 ? w[0].toUpperCase() + w.slice(1) : w).join(" ");
+  /* o que já está no Cadastro: a extensão pula (mesmo CNPJ) */
+  const todos = await NovosDB.todos();
+  const porCnpj = new Map(); todos.forEach(x => { const d = cnpjDig(x.cnpj); if(d.length === 14) porCnpj.set(d, x); });
+  const conhecidos = LISTA.soNovas ? { cnpjs: [...porCnpj.keys()].filter(d => !porCnpj.get(d).preliminar), lugares: [], nomes: [] } : null;
+  const itensExt = LISTA.itens.filter(it => !(LISTA.soNovas && porCnpj.has(it.cnpj) && !porCnpj.get(it.cnpj).preliminar))
+    .map(({ slug, nome, end, cnpj, grupo }) => ({ slug, nome, end, cnpj, grupo }));
+  m04BuscaCfgGravar(ramo, { ramo:"", soNovas: LISTA.soNovas, semFiltro: LISTA.semFiltro });
+  M04.campos = Object.assign({}, M04.campos || {}, { termo: ramo, uf: P.uf, escopo:"cidades", cidades:[cidade], cnaeTxt:"https://maiscnpj.com.br/empresas/" + P.uf.toLowerCase() + "/" + P.cidSlug + "/" + P.atividade });
+  const { resp, erro } = await m04Enviar({ type:"iniciar", termo: ramo, uf: P.uf, opcoes:{ modo:"cnae", cnaes:["slug:" + P.atividade], escopo:"cidades", cidades:[cidade],
+    intervalo: LISTA.pausa, janela: LISTA.janela, mapsMei: LISTA.mapsMei, listaItens: itensExt, conhecidos } }, 60000);
+  if(erro || !resp || !resp.existe){ LISTA.erro = "Não consegui começar a conferência na extensão: " + (erro || (resp && resp.aviso) || "sem resposta") + "."; return; }
+  if(!resp.listaPronta){ LISTA.erro = "A extensão está numa versão antiga: atualize para a 2.1 para conferir a lista no Maps. As empresas já foram importadas no Cadastro."; }
+  /* importa já todas as empresas da lista (as que ainda não estão no Cadastro) */
+  const buscaId = String(resp.criadoEm || ""), rotulo = m04RotuloBusca(resp), agora = new Date().toISOString();
+  const tipo = { ltda:"verificar", mei:"mei", pessoa:"mei", outra:"fora" };
+  const novos = LISTA.itens.filter(it => !porCnpj.has(it.cnpj)).map(it => ({
+    chave: it.cnpj, cnpj: novosFmtCnpj(it.cnpj), status: tipo[it.grupo] || "verificar",
+    motivo: it.grupo === "ltda" ? "aguardando conferência na Receita e no Maps" : it.grupo === "outra" ? "não é LTDA (pela razão social)" : "MEI ou empresário individual (pela razão social)",
+    termo: ramo, uf: P.uf, cidade, nomeMaps: it.nome, nomeFantasia: it.nome, razaoSocial: it.razao || "",
+    endereco: "", enderecoReceita: (it.end ? it.end + ", " : "") + cidade + "/" + P.uf, bairro: (String(it.end || "").split(",").pop() || "").trim(),
+    telMaps: "", telMaisCnpj: "", telReceita: [], linkMaisCnpj: "https://maiscnpj.com.br/cnpj/" + it.slug, origem:"cnae",
+    preliminar: it.grupo === "ltda" || LISTA.mapsMei, buscaId, buscaRotulo: rotulo, capturadoEm: agora, importadoEm: agora, encontradoEm: agora
+  }));
+  M04.importando = true;
+  try { if(novos.length) await NovosDB.gravar(novos); } finally { M04.importando = false; }
+  LISTA.importadas = novos.length; LISTA.jaTinha = LISTA.itens.length - novos.length;
+  toast(novos.length + " empresas importadas no Cadastro" + (LISTA.jaTinha ? " (" + LISTA.jaTinha + " já estavam)" : "") + ". A extensão agora confere cada LTDA no MaisCNPJ e no Maps.");
+  metaAtualizar();
+  if(resp.listaPronta){ setTimeout(() => { if(LISTA.ui && document.body.contains(LISTA.ui.box)){ pickEtapa = "modelo05"; desenhaPicker(); } }, 1800); }
+}
+function listaExcel(){
+  if(!LISTA.itens.length) return toast("Nada lido ainda.");
+  const tipo = { ltda:"LTDA", mei:"MEI", pessoa:"MEI / nome de pessoa", outra:"Outra natureza" };
+  const linhas = [["CNPJ","Nome","Razão social (do link)","Tipo","Endereço (lista)","Link MaisCNPJ","Página"]].concat(LISTA.itens.map(x =>
+    [novosFmtCnpj(x.cnpj), x.nome, x.razao || "", tipo[x.grupo] || x.grupo || "", x.end || "", "https://maiscnpj.com.br/cnpj/" + x.slug, x.pagina].map(v => v == null ? "" : String(v))));
+  baixarXlsx("maiscnpj_" + LISTA.url.replace(/^.*\/empresas\//, "").replace(/\//g, "_"), linhas, [20,34,34,16,44,46,7]);
+}
+
 function trilha(host, passos, voltar){
+  if(SEM_TRILHA) return;
   const b = el("div","pickvolta");
   if(voltar){
     const v = el("button",null,"\u2039 Voltar");
@@ -15847,21 +16090,15 @@ function pickFrentes(host){
     "Confere no Google Maps a lista já filtrada: corrige o endereço quando estiver desatualizado e acrescenta telefone, site, bairro, CEP, nota e horário.",
     ["Corrige endereço","Acha telefone e site"], "qualificar");
 
-  cartaoLead("04","Maps + MaisCNPJ por cidade",
-    "Você digita o tipo de cliente e o estado. Cidade por cidade, acha no Google Maps, descobre o CNPJ no MaisCNPJ pelo endereço, junta os dois telefones e confere LTDA e 6 meses de abertura.",
-    ["Capital primeiro","Leads prontos a cada cidade"], "modelo04");
+  /* uma tela só para as buscas por cidade (Maps, CNAE e exportar lista do MaisCNPJ) */
+  cartaoLead("04","Buscar por cidade",
+    "Escolhe as cidades e busca pelo Google Maps (tipo de cliente) ou pelo CNAE no MaisCNPJ. Acha o CNPJ, confere LTDA e 6 meses e entrega os leads a cada cidade. Também importa qualquer lista do MaisCNPJ e confere no Maps.",
+    ["Maps ou CNAE","Importar lista do MaisCNPJ"], podeInicio("modelo04") ? "modelo04" : "modelo05");
 
-  cartaoLead("05","CNAE primeiro, cidade por cidade",
-    "Você digita o CNAE e escolhe as cidades. Lê a lista do CNAE no MaisCNPJ, separa LTDA de MEI, abre só as LTDA (natureza, abertura, telefone, filiais) e confirma cada uma no Google Maps. Acha até quem o Maps não mostra.",
-    ["LTDA e MEI separadas","Cidades vizinhas"], "modelo05");
-
-  cartaoLead("","Base de Leads",
-    "Guarda tudo que passou pelas três fases, por ramo, estado e cidade, e monta o cadastro de redes com o sócio administrador e os telefones.",
-    ["Consulta por ramo e cidade","Cadastro de redes"], "base", " arquivo");
-
-  cartaoLead("","Cadastro Leads Novos",
-    "Os leads do Modelo 04, cidade por cidade, com o telefone do Maps e o do MaisCNPJ. Separa aprovados, aguardando 6 meses e fora do requisito, e envia para a Base sem planilha.",
-    ["Entra a cada cidade concluída","Envia direto para a Base"], "novos", " arquivo");
+  /* uma tela só para os leads: Novos (das buscas) e Base (enviados), em abas */
+  cartaoLead("","Leads",
+    "Os leads das buscas (aprovados, MEI, frios, outro ramo…) e a Base de Leads com o que já foi enviado, por ramo, estado e cidade. Meta de leads no topo.",
+    ["Novos e Base em abas","Meta do dia, semana e mês"], podeInicio("novos") ? "novos" : "base", " arquivo");
 
   if(gleads.children.length) host.append(gleads);
 
