@@ -10186,10 +10186,10 @@ async function novosDesenhar(){
   if(NOVOS.redeSel && !redes.includes(NOVOS.redeSel)) NOVOS.redeSel = "";
   /* na REDE, cada rede é uma divisão própria */
   const campanhas = [...new Set(tudo.filter(x => x.campanha).map(x => x.campanha))].sort((a, b) => a.localeCompare(b, "pt-BR"));
-  if(NOVOS.campSel && NOVOS.campSel !== "__hoje" && !campanhas.includes(NOVOS.campSel)) NOVOS.campSel = "";
+  if(NOVOS.campSel && !/^__dia:/.test(NOVOS.campSel) && !campanhas.includes(NOVOS.campSel)) NOVOS.campSel = "";
   const todos = (f.ramo ? daDivisao.filter(x => novosRamoKey(x) === f.ramo) : daDivisao)
     .filter(x => dv !== "rede" || !NOVOS.redeSel || x.rede === NOVOS.redeSel)
-    .filter(x => dv !== "campanhas" || !NOVOS.campSel || (NOVOS.campSel === "__hoje" ? novosExportadoHoje(x) : x.campanha === NOVOS.campSel));
+    .filter(x => dv !== "campanhas" || !NOVOS.campSel || (/^__dia:/.test(NOVOS.campSel) ? novosDiaExport(x) === NOVOS.campSel.slice(6) : x.campanha === NOVOS.campSel));
   NOVOS.lista = todos;
   u.btRede.hidden = dv === "clientes" || dv === "campanhas";
   u.btManter.hidden = !(f.uf && f.cidade);
@@ -10268,7 +10268,7 @@ async function novosDesenhar(){
   u.sSt.value = f.status;
   u.mostrando.innerHTML = "";
   const partes = [dv === "rede" ? "REDE" + (NOVOS.redeSel ? " › " + NOVOS.redeSel : "") : dv === "clientes" ? "Já são clientes" :
-    dv === "frios" ? "Frios (só fixo)" : dv === "campanhas" ? "Campanha" + (NOVOS.campSel ? " › " + NOVOS.campSel : "s") : "", f.ramo ? ((NOVOS.nomesRamo || {})[f.ramo] || "") : "Todos os ramos", f.uf || "todos os estados", f.cidade,
+    dv === "frios" ? "Frios (só fixo)" : dv === "campanhas" ? (/^__dia:/.test(NOVOS.campSel || "") ? "Exportados em " + NOVOS.campSel.slice(6).split("-").reverse().join("/") : "Campanha" + (NOVOS.campSel ? " › " + NOVOS.campSel : "s")) : "", f.ramo ? ((NOVOS.nomesRamo || {})[f.ramo] || "") : "Todos os ramos", f.uf || "todos os estados", f.cidade,
     f.buscaId ? "só as novas da busca " + ((u.sBus.selectedOptions[0] || {}).textContent || "").replace(/^Novas de /, "") : "",
     f.diaMeta ? "só os leads da meta de " + f.diaMeta.split("-").reverse().slice(0, 2).join("/") : ""].filter(Boolean);
   u.mostrando.append(el("b",null, lista.length.toLocaleString("pt-BR") + (lista.length === 1 ? " lead" : " leads")),
@@ -10760,16 +10760,16 @@ function novosPerguntarCampanha(resumo, existentes){
 }
 
 /* barra da divisão Campanhas: uma pílula por campanha, baixar de novo e voltar para remarketing */
-/* exportado para Excel hoje (entrou numa campanha hoje) */
-function novosExportadoHoje(x){
-  if(!x.campanha || !x.campanhaEm) return false;
-  const d = new Date(x.campanhaEm), h = new Date();
-  return d.getFullYear() === h.getFullYear() && d.getMonth() === h.getMonth() && d.getDate() === h.getDate();
-}
+/* dia (local) em que o lead foi exportado para Excel (entrou na campanha) */
+function novosDiaExport(x){ return x.campanha && x.campanhaEm ? metaIso(new Date(x.campanhaEm)) : ""; }
 function novosNavCampanhas(host, tudo, campanhas, f, noLugar, passaFiltro){
   if(!campanhas.length) return;
   const daRamo = tudo.filter(x => x.campanha && (!f.ramo || novosRamoKey(x) === f.ramo));
-  const deHoje = daRamo.filter(novosExportadoHoje);
+  /* dias de exportação, do mais recente para o mais antigo */
+  const hojeIso = metaIso(new Date()), ontemIso = metaIso(metaDia(new Date(), -1));
+  const diasExp = [...new Set(daRamo.map(novosDiaExport).filter(Boolean))].sort().reverse();
+  const rotDia = d => (d === hojeIso ? "hoje" : d === ontemIso ? "ontem" : "") + (d === hojeIso || d === ontemIso ? " (" : "") + d.split("-").reverse().slice(0, 2).join("/") + (d === hojeIso || d === ontemIso ? ")" : "");
+  const diaSel = /^__dia:/.test(NOVOS.campSel || "") ? NOVOS.campSel.slice(6) : "";
   const nav = el("div","nredesnav");
   const pill = (rot, val, unid) => {
     const vis = unid.filter(x => noLugar(x) && passaFiltro(x)).length;
@@ -10778,8 +10778,14 @@ function novosNavCampanhas(host, tudo, campanhas, f, noLugar, passaFiltro){
     b.onclick = () => { NOVOS.campSel = val; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); };
     return b;
   };
+  /* exportados num dia: escolhe o dia (hoje, ontem, …) */
+  const selDia = el("select","ndiv" + (diaSel ? " on" : "")); selDia.style.cssText = "padding:6px 10px";
+  selDia.innerHTML = '<option value="">Exportados no dia…</option>' + diasExp.map(d => '<option value="' + d + '">Exportados ' + rotDia(d) + ' · ' +
+    daRamo.filter(x => novosDiaExport(x) === d).length + '</option>').join("");
+  selDia.value = diaSel;
+  selDia.onchange = () => { NOVOS.campSel = selDia.value ? "__dia:" + selDia.value : ""; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); };
   nav.append(pill("Todas as campanhas", "", daRamo));
-  if(deHoje.length) nav.append(pill("Exportados hoje", "__hoje", deHoje));
+  if(diasExp.length) nav.append(selDia);
   campanhas.forEach(n => nav.append(pill(n, n, daRamo.filter(x => x.campanha === n))));
   host.append(nav);
   const bar = el("div","ncampinfo");
@@ -10793,12 +10799,12 @@ function novosNavCampanhas(host, tudo, campanhas, f, noLugar, passaFiltro){
     await NovosDB.gravar(lote.map(x => { const y = Object.assign({}, x); delete y.campanha; delete y.campanhaEm; return y; }));
     NOVOS.sel.clear(); toast(lote.length + " leads voltaram para a lista de leads. Baixe o Excel de novo para ficar sem eles."); novosDesenhar();
   };
-  if(NOVOS.campSel === "__hoje"){
-    const unid = deHoje, nomes = [...new Set(unid.map(x => x.campanha))];
-    bar.append(el("span","leadshint", unid.length + " leads exportados hoje" + (nomes.length ? " · campanha" + (nomes.length > 1 ? "s " : " ") + nomes.join(", ") : "") +
+  if(diaSel){
+    const unid = daRamo.filter(x => novosDiaExport(x) === diaSel), nomes = [...new Set(unid.map(x => x.campanha))];
+    bar.append(el("span","leadshint", unid.length + " leads exportados " + rotDia(diaSel) + (nomes.length ? " · campanha" + (nomes.length > 1 ? "s " : " ") + nomes.join(", ") : "") +
       ". Marque os que quer tirar e baixe o Excel de novo."));
     const bx = el("button","btn sm","Baixar Excel de novo (" + unid.length + ")");
-    bx.onclick = () => novosBaixarArquivo("xlsx", novosNomeArquivo([nomes.length === 1 ? "campanha_" + nomes[0] : "exportados_hoje", stamp()]), novosLinhasExport(unid));
+    bx.onclick = () => novosBaixarArquivo("xlsx", novosNomeArquivo([nomes.length === 1 ? "campanha_" + nomes[0] : "exportados_" + diaSel, stamp()]), novosLinhasExport(unid));
     bar.append(bx, btVolta);
   } else if(!NOVOS.campSel){
     bar.append(el("span","leadshint","Escolha uma campanha para baixar a lista de novo ou voltar a campanha inteira para remarketing."));
