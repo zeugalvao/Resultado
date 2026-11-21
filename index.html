@@ -1404,6 +1404,12 @@ a.nmaps::after{content:" ↗";font-size:11px;color:var(--teal);font-weight:400}
 @media(max-width:900px){ .lotesgrade,.lotesduas{grid-template-columns:1fr} }
 .ndiv.ult{border-color:var(--amber);background:var(--amber-soft)} .ndiv.ult.on{background:var(--amber);border-color:var(--amber);color:#fff}
 .qlista{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0}
+.cnaecats{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:-4px 0 12px}
+.cnaecatsrot{font-size:12px;font-weight:600;color:var(--muted);margin-right:2px}
+.cnaecat{border:1px solid var(--line);background:#fff;border-radius:999px;padding:3px 10px;font:inherit;font-size:12px;cursor:pointer;color:inherit}
+.cnaecat b{font-variant-numeric:tabular-nums}
+.cnaecat.on{background:var(--teal);border-color:var(--teal);color:#fff}
+.cnaecat.ok{border-color:var(--teal)} .cnaecat.ruim{border-color:var(--brick);color:var(--brick)} .cnaecat.nao{border-style:dashed}
 .novotag{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:999px;background:var(--amber-soft);color:#8A5A12;vertical-align:middle}
 .abastela{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 18px;padding-bottom:12px;border-bottom:1px solid var(--line)}
 /* menu "Mais ações" do Cadastro */
@@ -9170,7 +9176,9 @@ const NovosDB = {
     });
   },
   todos(){ return this.tx("leads", "readonly", s => s.getAll()); },
-  gravar(lista){ return this.tx("leads", "readwrite", s => { lista.forEach(x => s.put(x)); }); },
+  /* ramos juntados: todo lead gravado com o nome antigo vai para o ramo novo */
+  gravar(lista){ const al = ramoAliases(), tem = Object.keys(al).length;
+    return this.tx("leads", "readwrite", s => { lista.forEach(x => { if(tem && x && x.termo){ const a = al[baseChave(x.termo)]; if(a && a !== x.termo) x.termo = a; } s.put(x); }); }); },
   excluir(chaves){ return this.tx("leads", "readwrite", s => { chaves.forEach(k => s.delete(k)); }); },
   meta(k){ return this.tx("meta", "readonly", s => s.get(k)); },
   metaGravar(k, v){ return this.tx("meta", "readwrite", s => { s.put(v, k); }); }
@@ -9994,6 +10002,7 @@ function pickNovos(host){
   host.append(barra);
 
   const chips = el("div","leadschips"); chips.style.margin = "0 0 12px"; host.append(chips);
+  const cnaeCats = el("div","cnaecats"); host.append(cnaeCats);
 
   const acoes = el("div","leadsacoes");
   const btEnviar = el("button","btn primary","Enviar marcados para a Base de Leads");
@@ -10093,7 +10102,7 @@ function pickNovos(host){
   host.append(acoes);
 
   const corpo = el("div"); host.append(corpo);
-  NOVOS.ui = { btExcCid, inB, sSt, sUf, sCid, sBus, ckN, chips, corpo, info, btEnviar, btExcluir, ramos, mostrando, divisoes, btCsv, btXls, btRede, btManter, inQtd, lbQtd };
+  NOVOS.ui = { cnaeCats, btExcCid, inB, sSt, sUf, sCid, sBus, ckN, chips, corpo, info, btEnviar, btExcluir, ramos, mostrando, divisoes, btCsv, btXls, btRede, btManter, inQtd, lbQtd };
 
   let t = null;
   inB.oninput = () => { clearTimeout(t); t = setTimeout(() => { NOVOS.filtro.busca = inB.value; NOVOS.mostrar = 200; novosDesenhar(); }, 250); };
@@ -10549,8 +10558,30 @@ async function novosDesenhar(){
   /* leads do dia da meta (botão "Ver os leads de hoje" no painel da meta) */
   let alocMeta = null;
   if(f.diaMeta){ try { alocMeta = (await metaCalcular()).aloc; } catch(e){ alocMeta = new Map(); } }
-  const noRecorte = todos.filter(x => (!f.uf || x.uf === f.uf) && (!f.cidade || x.cidade === f.cidade) && (!f.buscaId || x.buscaId === f.buscaId) &&
+  const noRecorte0 = todos.filter(x => (!f.uf || x.uf === f.uf) && (!f.cidade || x.cidade === f.cidade) && (!f.buscaId || x.buscaId === f.buscaId) &&
     (!alocMeta || alocMeta.get(x.chave) === f.diaMeta));
+  /* categoria pelo CNAE secundário */
+  const naCat = x => !f.cnaeCat ? true : f.cnaeCat === "__nao" ? !leadSecConferido(x) : f.cnaeCat === "__sem" ? leadSecConferido(x) && !leadSecs(x).length : leadSecs(x).includes(f.cnaeCat);
+  const noRecorte = noRecorte0.filter(naCat);
+  { const box = u.cnaeCats; box.innerHTML = "";
+    const cont = {}, ex = {}; let sem = 0, nao = 0;
+    noRecorte0.forEach(x => { if(!leadSecConferido(x)){ nao++; return; } const sc = leadSecs(x); if(!sc.length) sem++; sc.forEach(c => { cont[c] = (cont[c] || 0) + 1; ex[c] = ex[c] || x; }); });
+    if(noRecorte0.length){
+      box.append(el("span","cnaecatsrot","Categoria pelo CNAE secundário:"));
+      const chip = (rot, n, k, cls) => { const b = el("button","cnaecat" + (f.cnaeCat === k ? " on" : "") + (cls ? " " + cls : ""));
+        b.append(document.createTextNode(rot + " "), el("b",null, n.toLocaleString("pt-BR")));
+        b.onclick = () => { f.cnaeCat = f.cnaeCat === k ? "" : k; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); }; box.append(b); };
+      chip("Todas", noRecorte0.length, "");
+      chip("Sem CNAE secundário", sem, "__sem", "ok");
+      Object.entries(cont).sort((a, b) => b[1] - a[1]).slice(0, 14).forEach(([c, n]) => { const nm = cnaeNome(c, ex[c]); chip(fmtCnae(c) + (nm ? " " + nm : ""), n, c, f.cnaeCat !== c && ramoFiltroDe(ex[c].termo || "").cnaesNeg.has(c) ? "ruim" : ""); });
+      if(nao){ chip("CNAE não conferido", nao, "__nao", "nao");
+        const bc = el("button","btn sm","Conferir na Receita os " + nao.toLocaleString("pt-BR") + " que faltam");
+        bc.title = "Consulta os CNAEs secundários na Receita (BrasilAPI, gratuito), ~1 por segundo. Dá para parar pela barra no canto.";
+        bc.onclick = () => cnaeConferirLista(noRecorte0.filter(x => !leadSecConferido(x) && cnpjDig(x.cnpj).length === 14));
+        box.append(bc); }
+      if(f.cnaeCat && f.cnaeCat !== "__nao" && f.cnaeCat !== "__sem") box.append(el("span","leadshint"," · um lead pode ter mais de um CNAE secundário e aparece em cada um"));
+    }
+  }
   u.chips.innerHTML = "";
   Object.entries(M04_STATUS).forEach(([k, [rot]]) => {
     const n = noRecorte.filter(x => x.status === k).length;
@@ -10768,7 +10799,8 @@ async function novosDesenhar(){
     const det = [r.natureza, r.abertura ? "aberta em " + fmtDataISO(r.abertura) : ""].filter(Boolean).join(" · ");
     if(det) tdR.append(el("div","sub", det));
     if(r.motivo && r.status !== "aprovado") tdR.append(el("div","sub", r.motivo));
-    if((r.cnaesSec || []).length) tdR.append(el("div","sub", "CNAE " + fmtCnae(r.cnae || "") + (r.cnaesSec.length ? " · secundários: " + r.cnaesSec.slice(0, 4).map(fmtCnae).join(", ") + (r.cnaesSec.length > 4 ? "…" : "") : "")));
+    { const sc = leadSecs(r); if(sc.length || leadSecConferido(r)) tdR.append(el("div","sub", (r.cnae ? "CNAE " + fmtCnae(String(r.cnae).replace(/\D/g, "")) + " · " : "") +
+        (sc.length ? "secundários: " + sc.slice(0, 4).map(fmtCnae).join(", ") + (sc.length > 4 ? "…" : "") : "sem CNAE secundário"))); }
     if(r.ramoMotivo) tdR.append(el("div","sub", "ramo: " + r.ramoMotivo + (r.statusExt ? " · na extensão: " + (M04_STATUS[r.statusExt] || [r.statusExt])[0].toLowerCase() : "")));
     if(r.ramoManual) tdR.append(el("div","sub", "marcado por você como do ramo"));
     if(r.preliminar) tdR.append(el("div","sub", "da lista do MaisCNPJ · aguardando conferência na Receita e no Maps"));
@@ -10796,6 +10828,78 @@ async function novosDesenhar(){
 }
 
 /* visão por ramo: Brasil → estados → cidades */
+/* ---------- ramos juntados (ex.: Clínica de depilação + Estética + Depilação a laser) ---------- */
+function ramoAliases(){ try { return JSON.parse(localStorage.getItem("m04_ramoAlias") || "{}") || {}; } catch(e){ return {}; } }
+function ramoAlias(termo){ const a = ramoAliases()[baseChave(termo)]; return a || termo; }
+async function novosJuntarRamos(grupos){
+  const dlg = el("dialog","nrededlg"); dlg.style.width = "min(560px,94vw)";
+  dlg.append(el("h3",null,"Juntar ramos num só"));
+  dlg.append(el("p","leadshint","Marque os ramos que são o mesmo negócio. Todos os leads deles passam para um ramo só, e as próximas buscas com esses nomes já entram nele."));
+  const lista = el("div"); lista.style.cssText = "display:flex;flex-direction:column;gap:6px;margin:10px 0";
+  const cks = grupos.map(g => { const l = el("label","qualcheck"); const c = el("input"); c.type = "checkbox";
+    c.checked = /DEPIL|LASER|ESTET/.test(g.k); l.append(c, document.createTextNode(" " + g.nome + " (" + g.lista.length.toLocaleString("pt-BR") + ")")); lista.append(l); return { g, c }; });
+  dlg.append(lista);
+  const inp = el("input"); inp.type = "text"; inp.placeholder = "Nome do ramo junto";
+  inp.value = "Clínica de depilação a laser";
+  dlg.append(el("label","leadshint","Nome do ramo junto"), inp);
+  const bt = el("div","leadsbotoes"), ok = el("button","btn primary","Juntar"), cancela = el("button","btn","Cancelar");
+  ok.type = cancela.type = "button"; bt.append(ok, cancela); dlg.append(bt);
+  document.body.append(dlg); dlg.showModal();
+  cancela.onclick = () => { dlg.close(); dlg.remove(); };
+  ok.onclick = async () => {
+    const sel = cks.filter(x => x.c.checked).map(x => x.g), alvo = inp.value.trim().replace(/\s+/g, " ");
+    if(sel.length < 1 || !alvo) return toast("Marque os ramos e digite o nome do ramo junto.");
+    const n = sel.reduce((a, g) => a + g.lista.length, 0);
+    if(!confirm("Juntar " + sel.map(g => g.nome).join(", ") + " em “" + alvo + "”? " + n.toLocaleString("pt-BR") + " leads mudam de ramo.")) return;
+    /* nomes antigos viram apelidos do ramo novo (vale para as próximas buscas e qualificações) */
+    const al = ramoAliases();
+    sel.forEach(g => Object.keys(g.nomes).forEach(nm => { al[baseChave(nm)] = alvo; }));
+    delete al[baseChave(alvo)];
+    try { localStorage.setItem("m04_ramoAlias", JSON.stringify(al)); } catch(e){}
+    /* filtro do ramo (palavras, CNAEs): o ramo novo herda o do maior ramo, se ainda não tiver */
+    if(!Object.keys(ramoCfg(alvo)).length){ const maior = sel.slice().sort((a, b) => b.lista.length - a.lista.length)[0]; const nm = Object.keys(maior.nomes)[0]; ramoCfgGravar(alvo, ramoCfg(nm)); }
+    for(const g of sel) await NovosDB.gravar(g.lista.map(x => Object.assign({}, x, { termo: alvo })));
+    /* revisões de qualificação também passam a usar o ramo novo */
+    const t = await qrevLotes(); let mud = false;
+    Object.values(t).forEach(L => { if(al[baseChave(L.ramo || "")]){ L.ramo = alvo; mud = true; } Object.values(L.regs || {}).forEach(r => { if(r.termo && al[baseChave(r.termo)]){ r.termo = alvo; mud = true; } }); });
+    if(mud) await qrevLotesGravar(t);
+    dlg.close(); dlg.remove();
+    NOVOS.filtro.ramo = baseChave(alvo); NOVOS.sel.clear(); toast(n.toLocaleString("pt-BR") + " leads juntados no ramo “" + alvo + "”."); novosDesenhar();
+  };
+}
+
+/* ---------- categoria pelo CNAE secundário ---------- */
+function leadSecs(x){
+  const a = (x.cnaesSec && x.cnaesSec.length) ? x.cnaesSec : (x.receita && Array.isArray(x.receita.cnaesSec)) ? x.receita.cnaesSec : (x.cnaesSec || []);
+  return [...new Set(a.map(c => String(c).replace(/\D/g, "")).filter(c => c.length === 7))];
+}
+const leadSecConferido = x => !!(x.cnaeConsultaEm || (x.cnaesSec && x.cnaesSec.length) || (x.receita && Array.isArray(x.receita.cnaesSec)));
+function cnaeNome(c, x){
+  if(CNAE_NOMES[c]) return CNAE_NOMES[c];
+  if(x && x.cnaesSec && x.cnaesSecDesc){ const i = x.cnaesSec.map(v => String(v).replace(/\D/g, "")).indexOf(c); if(i >= 0 && x.cnaesSecDesc[i]) return String(x.cnaesSecDesc[i]).toLowerCase(); }
+  return "";
+}
+async function cnaeConferirLista(lista){
+  if(CNAE_AUTO.rodando) return toast("Já tem uma conferência de CNAEs rodando (veja a barra no canto).");
+  CNAE_AUTO.rodando = true; CNAE_AUTO.total = lista.length; CNAE_AUTO.feitos = 0; CNAE_AUTO.parar = false;
+  const filtros = {}; let n = 0;
+  try {
+    for(const x of lista){
+      if(CNAE_AUTO.parar) break;
+      CNAE_AUTO.feitos++;
+      const c = await cnaesDaReceita(x.cnpj);
+      if(!c){ await esperarMs(4000); continue; }
+      if(!c.naoEncontrado){ x.cnae = x.cnae || c.principal; x.cnaeDesc = x.cnaeDesc || c.principalDesc; x.cnaesSec = c.sec.map(s => s.codigo).filter(Boolean); x.cnaesSecDesc = c.sec.map(s => s.descricao); }
+      x.cnaeConsultaEm = new Date().toISOString();
+      const k = ramoNorm(x.termo); filtros[k] = filtros[k] || ramoFiltroDe(x.termo || ""); ramoAplicar(x, filtros[k]);
+      await NovosDB.gravar([x]); n++;
+      if(n % 10 === 0) novosDesenhar();
+      await esperarMs(700);
+    }
+  } finally { CNAE_AUTO.rodando = false; }
+  toast(n + " CNPJs com os CNAEs conferidos na Receita."); novosDesenhar(); metaAtualizar();
+}
+
 function novosPainelRamos(box, todos){
   const f = NOVOS.filtro;
   const twAntes = box.querySelector(".nestados .tablewrap"), rolagem = twAntes ? twAntes.scrollTop : 0;
@@ -10826,6 +10930,7 @@ function novosPainelRamos(box, todos){
   };
   aba("Todos os ramos", todos.length, "");
   lst.forEach(g => aba(g.nome, g.lista.length, g.k));
+  if(lst.length > 1){ const bj = el("button","btn sm","Juntar ramos…"); bj.title = "Junta ramos que são o mesmo negócio (ex.: Clínica de depilação, Estética e Depilação a laser)"; bj.onclick = () => novosJuntarRamos(lst); abas.append(bj); }
   bl.append(abas);
 
   const g = f.ramo ? grupos.get(f.ramo) : null;
