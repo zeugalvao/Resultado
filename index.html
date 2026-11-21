@@ -1403,6 +1403,7 @@ a.nmaps::after{content:" ↗";font-size:11px;color:var(--teal);font-weight:400}
 .qok{color:var(--teal-deep);font-weight:600}
 @media(max-width:900px){ .lotesgrade,.lotesduas{grid-template-columns:1fr} }
 .ndiv.ult{border-color:var(--amber);background:var(--amber-soft)} .ndiv.ult.on{background:var(--amber);border-color:var(--amber);color:#fff}
+.qlista{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0}
 .novotag{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:999px;background:var(--amber-soft);color:#8A5A12;vertical-align:middle}
 .abastela{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 18px;padding-bottom:12px;border-bottom:1px solid var(--line)}
 /* menu "Mais ações" do Cadastro */
@@ -10473,7 +10474,7 @@ async function novosDesenhar(){
   /* na REDE, cada rede é uma divisão própria */
   const campanhas = [...new Set(tudo.filter(x => x.campanha).map(x => x.campanha))].sort((a, b) => a.localeCompare(b, "pt-BR"));
   if(NOVOS.campSel && !/^__dia:/.test(NOVOS.campSel) && !campanhas.includes(NOVOS.campSel)) NOVOS.campSel = "";
-  const ultSet = f.ultimos ? new Set((ultimosEnviados() || {}).chaves || []) : null;
+  const ultSet = f.ultimos ? new Set(f.ultChaves || (ultimosEnviados() || {}).chaves || []) : null;
   const todos = ultSet ? tudo.filter(x => ultSet.has(x.chave)) : (f.ramo ? daDivisao.filter(x => novosRamoKey(x) === f.ramo) : daDivisao)
     .filter(x => dv !== "rede" || !NOVOS.redeSel || x.rede === NOVOS.redeSel)
     .filter(x => dv !== "campanhas" || !NOVOS.campSel || (/^__dia:/.test(NOVOS.campSel) ? novosDiaExport(x) === NOVOS.campSel.slice(6) : x.campanha === NOVOS.campSel));
@@ -10494,7 +10495,7 @@ async function novosDesenhar(){
       const b = el("button","ndiv ult" + (f.ultimos ? " on" : ""));
       b.append(document.createTextNode("Últimos transferidos "), el("span",null, String(ult.chaves.length)));
       b.title = "Os leads mandados agora há pouco da qualificação (" + new Date(ult.em).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) + "), de qualquer divisão e situação";
-      b.onclick = () => { if(f.ultimos){ f.ultimos = false; } else { Object.assign(f, { ultimos:true, status:"", uf:"", cidade:"", buscaId:"", busca:"", diaMeta:"" }); } NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); };
+      b.onclick = () => { if(f.ultimos){ f.ultimos = false; } else { Object.assign(f, { ultimos:true, ultChaves:null, status:"", uf:"", cidade:"", buscaId:"", busca:"", diaMeta:"" }); } NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); };
       u.divisoes.append(b);
     }
   }
@@ -17137,13 +17138,17 @@ async function qrevPinta(){
   const nSaida = { lista: saidos.filter(x => x.destino === "lista").length, desc: saidos.filter(x => x.destino === "descartado").length };
   if(nSaida.lista || nSaida.desc) conta.append(el("div","leadshint", "Desta soma, " + nSaida.lista + " já foram para a lista de leads e " + nSaida.desc + " foram descartados; os outros " + regs.length + " estão nas abas abaixo para você escolher."));
   u.rev.append(conta);
-  /* acabou de transferir: atalho para ver na lista de leads */
-  const ult = ultimosEnviados();
-  if(ult && (ult.chaves || []).length && Date.now() - new Date(ult.em) < 6 * 3600000){
-    const bx = el("div","metaaviso"); bx.style.cssText = "display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0";
-    bx.append(el("span",null, "Última transferência: " + ult.chaves.length + (ult.chaves.length === 1 ? " lead mandado" : " leads mandados") + " para a lista de leads às " +
-      new Date(ult.em).toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" }) + "."));
-    const bv = el("button","btn sm primary","Ver esses leads na lista de leads"); bv.onclick = abrirUltimosEnviados; bx.append(bv);
+  /* leads deste lote que já foram para a lista de leads: sempre à vista, com atalho */
+  const naListaCh = Object.entries(L.saidos || {}).filter(([, x]) => x.destino === "lista").map(([k]) => k);
+  if(naListaCh.length){
+    const ult = ultimosEnviados();
+    const ultDoLote = ult && (ult.chaves || []).filter(k => naListaCh.includes(k));
+    const bx = el("div","metaaviso qlista");
+    bx.append(el("b",null, naListaCh.length + (naListaCh.length === 1 ? " lead deste lote já foi" : " leads deste lote já foram") + " para a lista de leads"));
+    if(ultDoLote && ultDoLote.length) bx.append(el("span",null, " · último envio: " + ultDoLote.length + " às " + new Date(ult.em).toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" })));
+    const bv = el("button","btn sm primary","Ver esses leads na lista de leads"); bv.onclick = () => abrirUltimosEnviados(naListaCh);
+    const ba = el("button","btn sm","Ver aqui"); ba.onclick = () => { QREV.aba = "__lista"; qrevPinta(); };
+    bx.append(bv, ba);
     u.rev.append(bx);
   }
   if(doLote && !est.concluido && est.lugaresTotal){ const bar = el("div","leadsbar"), f = el("i"); f.style.width = Math.min(100, (est.li || 0) / est.lugaresTotal * 100) + "%"; bar.append(f); u.rev.append(bar); }
@@ -17151,14 +17156,18 @@ async function qrevPinta(){
   const nAba = k => regs.filter(r => r.status === k).length;
   const abas = el("div","ndivisoes");
   const descs = Object.values(L.desc || {});
-  QUAL_ABAS.concat([["__desc","Descartados"]]).filter(([k]) => (k === "__desc" ? descs.length : nAba(k)) || k === "aprovado").forEach(([k, rot]) => {
-    const b = el("button","ndiv" + (QREV.aba === k ? " on" : "")); b.append(document.createTextNode(rot + " "), el("span",null,String(k === "__desc" ? descs.length : nAba(k))));
+  /* os que já foram para a lista: dados do Cadastro (ou o que ficou guardado na revisão) */
+  const cadMap = naListaCh.length ? new Map((await NovosDB.todos()).filter(x => naListaCh.includes(x.chave)).map(x => [x.chave, x])) : new Map();
+  const naLista = naListaCh.map(k => cadMap.get(k) || Object.assign({ chave:k, nomeMaps: (L.saidos[k] || {}).nome || k, status: (L.saidos[k] || {}).status || "" }, {}));
+  const contAba = k => k === "__desc" ? descs.length : k === "__lista" ? naLista.length : nAba(k);
+  QUAL_ABAS.concat([["__lista","Já na lista de leads"],["__desc","Descartados"]]).filter(([k]) => contAba(k) || k === "aprovado").forEach(([k, rot]) => {
+    const b = el("button","ndiv" + (QREV.aba === k ? " on" : "") + (k === "__lista" ? " ult" : "")); b.append(document.createTextNode(rot + " "), el("span",null,String(contAba(k))));
     b.onclick = () => { QREV.aba = k; qrevPinta(); }; abas.append(b);
   });
   u.rev.append(abas);
-  const verDesc = QREV.aba === "__desc";
-  const daAba = (verDesc ? descs : regs.filter(r => r.status === QREV.aba)).sort((a, b) => String(a.nomeMaps || "").localeCompare(String(b.nomeMaps || ""), "pt-BR"));
-  const marc = (verDesc ? descs : regs).filter(r => QREV.sel.has(r.chave));
+  const verDesc = QREV.aba === "__desc", verLista = QREV.aba === "__lista";
+  const daAba = (verDesc ? descs : verLista ? naLista : regs.filter(r => r.status === QREV.aba)).sort((a, b) => String(a.nomeMaps || "").localeCompare(String(b.nomeMaps || ""), "pt-BR"));
+  const marc = (verDesc ? descs : verLista ? naLista : regs).filter(r => QREV.sel.has(r.chave));
   /* ações */
   const ac = el("div","leadsacoes"); ac.style.flexWrap = "wrap";
   const btEnv = el("button","btn primary","Mandar marcados para a lista de leads (" + marc.length + ")");
@@ -17168,6 +17177,13 @@ async function qrevPinta(){
   btEnv.onclick = () => qrevEnviar(L.id, marc);
   btDesc.onclick = () => qrevDescartar(L.id, marc);
   if(verDesc){ const btVolta = el("button","btn primary","Voltar marcados para a revisão (" + marc.length + ")"); btVolta.onclick = () => qrevRestaurar(L.id, marc); ac.append(btVolta, btTodos, btNenhum); }
+  else if(verLista){
+    const bVer = el("button","btn primary","Ver na lista de leads (" + naLista.length + ")"); bVer.onclick = () => abrirUltimosEnviados(naListaCh);
+    const bVolta = el("button","btn","Voltar marcados para a escolha (" + marc.length + ")");
+    bVolta.onclick = async () => { if(!marc.length) return toast("Marque os leads que quer voltar."); const r = await qrevVoltarDaLista(L.id, marc.map(x => x.chave));
+      marc.forEach(x => QREV.sel.delete(x.chave)); toast(r.voltou + " leads voltaram para a escolha" + (r.exportados ? " · " + r.exportados + " já exportados não voltam" : "") + "."); qrevPinta(); };
+    ac.append(bVer, bVolta, btTodos, btNenhum, el("span","leadshint","Estes já estão no Cadastro. Voltar tira da lista de leads e da meta do dia."));
+  }
   else ac.append(btEnv, btTodos, btNenhum, btDesc, el("span","leadshint","Marque qualquer lead de outra categoria, MEI ou fora da sua área e clique em Descartar."));
   if(marc.length) ac.append(el("span","leadshint", "Marcados: " + QUAL_ABAS.map(([k, rot]) => [rot, marc.filter(r => r.status === k).length]).filter(x => x[1]).map(x => x[1] + " " + x[0].toLowerCase()).join(" · ")));
   u.rev.append(ac);
@@ -17199,9 +17215,9 @@ async function qrevPinta(){
 }
 /* últimos leads transferidos para a lista de leads (para achar fácil no Cadastro) */
 function ultimosEnviados(){ try { return JSON.parse(localStorage.getItem("m04_ultimosEnviados") || "null"); } catch(e){ return null; } }
-function abrirUltimosEnviados(){
-  const u = ultimosEnviados(); if(!u || !(u.chaves || []).length) return toast("Nenhuma transferência recente.");
-  Object.assign(NOVOS.filtro, { ultimos:true, status:"", uf:"", cidade:"", buscaId:"", ramo:"", busca:"", diaMeta:"", naoEnviados:false });
+function abrirUltimosEnviados(chaves){
+  const u = ultimosEnviados(); if(!(chaves && chaves.length) && !(u && (u.chaves || []).length)) return toast("Nenhuma transferência recente.");
+  Object.assign(NOVOS.filtro, { ultimos:true, ultChaves: chaves && chaves.length ? chaves : null, status:"", uf:"", cidade:"", buscaId:"", ramo:"", busca:"", diaMeta:"", naoEnviados:false });
   NOVOS.divisao = "leads"; NOVOS.sel.clear(); NOVOS.mostrar = 200; pickEtapa = "novos"; desenhaPicker(); $("#picker").scrollTop = 0;
 }
 /* manda para o Cadastro (lista de leads definitiva) */
