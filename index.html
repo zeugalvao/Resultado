@@ -1416,6 +1416,8 @@ a.nmaps::after{content:" ↗";font-size:11px;color:var(--teal);font-weight:400}
 .dconfinfo{background:#EAF1FE;border:1px solid #BFD3FB;border-radius:8px;padding:8px 12px;color:#1e3a8a}
 .cnaecat.cconf{border-color:#2563eb;color:#1d4ed8} .cnaecat.cconf.on{background:#2563eb;color:#fff}
 .cattag{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:700;padding:1px 8px;border-radius:999px;background:#EAF1FE;color:#1d4ed8;vertical-align:middle;letter-spacing:.02em}
+.ndiv.dsep{border-color:#0f766e} .dsepinfo{background:#F1F5F4;border:1px solid var(--line);border-radius:8px;padding:8px 12px}
+.cattag.septag{background:#ECFDF5;color:#047857}
 .novotag{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:999px;background:var(--amber-soft);color:#8A5A12;vertical-align:middle}
 .abastela{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 18px;padding-bottom:12px;border-bottom:1px solid var(--line)}
 /* menu "Mais ações" do Cadastro */
@@ -10093,9 +10095,10 @@ function pickNovos(host){
   btConf.onclick = () => novosMandarConferida();
   const btTiraConf = el("button","btn","Tirar marcados da LISTA CONFERIDA (voltam para Leads)");
   btTiraConf.onclick = () => novosTirarConferida();
-  const btCat = el("button","btn","Mudar a categoria dos marcados (LISTA CONFERIDA)");
-  btCat.onclick = () => novosMudarCategoria();
-  menu.append(btConf, btTiraConf, btCat, el("hr"), btRede, btExcluir, btRamoOk, btRamoRe, btRefazer, btAtual, el("hr"), btCli, btManter);
+  /* listas separadas (categorias que não vão para a lista conferida, ex.: ESTÉTICA CORPORAL) */
+  const btSep = el("button","btn","Mandar marcados para outra lista…");
+  btSep.onclick = () => novosMandarListaSep();
+  menu.append(btConf, btTiraConf, el("hr"), btSep, el("hr"), btRede, btExcluir, btRamoOk, btRamoRe, btRefazer, btAtual, el("hr"), btCli, btManter);
   menu.addEventListener("click", ev => { if(ev.target.closest("button")) mais.open = false; });
   document.addEventListener("click", ev => { if(mais.open && !mais.contains(ev.target)) mais.open = false; });
   mais.append(sm, menu);
@@ -10361,6 +10364,54 @@ async function novosMudarCategoria(){
   await NovosDB.gravar(lote.map(x => Object.assign({}, x, { categoriaConf: c })));
   NOVOS.sel.clear(); toast(lote.length + " leads " + (c ? "na categoria " + c : "sem categoria") + "."); novosDesenhar();
 }
+/* ---------- OUTRAS LISTAS: leads de categorias que não vão para a lista conferida ---------- */
+function listasSep(){ try { return JSON.parse(localStorage.getItem("m04_listasSep") || "[]") || []; } catch(e){ return []; } }
+function listasSepGravar(l){ try { localStorage.setItem("m04_listasSep", JSON.stringify([...new Set(l)].sort((a, b) => a.localeCompare(b, "pt-BR")))); } catch(e){} }
+/* escolher uma lista que já existe ou cadastrar nova; resolve com o nome ou null */
+async function novosPerguntarListaSep(texto){
+  const usadas = [...new Set((await NovosDB.todos()).map(x => x.listaSep).filter(Boolean))];
+  const lista = [...new Set(listasSep().concat(usadas))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  return new Promise(ok => {
+    let resp = null, escolhida = "";
+    const dlg = el("dialog","nrededlg"); dlg.style.width = "min(560px,94vw)";
+    dlg.append(el("h3",null,"Mandar para outra lista"));
+    dlg.append(el("p","leadshint", texto));
+    const chips = el("div","nredejas");
+    const inp = el("input"); inp.type = "text"; inp.placeholder = "ex.: ESTÉTICA CORPORAL";
+    const pinta = () => { chips.innerHTML = ""; if(!lista.length) chips.append(el("span","leadshint","Nenhuma lista cadastrada ainda: digite o nome da primeira abaixo."));
+      lista.forEach(c => { const b = el("button","ndiv" + (escolhida === c ? " on" : ""), c); b.type = "button"; b.onclick = () => { escolhida = c; inp.value = ""; pinta(); }; chips.append(b); }); };
+    dlg.append(el("label","leadshint","Listas que já existem:"), chips, el("label","leadshint","Ou cadastre uma lista nova:"), inp);
+    inp.oninput = () => { if(inp.value.trim()){ escolhida = ""; pinta(); } };
+    pinta();
+    const bt = el("div","leadsbotoes"), okb = el("button","btn primary","Mandar para esta lista"), cancela = el("button","btn","Cancelar");
+    okb.type = cancela.type = "button"; bt.append(okb, cancela); dlg.append(bt);
+    okb.onclick = () => { const nova = catNorm(inp.value), c = nova || escolhida; if(!c) return toast("Escolha uma lista ou digite o nome de uma nova.");
+      if(nova) listasSepGravar(listasSep().concat([nova])); resp = c; dlg.close(); };
+    cancela.onclick = () => dlg.close();
+    inp.onkeydown = ev => { if(ev.key === "Enter"){ ev.preventDefault(); okb.click(); } };
+    dlg.addEventListener("close", () => { dlg.remove(); ok(resp); });
+    document.body.append(dlg); dlg.showModal(); inp.focus();
+  });
+}
+async function novosMandarListaSep(){
+  const lote = (await NovosDB.todos()).filter(x => NOVOS.sel.has(x.chave));
+  if(!lote.length) return toast("Marque os leads que vão para outra lista.");
+  const camp = lote.filter(x => x.campanha).length, ok = lote.filter(x => !x.campanha);
+  if(!ok.length) return toast("Esses leads já estão em campanha e não mudam de lista.");
+  const nome = await novosPerguntarListaSep(ok.length + " leads saem das listas atuais (Leads, LISTA CONFERIDA, Frios…) e vão para a lista escolhida. Eles não vão para a campanha." +
+    (camp ? " " + camp + " já em campanha ficam onde estão." : ""));
+  if(!nome) return;
+  const agora = new Date().toISOString(), quem = fluxoQuem();
+  await NovosDB.gravar(ok.map(x => { const y = Object.assign({}, x, { listaSep: nome, listaSepEm: agora, listaSepPor: quem }); delete y.conferidaEm; delete y.conferidaPor; return y; }));
+  NOVOS.sel.clear(); toast(ok.length + " leads na lista " + nome + ". Veja na divisão OUTRAS LISTAS."); novosDesenhar();
+}
+async function novosTirarListaSep(){
+  const lote = (await NovosDB.todos()).filter(x => NOVOS.sel.has(x.chave) && x.listaSep);
+  if(!lote.length) return toast("Marque, em OUTRAS LISTAS, os leads que voltam para Leads.");
+  if(!confirm("Voltar " + lote.length + " leads para Leads?")) return;
+  await NovosDB.gravar(lote.map(x => { const y = Object.assign({}, x); delete y.listaSep; delete y.listaSepEm; delete y.listaSepPor; return y; }));
+  NOVOS.sel.clear(); toast(lote.length + " leads voltaram para Leads."); novosDesenhar();
+}
 async function novosMandarConferida(){
   const lote = (await NovosDB.todos()).filter(x => NOVOS.sel.has(x.chave));
   if(!lote.length) return toast("Marque os leads que vão para a LISTA CONFERIDA.");
@@ -10372,10 +10423,9 @@ async function novosMandarConferida(){
   const motivos = [pul.campanha && pul.campanha + " já estão em campanha", pul.cliente && pul.cliente + " já são clientes", pul.ja && pul.ja + " já estavam na lista conferida",
     pul.status && pul.status + " não são Aprovados", pul.celular && pul.celular + " sem celular"].filter(Boolean);
   if(!ok.length) return toast("Nenhum lead foi para a LISTA CONFERIDA: " + motivos.join(", ") + ".");
-  const cat = await novosPerguntarCategoria(ok.length + " leads vão para a LISTA CONFERIDA e saem das outras listas." + (motivos.length ? " Ficam de fora: " + motivos.join(", ") + "." : "") + " Em que categoria eles entram?");
-  if(cat === null) return;
-  const agora = new Date().toISOString(), quem = fluxoQuem();
-  await NovosDB.gravar(ok.map(x => Object.assign({}, x, { conferidaEm: agora, conferidaPor: quem, categoriaConf: cat })));
+  if(!confirm("Mandar " + ok.length + " leads para a LISTA CONFERIDA? Eles saem das outras listas e ficam prontos para a campanha." + (motivos.length ? "\n\nFicam de fora: " + motivos.join(", ") + "." : ""))) return;
+  const agora = new Date().toISOString(), quem = fluxoQuem(), cat = "";
+  await NovosDB.gravar(ok.map(x => { const y = Object.assign({}, x, { conferidaEm: agora, conferidaPor: quem }); delete y.listaSep; return y; }));
   NOVOS.sel.clear();
   toast(ok.length + " leads na LISTA CONFERIDA" + (cat ? " · categoria " + cat : "") + (motivos.length ? " · ficaram de fora: " + motivos.join(", ") : "") + ". A campanha é exportada de lá.");
   novosDesenhar();
@@ -10562,9 +10612,9 @@ async function novosDesenhar(){
   /* três divisões: leads comuns, REDE (unidades marcadas como rede) e clientes (CNPJs importados) */
   /* campanha: já exportado, não volta a aparecer até a campanha ir para remarketing; frios: só telefone fixo (sem celular) */
   /* Leads → Lista conferida → Campanhas: um lead fica numa divisão só (campanha vence lista conferida, que vence as outras) */
-  const divDe = x => novosCliente(x) ? "clientes" : x.status === "mei" ? "mei" : x.campanha ? "campanhas" : x.conferidaEm ? "conferida" : x.rede ? "rede" : !novosTemCelular(x) ? "frios" : "leads";
+  const divDe = x => novosCliente(x) ? "clientes" : x.status === "mei" ? "mei" : x.campanha ? "campanhas" : x.conferidaEm ? "conferida" : x.listaSep ? "outras" : x.rede ? "rede" : !novosTemCelular(x) ? "frios" : "leads";
   NOVOS.divDe = divDe;
-  const todosRamos = tudo.filter(x => ["leads","conferida","frios","campanhas"].includes(divDe(x)));
+  const todosRamos = tudo.filter(x => ["leads","conferida","outras","frios","campanhas"].includes(divDe(x)));
   novosPainelRamos(u.ramos, todosRamos);
   const dv = NOVOS.divisao;
   const daDivisao = tudo.filter(x => divDe(x) === dv);
@@ -10576,6 +10626,7 @@ async function novosDesenhar(){
   const ultSet = f.ultimos ? new Set(f.ultChaves || (ultimosEnviados() || {}).chaves || []) : null;
   const todos = ultSet ? tudo.filter(x => ultSet.has(x.chave)) : (f.ramo ? daDivisao.filter(x => novosRamoKey(x) === f.ramo) : daDivisao)
     .filter(x => dv !== "rede" || !NOVOS.redeSel || x.rede === NOVOS.redeSel)
+    .filter(x => dv !== "outras" || !NOVOS.sepSel || x.listaSep === NOVOS.sepSel)
     .filter(x => dv !== "campanhas" || !NOVOS.campSel || (/^__dia:/.test(NOVOS.campSel) ? novosDiaExport(x) === NOVOS.campSel.slice(6) : x.campanha === NOVOS.campSel));
   NOVOS.lista = todos;
   u.btRede.hidden = dv === "clientes" || dv === "campanhas";
@@ -10614,13 +10665,14 @@ async function novosDesenhar(){
       u.divisoes.append(b);
     }
   }
-  [["leads","Leads"],["conferida","LISTA CONFERIDA"],["campanhas","CAMPANHAS"],["frios","Frios (só fixo)"],["rede","REDE"],["mei","MEI"],["clientes","Já são clientes"]].forEach(([k, rot], i) => {
-    if(i === 3) u.divisoes.append(el("span","ndivsep"));
-    const b = el("button","ndiv" + (dv === k ? " on" : "") + (k === "conferida" ? " dconf" : k === "campanhas" ? " dcamp" : ""));
+  [["leads","Leads"],["conferida","LISTA CONFERIDA"],["campanhas","CAMPANHAS"],["outras","OUTRAS LISTAS"],["frios","Frios (só fixo)"],["rede","REDE"],["mei","MEI"],["clientes","Já são clientes"]].forEach(([k, rot], i) => {
+    if(i === 3 || i === 4) u.divisoes.append(el("span","ndivsep"));
+    const b = el("button","ndiv" + (dv === k ? " on" : "") + (k === "conferida" ? " dconf" : k === "campanhas" ? " dcamp" : k === "outras" ? " dsep" : ""));
     b.append(document.createTextNode(rot + " "), el("span",null, nDiv(k).toLocaleString("pt-BR")));
     if(k === "rede" && redes.length) b.title = redes.length + " redes";
     if(k === "frios") b.title = "Leads sem nenhum celular (só telefone fixo ou sem telefone): não vão na exportação";
     if(k === "campanhas") b.title = campanhas.length + " campanhas · leads já exportados: ficam só aqui e não podem ser escolhidos de novo para contato";
+    if(k === "outras") b.title = "Listas separadas que você cadastra (ex.: ESTÉTICA CORPORAL): leads que não vão para a lista conferida nem para a campanha";
     if(k === "conferida") b.title = "Leads conferidos e prontos para a campanha. A exportação para Excel de campanha é feita daqui.";
     if(f.cidade || f.uf) b.title = (b.title ? b.title + " · " : "") + "contando só " + (f.cidade ? f.cidade + "/" : "") + (f.uf || "");
     b.onclick = () => { NOVOS.divisao = k; f.ultimos = false; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); };
@@ -10628,7 +10680,7 @@ async function novosDesenhar(){
   });
   if(NOVOS.cli.n) u.divisoes.append(el("span","leadshint", NOVOS.cli.n.toLocaleString("pt-BR") + " CNPJs de clientes carregados" +
     (NOVOS.cli.em ? " em " + new Date(NOVOS.cli.em).toLocaleDateString("pt-BR") : "") + (NOVOS.cli.arquivo ? " (" + NOVOS.cli.arquivo + ")" : "")));
-  const semExport = { leads:"Exporte pela LISTA CONFERIDA: marque os leads e use Mais ações › Mandar marcados para a LISTA CONFERIDA", rede:"Exporte pela LISTA CONFERIDA (Mais ações › Mandar marcados para a LISTA CONFERIDA)",
+  const semExport = { outras:"Outras listas não são exportadas para campanha. Para exportar, mande os leads para a LISTA CONFERIDA.", leads:"Exporte pela LISTA CONFERIDA: marque os leads e use Mais ações › Mandar marcados para a LISTA CONFERIDA", rede:"Exporte pela LISTA CONFERIDA (Mais ações › Mandar marcados para a LISTA CONFERIDA)",
     clientes:"Clientes não são exportados", frios:"Frios (só telefone fixo) não são exportados",
     campanhas:"Leads de campanha já foram exportados. Use “Baixar de novo” na campanha ou volte a campanha para remarketing.", mei:"MEI não é exportado" }[dv];
   u.btCsv.disabled = u.btXls.disabled = u.inQtd.disabled = !!semExport;
@@ -10661,7 +10713,7 @@ async function novosDesenhar(){
   const naCatConf = x => !f.catConf || (f.catConf === "__sem" ? !x.categoriaConf : x.categoriaConf === f.catConf);
   const noRecorte = noRecorte0.filter(naCat).filter(naCatConf);
   if(u.catsConf){ u.catsConf.innerHTML = "";
-    if(usaCatConf && noRecorte0.length){
+    if(usaCatConf && noRecorte0.some(x => x.categoriaConf)){
       const cont = {}; let sem = 0; noRecorte0.forEach(x => { if(x.categoriaConf) cont[x.categoriaConf] = (cont[x.categoriaConf] || 0) + 1; else sem++; });
       u.catsConf.append(el("span","cnaecatsrot","Categoria:"));
       const chip = (rot, n, k) => { const b = el("button","cnaecat cconf" + (f.catConf === k ? " on" : "")); b.append(document.createTextNode(rot + " "), el("b",null, n.toLocaleString("pt-BR")));
@@ -10669,7 +10721,7 @@ async function novosDesenhar(){
       chip("Todas", noRecorte0.length, "");
       Object.entries(cont).sort((a, b) => b[1] - a[1]).forEach(([c, n]) => chip(c, n, c));
       if(sem) chip("Sem categoria", sem, "__sem");
-      if(dv === "conferida") u.catsConf.append(el("span","leadshint"," · escolha uma categoria para exportar a campanha só dela"));
+
     }
   }
   { const box = u.cnaeCats; box.innerHTML = "";
@@ -10771,18 +10823,35 @@ async function novosDesenhar(){
     u.corpo.append(nav);
   }
   if(dv === "campanhas") novosNavCampanhas(u.corpo, tudo, campanhas, f, noLugar, passaFiltro);
+  if(dv === "outras"){
+    const daDiv = tudo.filter(x => divDe(x) === "outras" && (!f.ramo || novosRamoKey(x) === f.ramo));
+    const nomes = [...new Set(daDiv.map(x => x.listaSep))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+    if(NOVOS.sepSel && !nomes.includes(NOVOS.sepSel)) NOVOS.sepSel = "";
+    const nav = el("div","nredesnav");
+    const pill = (rot, val, n) => { const b = el("button","ndiv" + ((NOVOS.sepSel || "") === val ? " on" : "")); b.append(document.createTextNode(rot + " "), el("span",null,String(n)));
+      b.onclick = () => { NOVOS.sepSel = val; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); }; nav.append(b); };
+    pill("Todas as listas", "", daDiv.length);
+    nomes.forEach(n => pill(n, n, daDiv.filter(x => x.listaSep === n).length));
+    u.corpo.append(nav);
+    const bar = el("div","ncampinfo dsepinfo");
+    bar.append(el("span",null,"OUTRAS LISTAS: leads de categorias que você separou (ex.: ESTÉTICA CORPORAL). Não vão para a lista conferida nem para a campanha."));
+    const b1 = el("button","btn sm","Mandar marcados para outra lista…"); b1.onclick = novosMandarListaSep;
+    const b2 = el("button","btn sm","Voltar marcados para Leads"); b2.onclick = novosTirarListaSep;
+    bar.append(b1, b2); u.corpo.append(bar);
+  }
   if(dv === "conferida"){
     const bar = el("div","ncampinfo dconfinfo");
     bar.append(el("span",null,"LISTA CONFERIDA: leads aprovados, com celular, conferidos e prontos para a campanha. Use “Baixar Excel” para exportar a campanha: os exportados vão para CAMPANHAS e não voltam a ser escolhidos para contato."));
     const bt = el("button","btn sm","Tirar marcados (voltam para Leads)"); bt.onclick = novosTirarConferida;
-    const bc = el("button","btn sm","Mudar a categoria dos marcados"); bc.onclick = novosMudarCategoria;
-    bar.append(bt, bc);
+    bar.append(bt);
     u.corpo.append(bar);
   }
   if(dv === "leads"){
     const bar = el("div","ncampinfo");
     bar.append(el("span","leadshint","Para exportar uma campanha: marque os leads e use Mais ações › Mandar marcados para a LISTA CONFERIDA. A exportação é feita lá."));
-    const bt = el("button","btn sm","Mandar marcados para a LISTA CONFERIDA"); bt.onclick = novosMandarConferida; bar.append(bt);
+    const bt = el("button","btn sm","Mandar marcados para a LISTA CONFERIDA"); bt.onclick = novosMandarConferida;
+    const bs = el("button","btn sm","Mandar marcados para outra lista…"); bs.onclick = novosMandarListaSep;
+    bar.append(bt, bs);
     u.corpo.append(bar);
   }
   if(dv === "frios"){
@@ -10806,7 +10875,7 @@ async function novosDesenhar(){
   if(!todos.length){
     u.corpo.append(el("p","kicker", dv === "rede" ? "Nenhuma unidade de rede ainda. Na lista de leads, marque a caixa da coluna Rede e digite o nome da rede."
       : dv === "clientes" ? "Nenhum lead do Cadastro é cliente." : dv === "campanhas" ? "Nenhuma campanha ainda. Ao exportar para Excel, o CRM pergunta o nome da campanha e os leads exportados vêm para cá."
-      : dv === "frios" ? "Nenhum lead frio: todos têm celular." : dv === "conferida" ? "A LISTA CONFERIDA está vazia. Em Leads, marque os leads e use Mais ações › Mandar marcados para a LISTA CONFERIDA." : "Ainda não há leads aqui. Comece uma busca no Modelo 04: cada cidade concluída aparece nesta lista."));
+      : dv === "frios" ? "Nenhum lead frio: todos têm celular." : dv === "outras" ? "Nenhum lead em outras listas. Em Leads, marque os leads e use “Mandar marcados para outra lista…”." : dv === "conferida" ? "A LISTA CONFERIDA está vazia. Em Leads, marque os leads e use Mais ações › Mandar marcados para a LISTA CONFERIDA." : "Ainda não há leads aqui. Comece uma busca no Modelo 04: cada cidade concluída aparece nesta lista."));
     return;
   }
   /* busca por nome sem resultado aqui: procura no Cadastro inteiro (todas as divisões, ramos, situações e lugares) */
@@ -10887,7 +10956,7 @@ async function novosDesenhar(){
     const te = el("td"); te.append(novosNomeMaps(r, r.nomeMaps || r.nomeFantasia || r.razaoSocial || "—"));
     if(r.transferidoEm && Date.now() - new Date(r.transferidoEm) < 24 * 3600000)
       te.append(el("span","novotag", "transferido " + new Date(r.transferidoEm).toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" })));
-    if(f.ultimos){ const dvR = divDe(r); te.append(el("div","quem", "está em: " + ({ leads:"Leads", conferida:"LISTA CONFERIDA", frios:"Frios (só fixo)", campanhas:"CAMPANHAS", rede:"REDE", mei:"MEI", clientes:"Já são clientes" })[dvR] +
+    if(f.ultimos){ const dvR = divDe(r); te.append(el("div","quem", "está em: " + ({ leads:"Leads", outras:"OUTRAS LISTAS", conferida:"LISTA CONFERIDA", frios:"Frios (só fixo)", campanhas:"CAMPANHAS", rede:"REDE", mei:"MEI", clientes:"Já são clientes" })[dvR] +
       " · " + (M04_STATUS[r.status] || [r.status])[0])); }
     if(r.razaoSocial) te.append(el("div","sub", r.razaoSocial));
     if(r.filiais > 1 && !r.rede) te.append(el("div","quem","possível rede: " + r.filiais + " unidades ativas"));
@@ -10897,6 +10966,7 @@ async function novosDesenhar(){
     else if((r.campanhasAnteriores || []).length) te.append(el("div","quem","remarketing · já esteve em " + r.campanhasAnteriores.map(c => c.nome).join(", ")));
     if(dv === "frios") te.append(el("div","quem nfrio","frio · sem celular"));
     if(r.categoriaConf && (r.conferidaEm || r.campanha)) te.append(el("span","cattag", r.categoriaConf));
+    if(r.listaSep && !r.campanha && !r.conferidaEm) te.append(el("span","cattag septag", r.listaSep));
     if(r.conferidaEm && !r.campanha) te.append(el("div","quem","na lista conferida desde " + new Date(r.conferidaEm).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) + (r.conferidaPor ? " · " + r.conferidaPor : "")));
     tr.append(te);
 
