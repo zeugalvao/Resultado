@@ -8765,13 +8765,16 @@ function ramoFiltroDe(termo, palavrasTxt, excluirTxt){
     .filter(x => x.length >= 3 && ![...pos].some(p => x.startsWith(p) || p.startsWith(x)));
   /* CNAEs (principal ou secundário) que tiram o lead do ramo — ex.: 9602-5/01 cabeleireiro, manicure e pedicure */
   const cnTxt = cfg.cnaesExcluir != null ? cfg.cnaesExcluir : ramoCnaesPadrao(termo);
-  const cnaesNeg = new Set(String(cnTxt || "").split(/[,;\s]+/).map(x => x.replace(/\D/g, "")).filter(x => x.length === 7));
+  const cnaesNeg = new Set(cnaesDoTexto(cnTxt));
   return { pos:[...pos], fortes, neg, cnaesNeg, exigir: !!cfg.exigir, cnaeSempre: !!cfg.cnaeSempre };
 }
 /* padrão: ramos de depilação/laser/estética tiram quem tem CNAE de cabeleireiro e manicure */
 function ramoCnaesPadrao(termo){ return ramoPalavras(termo, "").some(r => /^(DEPIL|LASER|ESTET|FOTODEPIL)/.test(r)) ? "9602501" : ""; }
 const CNAE_NOMES = { "9602501":"cabeleireiro, manicure e pedicure", "9602502":"estética e outros cuidados com a beleza", "4772500":"comércio de cosméticos",
-  "8630504":"atividade odontológica", "8650099":"atividades de profissionais da saúde", "9609299":"outras atividades de serviços pessoais" };
+  "8630504":"atividade odontológica", "8630501":"clínica médica com procedimentos cirúrgicos", "8630502":"clínica médica com exames complementares",
+  "8630503":"clínica médica (consultas)", "8650001":"enfermagem", "8650004":"fisioterapia", "9313100":"academia", "8650099":"atividades de profissionais da saúde", "9609299":"outras atividades de serviços pessoais" };
+/* "8630-5/01, 9602-5/01" ou "8630501 9602501" → ["8630501","9602501"] */
+const cnaesDoTexto = t => [...new Set(String(t || "").split(/[,;\n]+|\s{2,}|\s(?=\d)/).map(x => x.replace(/\D/g, "")).filter(x => x.length === 7))];
 const fmtCnae = c => String(c).replace(/^(\d{4})(\d)(\d{2})$/, "$1-$2/$3");
 /* CNAEs do lead (principal e secundários), de onde vierem: consulta da Receita, MaisCNPJ ou extensão */
 function leadCnaes(r){
@@ -9241,6 +9244,7 @@ async function m04Importar(est){
   } catch(e){ /* tenta de novo na próxima volta */ }
   finally { M04.importando = false; }
   if(novos && NOVOS.ui && document.body.contains(NOVOS.ui.corpo)) novosDesenhar();
+  if(novos) setTimeout(cnaeAutoConferir, 1500);
   return novos;
 }
 
@@ -9417,6 +9421,25 @@ function pickModelo04(host, modo){
   inPal.parentElement.append(palDica);
   campo("Palavras que tiram do ramo (opcional, separe por vírgula)", inExc, "", true);
   inExc.parentElement.append(excDica);
+  /* CNAEs de outro ramo: se a empresa tiver um deles (principal ou secundário), é descartada */
+  const inCnExc = el("input"); inCnExc.type = "text"; inCnExc.spellcheck = false;
+  inCnExc.placeholder = "ex.: 8630-5/01, 9602-5/01";
+  const cnDica = el("span","leadshint");
+  const cfgRamoAtual = () => ramoCfg((!cnae && inRamoCad.value.trim()) || inTermo.value);
+  const carregaCn = () => { const c = cfgRamoAtual(); inCnExc.value = c.cnaesExcluir != null ? c.cnaesExcluir : ramoCnaesPadrao((!cnae && inRamoCad.value.trim()) || inTermo.value); ckCnSempre.checked = c.cnaeSempre !== false; cnAtualiza(); };
+  const cnAtualiza = () => {
+    const l = cnaesDoTexto(inCnExc.value);
+    cnDica.textContent = l.length
+      ? "Descarta quem tiver " + l.map(c => fmtCnae(c) + (CNAE_NOMES[c] ? " (" + CNAE_NOMES[c] + ")" : "")).join(", ") + " no CNAE principal ou nos secundários. Vai para “Outro ramo” e não conta na meta" + (cnae ? "; a busca nem procura no Maps." : ".")
+      : "Nenhum CNAE de exclusão. Ex.: 8630-5/01 (clínica médica), 9602-5/01 (cabeleireiro, manicure e pedicure).";
+  };
+  campo("CNAEs de outro ramo — descartar (opcional, separe por vírgula)", inCnExc, "", true);
+  const lbCnS = el("label","qualcheck"); const ckCnSempre = el("input"); ckCnSempre.type = "checkbox"; ckCnSempre.checked = true;
+  lbCnS.append(ckCnSempre, document.createTextNode(" Descartar mesmo quando o nome tem as palavras do ramo"));
+  inCnExc.parentElement.append(cnDica, lbCnS);
+  inCnExc.addEventListener("input", cnAtualiza);
+  inTermo.addEventListener("change", carregaCn); inRamoCad.addEventListener("change", carregaCn);
+  carregaCn();
   palAtualiza();
 
   const selUf = el("select");
@@ -9638,7 +9661,11 @@ function pickModelo04(host, modo){
     const limiteCidades = parseInt(inQtd.value, 10) > 0 ? parseInt(inQtd.value, 10) : 0;
     M04.campos = { termo, uf: selUf.value, palavras: inPal.value.trim(), escopo: selEsc.value, zonaInicial: selZona.value, janela: selJan.value,
                    cidades: escolhidas.slice(), limiteCidades, cnaeTxt: inCnae.value.trim(), vizinhas: ckViz.checked };
-    ramoCfgGravar(termo, { palavras: inPal.value.trim(), excluir: inExc.value.trim() });
+    /* filtro do ramo fica no ramo do Cadastro (o “Juntar no ramo”, se houver) */
+    const ramoFiltro = (!cnae && inRamoCad.value.trim()) || termo;
+    ramoCfgGravar(ramoFiltro, Object.assign({}, ramoCfg(ramoFiltro), { palavras: inPal.value.trim(), excluir: inExc.value.trim(),
+      cnaesExcluir: cnaesDoTexto(inCnExc.value).join(", "), cnaeSempre: ckCnSempre.checked }));
+    if(ramoFiltro !== termo) ramoCfgGravar(termo, Object.assign({}, ramoCfg(termo), { palavras: inPal.value.trim(), excluir: inExc.value.trim() }));
     const ramoCad = cnae ? "" : inRamoCad.value.trim();
     m04BuscaCfgGravar(termo, { ramo: ramoCad, soNovas: ckNov.checked });
     M04.campos.ramoCad = ramoCad; M04.campos.soNovas = ckNov.checked;
@@ -9651,10 +9678,12 @@ function pickModelo04(host, modo){
     const { resp, erro } = await m04Enviar({ type:"iniciar", termo, uf: selUf.value,
       opcoes:{ intervalo: +selInt.value, maxPorCidade: +selMax.value, dividir: ckDiv.checked, maisTpl: inTpl.value.trim(), palavras: inPal.value.trim(), escopo: selEsc.value, zonaInicial: selZona.value, janela: selJan.value,
         cidades: escolhidas.slice(), limiteCidades: (selEsc.value === "demais" || selEsc.value === "estado") ? limiteCidades : 0,
-        modo: cnae ? "cnae" : "maps", cnaes, vizinhas: cnae && selEsc.value === "cidades" && ckViz.checked, conhecidos } }, 60000);
+        modo: cnae ? "cnae" : "maps", cnaes, vizinhas: cnae && selEsc.value === "cidades" && ckViz.checked, conhecidos,
+        cnaesExcluir: ckCnSempre.checked ? cnaesDoTexto(inCnExc.value) : [] } }, 60000);
     /* guarda como foi a busca, para seguir sozinha nas cidades vizinhas se acabar antes da meta do dia */
     m04UltimaBuscaGravar({ termo, uf: selUf.value, opcoes:{ intervalo: +selInt.value, maxPorCidade: +selMax.value, dividir: ckDiv.checked, maisTpl: inTpl.value.trim(),
-      palavras: inPal.value.trim(), janela: selJan.value, modo: cnae ? "cnae" : "maps", cnaes, soNovas: ckNov.checked } });
+      palavras: inPal.value.trim(), janela: selJan.value, modo: cnae ? "cnae" : "maps", cnaes, soNovas: ckNov.checked,
+      cnaesExcluir: ckCnSempre.checked ? cnaesDoTexto(inCnExc.value) : [] } });
     btIniciar.disabled = false; btIniciar.textContent = "Começar a busca";
     if(erro || !resp) return m04SemExtensao(erro);
     m04Pinta(resp); m04Polling();
@@ -9739,7 +9768,7 @@ function m04Pinta(s){
   (s.modo === "cnae"
    ? [[t.aprovados,"aprovados","ok"],[t.aguardando,"aguardando 6 meses","novo"],[t.fora,"fora do requisito","alerta"],
       [t.verificar,"para conferir","alerta"],[t.lista,"na lista do CNAE",""],[t.ltda,"LTDA",""],[t.mei,"MEI (fora do interesse)",""],
-      [t.noMaps,"achadas no Maps",""],[t.semMaps,"não achadas no Maps","alerta"],[t.jaCadastro,"já no Cadastro (puladas sem abrir)",""],[t.endDif,"endereço do Maps diferente da Receita","alerta"]]
+      [t.noMaps,"achadas no Maps",""],[t.semMaps,"não achadas no Maps","alerta"],[t.jaCadastro,"já no Cadastro (puladas sem abrir)",""],[t.endDif,"endereço do Maps diferente da Receita","alerta"],[t.cnaeOutro,"com CNAE de outro ramo (descartadas)","alerta"]]
    : [[t.aprovados,"aprovados","ok"],[t.aguardando,"aguardando 6 meses","novo"],[t.fora,"fora do requisito","alerta"],
    [t.semCnpj,"sem CNPJ","alerta"],[t.verificar,"para conferir","alerta"],[t.maps,"locais no Maps",""],
    [t.outroRamo,"de outro ramo descartados",""], [t.jaCadastro,"já no Cadastro (puladas sem abrir)",""], [s.refazer,"na fila para procurar o CNPJ de novo","novo"]])
@@ -9964,6 +9993,7 @@ function pickNovos(host){
   const btFiltro = el("button","btn","Filtro do ramo");
   btFiltro.title = "Palavras e CNAEs que tiram leads do ramo (ex.: secundário 9602-5/01 cabeleireiro/manicure) e consulta dos CNAEs na Receita";
   btFiltro.onclick = novosFiltroRamo;
+  setTimeout(cnaeAutoConferir, 2500);
   acoes.append(btEnviar, lbQtd, btXls, btCsv, btExcCid, btFiltro, mais, inCli, info);
 
   const mostrando = el("div","nmostrando");
@@ -10041,6 +10071,34 @@ async function cnaesDaReceita(cnpj){
     await esperarMs(3000 * (tent + 1));
   }
   return null;
+}
+
+/* ---------- conferência automática dos CNAEs: aprovados de ramos com "CNAEs de outro ramo" ----------
+   Lead aprovado (ou aguardando) sem os CNAEs secundários: consulta na Receita aos poucos (~1 por segundo)
+   e aplica o filtro do ramo na hora. Assim nenhum lead com CNAE de outro ramo conta na meta ou é exportado. */
+const CNAE_AUTO = { rodando:false };
+async function cnaeAutoConferir(){
+  if(CNAE_AUTO.rodando) return;
+  CNAE_AUTO.rodando = true;
+  try {
+    const filtros = {};
+    const filtroDe = t => { const k = ramoNorm(t); return filtros[k] = filtros[k] || ramoFiltroDe(t || ""); };
+    const fila = (await NovosDB.todos()).filter(x => (x.status === "aprovado" || x.status === "aguardando") && !x.cnaeConsultaEm && !x.ramoManual &&
+      cnpjDig(x.cnpj).length === 14 && !(x.receita && Array.isArray(x.receita.cnaesSec)) && !(x.cnaesSec || []).length && filtroDe(x.termo).cnaesNeg.size);
+    let fora = 0, n = 0;
+    for(const x of fila){
+      const c = await cnaesDaReceita(x.cnpj);
+      if(!c) { await esperarMs(5000); continue; }
+      if(!c.naoEncontrado){ x.cnae = x.cnae || c.principal; x.cnaeDesc = x.cnaeDesc || c.principalDesc; x.cnaesSec = c.sec.map(s => s.codigo).filter(Boolean); x.cnaesSecDesc = c.sec.map(s => s.descricao); }
+      x.cnaeConsultaEm = new Date().toISOString();
+      const antes = x.status; ramoAplicar(x, filtroDe(x.termo)); if(antes !== x.status && x.status === "outro_ramo") fora++;
+      await NovosDB.gravar([x]); n++;
+      if(n % 15 === 0){ metaAtualizar(); if(NOVOS.ui && document.body.contains(NOVOS.ui.corpo)) novosDesenhar(); }
+      await esperarMs(700);
+    }
+    if(n){ metaAtualizar(); if(NOVOS.ui && document.body.contains(NOVOS.ui.corpo)) novosDesenhar();
+      if(fora) toast("CNAEs conferidos na Receita: " + fora + " de " + n + " leads tinham CNAE de outro ramo e foram para “Outro ramo”."); }
+  } catch(e){} finally { CNAE_AUTO.rodando = false; }
 }
 
 /* ---------- Filtro do ramo: palavras, CNAEs que tiram e consulta dos CNAEs secundários ---------- */
@@ -16150,6 +16208,10 @@ function pickListaMais(host){
   box.append(form);
   const opc = el("div","qualopcoes");
   const mk = (txt, on) => { const l = el("label","qualcheck"), c = el("input"); c.type = "checkbox"; c.checked = on; l.append(c, document.createTextNode(" " + txt)); opc.append(l); return c; };
+  const inCnL = el("input"); inCnL.type = "text"; inCnL.spellcheck = false; inCnL.placeholder = "ex.: 8630-5/01, 9602-5/01";
+  campo("CNAEs de outro ramo — descartar (opcional)", inCnL, "Quem tiver um destes CNAEs (principal ou secundário) vai para “Outro ramo” e nem é procurado no Maps.", true);
+  const cnL0 = () => { const c = ramoCfg(inRamo.value); inCnL.value = c.cnaesExcluir != null ? c.cnaesExcluir : ramoCnaesPadrao(inRamo.value); };
+  inRamo.addEventListener("change", cnL0); cnL0();
   const ckMei = mk("Procurar no Maps também as MEI (mais lento; MEI não entra na meta)", false);
   const ckFiltro = mk("Conferir o ramo pelo nome e pela categoria do Maps (quem for de outro ramo vai para “Outro ramo”)", true);
   const ckNov = mk("Pular as empresas que já estão no Cadastro (mesmo CNPJ)", true);
@@ -16175,7 +16237,8 @@ function pickListaMais(host){
     if(est && est.existe) await m04Importar(est);
     const base = url.split("?")[0];
     if(LISTA.url !== base){ Object.assign(LISTA, { itens:[], pg:0, total:0, fim:false }); }
-    Object.assign(LISTA, { url: base, ramo, partes, pausa: +selP.value, janela: selJan.value, mapsMei: ckMei.checked, semFiltro: !ckFiltro.checked, soNovas: ckNov.checked, erro:"" });
+    ramoCfgGravar(ramo, Object.assign({}, ramoCfg(ramo), { cnaesExcluir: cnaesDoTexto(inCnL.value).join(", "), cnaeSempre: true }));
+    Object.assign(LISTA, { cnaesExcluir: cnaesDoTexto(inCnL.value), url: base, ramo, partes, pausa: +selP.value, janela: selJan.value, mapsMei: ckMei.checked, semFiltro: !ckFiltro.checked, soNovas: ckNov.checked, erro:"" });
     listaRodar();
   };
   btParar.onclick = () => { LISTA.parar = true; listaPinta("Parando…"); };
@@ -16241,7 +16304,7 @@ async function listaImportarEBuscar(){
   m04UltimaBuscaGravar({ lista:true, termo: ramo, uf: P.uf, atividade: P.atividade, pausa: LISTA.pausa, janela: LISTA.janela, mapsMei: LISTA.mapsMei, semFiltro: LISTA.semFiltro, soNovas: LISTA.soNovas });
   M04.campos = Object.assign({}, M04.campos || {}, { termo: ramo, uf: P.uf, escopo:"cidades", cidades:[cidade], cnaeTxt:"https://maiscnpj.com.br/empresas/" + P.uf.toLowerCase() + "/" + P.cidSlug + "/" + P.atividade });
   const { resp, erro } = await m04Enviar({ type:"iniciar", termo: ramo, uf: P.uf, opcoes:{ modo:"cnae", cnaes:["slug:" + P.atividade], escopo:"cidades", cidades:[cidade],
-    intervalo: LISTA.pausa, janela: LISTA.janela, mapsMei: LISTA.mapsMei, listaItens: itensExt, conhecidos } }, 60000);
+    intervalo: LISTA.pausa, janela: LISTA.janela, mapsMei: LISTA.mapsMei, listaItens: itensExt, conhecidos, cnaesExcluir: LISTA.cnaesExcluir || [] } }, 60000);
   if(erro || !resp || !resp.existe){ LISTA.erro = "Não consegui começar a conferência na extensão: " + (erro || (resp && resp.aviso) || "sem resposta") + "."; return; }
   if(!resp.listaPronta){ LISTA.erro = "A extensão está numa versão antiga: atualize para a 2.1 para conferir a lista no Maps. As empresas já foram importadas no Cadastro."; }
   /* importa já todas as empresas da lista (as que ainda não estão no Cadastro) */
