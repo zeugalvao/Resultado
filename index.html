@@ -1352,6 +1352,15 @@ a.nmaps{color:inherit;text-decoration:none;border-bottom:1px dashed var(--teal)}
 a.nmaps:hover{color:var(--teal-deep);border-bottom-style:solid}
 a.nmaps::after{content:" ↗";font-size:11px;color:var(--teal);font-weight:400}
 .nmapsbusca{font-size:11px;font-weight:400;color:var(--muted)}
+/* ---------- barra de processos rodando ---------- */
+#procbar{position:fixed;right:18px;bottom:18px;z-index:9000;width:min(460px,calc(100vw - 36px));background:var(--surface);border:1px solid var(--line);
+  border-left:4px solid var(--amber);border-radius:10px;box-shadow:0 10px 30px rgba(16,30,40,.18);padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+#procbar[hidden]{display:none}
+.proclin{display:flex;gap:10px;align-items:center}
+.proctxt{flex:1;min-width:0}
+.proctxt b{display:block;font-size:13px}
+.proctxt span{display:block;font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.procac{display:flex;gap:6px;flex:none}
 /* ---------- fluxo dos lotes ---------- */
 .fluxobox{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
 .fluxotopo{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
@@ -10165,7 +10174,10 @@ async function cnaeAutoConferir(){
     const fila = (await NovosDB.todos()).filter(x => (x.status === "aprovado" || x.status === "aguardando") && !x.cnaeConsultaEm && !x.ramoManual &&
       cnpjDig(x.cnpj).length === 14 && !(x.receita && Array.isArray(x.receita.cnaesSec)) && !(x.cnaesSec || []).length && filtroDe(x.termo).cnaesNeg.size);
     let fora = 0, n = 0;
+    CNAE_AUTO.total = fila.length; CNAE_AUTO.feitos = 0; CNAE_AUTO.parar = false;
     for(const x of fila){
+      if(CNAE_AUTO.parar) break;
+      CNAE_AUTO.feitos++;
       const c = await cnaesDaReceita(x.cnpj);
       if(!c) { await esperarMs(5000); continue; }
       if(!c.naoEncontrado){ x.cnae = x.cnae || c.principal; x.cnaeDesc = x.cnaeDesc || c.principalDesc; x.cnaesSec = c.sec.map(s => s.codigo).filter(Boolean); x.cnaesSecDesc = c.sec.map(s => s.descricao); }
@@ -16262,6 +16274,68 @@ function pickLeadsArquivo(host, aba){
   finally { SEM_TRILHA = false; }
 }
 
+/* ===================== Barra de processos rodando =====================
+   Em qualquer tela: mostra o que está rodando (busca/qualificação na extensão, leitura da lista do MaisCNPJ,
+   conferência de CNAEs na Receita) com Pausar, Continuar e Parar. */
+const PROC = { timer:null, est:null, ocupado:false };
+function procBarra(){
+  let b = document.getElementById("procbar");
+  if(!b){ b = el("div"); b.id = "procbar"; document.body.append(b); }
+  return b;
+}
+async function procAtualizar(){
+  if(PROC.ocupado) return;
+  PROC.ocupado = true;
+  try {
+    const aberto = document.getElementById("picker") && document.getElementById("picker").classList.contains("on");
+    let est = null;
+    if(M04.presente || aberto){ const { resp } = await m04Enviar({ type:"estado" }, 4000); est = resp || null; }
+    PROC.est = est;
+    procDesenhar();
+  } catch(e){} finally { PROC.ocupado = false; }
+}
+function procDesenhar(){
+  const b = procBarra(), est = PROC.est, itens = [];
+  if(est && est.existe && !est.concluido && (est.rodando || est.pausado)){
+    const tipo = est.lugaresProntos ? "Qualificação da lista do Maps" : est.listaPronta ? "Conferência da lista do MaisCNPJ" : est.modo === "cnae" ? "Busca pelo CNAE" : "Busca pelo Google Maps";
+    const prog = est.fase === "cnpj" && est.lugaresTotal ? Math.min((est.li || 0) + 1, est.lugaresTotal) + " de " + est.lugaresTotal
+      : (est.cidades || []).length ? (est.cidades || []).filter(c => c.status === "pronta").length + " de " + est.cidades.length + " cidades" : "";
+    itens.push({ rot: tipo + " · " + (est.termo || ""), sub: (est.pausado ? "Pausada" + (est.motivo || est.bloqueio ? ": " + (est.bloqueio || est.motivo) : "") : prog + (est.atual ? " · " + est.atual : "")),
+      pausado: !!est.pausado, ext:true });
+  }
+  if(LISTA.rodando) itens.push({ rot:"Lendo a lista do MaisCNPJ", sub: LISTA.pg + (LISTA.total ? " de " + LISTA.total : "") + " páginas · " + LISTA.itens.length + " empresas", parar: () => { LISTA.parar = true; toast("A leitura da lista para na próxima página."); } });
+  if(CNAE_AUTO.rodando) itens.push({ rot:"Conferindo CNAEs na Receita", sub: (CNAE_AUTO.feitos || 0) + " de " + (CNAE_AUTO.total || 0), parar: () => { CNAE_AUTO.parar = true; toast("A conferência dos CNAEs para no próximo CNPJ."); } });
+  if(FILTRO.rodando) itens.push({ rot:"Consultando CNAEs (Filtro do ramo)", sub:"", parar: () => { FILTRO.parar = true; } });
+  b.innerHTML = "";
+  b.hidden = !itens.length;
+  itens.forEach(it => {
+    const lin = el("div","proclin");
+    const txt = el("div","proctxt"); txt.append(el("b",null, (it.pausado ? "⏸ " : "● ") + it.rot), el("span",null, it.sub)); lin.append(txt);
+    const ac = el("div","procac");
+    if(it.ext){
+      if(it.pausado){ const c = el("button","btn sm primary","Continuar"); c.onclick = () => procCmd("continuar"); ac.append(c); }
+      else { const pz = el("button","btn sm","Pausar"); pz.onclick = () => procCmd("pausar"); ac.append(pz); }
+      const pr = el("button","btn sm danger","Parar"); pr.onclick = () => procCmd("parar"); ac.append(pr);
+    } else if(it.parar){ const pr = el("button","btn sm danger","Parar"); pr.onclick = () => { it.parar(); procDesenhar(); }; ac.append(pr); }
+    lin.append(ac); b.append(lin);
+  });
+}
+async function procCmd(tipo){
+  if(tipo === "parar" && !confirm("Parar o processo que está rodando na extensão? O que já foi feito fica guardado (no Cadastro ou na revisão de Qualificar Leads).")) return;
+  if(tipo === "pausar" || tipo === "parar") m04PrefSet("pausaManual", true);
+  if(tipo === "continuar"){ m04PrefSet("pausaManual", false); M04_AUTO.tentativas = 0; }
+  const { resp, erro } = await m04Enviar({ type: tipo }, 15000);
+  if(erro || !resp) return toast("A extensão não respondeu: " + (erro || "sem resposta"));
+  PROC.est = resp;
+  if(tipo === "parar"){ await m04Importar(resp); toast("Parado. O que já foi conferido ficou guardado."); }
+  else toast(tipo === "pausar" ? "Pausado. Clique em Continuar para seguir de onde parou." : "Continuando.");
+  procDesenhar();
+  if(M04.ui && document.body.contains(M04.ui.bar)) m04Pinta(resp);
+  if(typeof qrevPinta === "function") qrevPinta();
+}
+PROC.timer = setInterval(procAtualizar, 3000);
+setTimeout(procAtualizar, 1500);
+
 /* ===================== Acompanhamento do fluxo dos lotes =====================
    Cada busca vira um lote. O lote (nome, etapa, números de cada etapa e histórico) fica no banco do CRM,
    compartilhado com a equipe. As unidades em si ficam neste navegador (Cadastro, lista do Maps e revisão).
@@ -17009,6 +17083,12 @@ async function qrevPinta(){
   const andamento = doLote ? (est.concluido ? "Qualificação concluída." : est.pausado ? "Pausada: " + (est.motivo || est.bloqueio || "") :
     "Qualificando " + Math.min((est.li || 0) + 1, est.lugaresTotal || 0) + " de " + (est.lugaresTotal || "…") + (est.atual ? " · " + est.atual : "")) : "";
   if(andamento) cab.append(el("span","leadshint", andamento));
+  /* pausar, continuar e parar aqui mesmo */
+  if(doLote && !est.concluido && (est.rodando || est.pausado)){
+    if(est.pausado){ const c = el("button","btn sm primary","Continuar"); c.onclick = () => procCmd("continuar"); cab.append(c); }
+    else { const pz = el("button","btn sm","Pausar"); pz.onclick = () => procCmd("pausar"); cab.append(pz); }
+    const pr = el("button","btn sm danger","Parar"); pr.onclick = () => procCmd("parar"); cab.append(pr);
+  }
   u.rev.append(cab);
   /* desenho do fluxo do lote */
   const loteF = fluxoPorStaging(L.id) || fluxoAdotarStaging(L);
