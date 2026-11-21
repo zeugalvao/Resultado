@@ -1352,6 +1352,47 @@ a.nmaps{color:inherit;text-decoration:none;border-bottom:1px dashed var(--teal)}
 a.nmaps:hover{color:var(--teal-deep);border-bottom-style:solid}
 a.nmaps::after{content:" ↗";font-size:11px;color:var(--teal);font-weight:400}
 .nmapsbusca{font-size:11px;font-weight:400;color:var(--muted)}
+/* ---------- fluxo dos lotes ---------- */
+.fluxobox{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.fluxotopo{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.fluxotopo .btn{margin-left:auto}
+.fluxo{display:flex;align-items:stretch;overflow-x:auto;padding:8px 2px 2px}
+.fluxopasso{flex:1 1 0;min-width:140px;position:relative;cursor:pointer;border:2px solid var(--line);background:#fff;border-radius:10px;padding:8px 10px;transition:.15s}
+.fluxopasso:hover{border-color:var(--teal)}
+.fluxopasso .n{display:inline-flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;background:#DFE7EB;font-size:11.5px;font-weight:700;margin-right:6px}
+.fluxopasso .t{font-weight:600;font-size:13px}
+.fluxopasso .st{font-size:11px;margin-top:5px;font-weight:600;color:var(--muted)}
+.fluxopasso .num{font-size:12px;color:var(--muted);margin-top:1px}
+.fluxopasso.feito{border-color:var(--teal);background:var(--teal-soft)} .fluxopasso.feito .n{background:var(--teal);color:#fff} .fluxopasso.feito .st{color:var(--teal-deep)}
+.fluxopasso.and{border-color:var(--amber);background:var(--amber-soft)} .fluxopasso.and .n{background:var(--amber);color:#fff} .fluxopasso.and .st{color:#8A5A12}
+.fluxopasso.aqui{box-shadow:0 0 0 3px rgba(10,127,118,.25)}
+.fluxopasso.aqui::after{content:"você está aqui";position:absolute;top:-9px;right:8px;background:var(--ink);color:#fff;font-size:10px;padding:1px 7px;border-radius:999px}
+.fluxoseta{flex:0 0 22px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:17px}
+.fluxonums{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin:10px 0}
+.fluxonums .nb{border:1px solid var(--line-soft);border-radius:8px;padding:8px 10px;background:#fff}
+.fluxonums .nb b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+.fluxonums .nb span{font-size:12px;color:var(--muted)}
+.fluxonums .nb.ok b{color:var(--teal-deep)} .fluxonums .nb.al b{color:#8A5A12} .fluxonums .nb.bad b{color:var(--brick)}
+.fluxohist{font-size:12px;color:var(--muted);margin:0;padding-left:16px;max-height:320px;overflow:auto}
+.fluxohist li{margin:3px 0}
+.fluxoregras{background:#F5F8FA;border:1px dashed var(--line);border-radius:8px;padding:8px 12px;margin-top:12px;font-size:12.5px}
+.fluxoregras ul{margin:4px 0 0;padding-left:18px}
+.lotesgrade{display:grid;grid-template-columns:280px 1fr;gap:16px;align-items:start}
+.lotesgrade .card,.lotesduas .card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.lotesgrade h3,.lotesduas h3{margin:0 0 8px;font-size:15px}
+.lotesduas{display:grid;grid-template-columns:1.6fr 1fr;gap:14px;margin-top:14px}
+.lotecard{display:block;width:100%;text-align:left;border:1px solid var(--line-soft);background:#fff;border-radius:8px;padding:9px 11px;margin-top:8px;cursor:pointer;font:inherit;color:inherit}
+.lotecard.on{border-color:var(--teal);box-shadow:0 0 0 2px var(--teal-soft)}
+.lotecard b{display:block;font-size:13px}
+.lotecard .quem{display:block;font-size:11px;color:var(--muted)}
+.lotecard .mini{display:flex;gap:3px;margin:6px 0 4px}
+.lotecard .mini i{flex:1;height:5px;border-radius:3px;background:#DFE7EB}
+.lotecard .mini i.ok{background:var(--teal)} .lotecard .mini i.and{background:var(--amber)}
+.qconta{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:10px 0;background:#F8FAFB}
+.qcontatopo{font-size:14px}
+.qcontatopo b{font-size:16px;font-variant-numeric:tabular-nums}
+.qok{color:var(--teal-deep);font-weight:600}
+@media(max-width:900px){ .lotesgrade,.lotesduas{grid-template-columns:1fr} }
 .abastela{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 18px;padding-bottom:12px;border-bottom:1px solid var(--line)}
 /* menu "Mais ações" do Cadastro */
 .maisacoes{position:relative}
@@ -2393,6 +2434,7 @@ function snapshot(){
     leadsAtrib: DB.leadsAtrib || {},
     statusLead: DB.statusLead || null,
     logArquivo: DB.logArquivo || {},
+    fluxoLotes: DB.fluxoLotes || {},
     salvoEm: meuCarimbo,
     frentes: DB.frentes.map(f => Object.assign({}, f, {
       ramos: (f.ramos || []).map(r => { const c = Object.assign({}, r); delete c.equipe; return c; })
@@ -6367,6 +6409,7 @@ function desenhaPicker(){
   else if(pickEtapa === "modelo05") pickBuscaCidade(w, "cnae");
   else if(pickEtapa === "lista") pickBuscaCidade(w, "lista");
   else if(pickEtapa === "gmaps") pickBuscaCidade(w, "gmaps");
+  else if(pickEtapa === "lotes") pickLotes(w);
   else if(pickEtapa === "novos") pickLeadsArquivo(w, "novos");
   else if(pickEtapa === "receita") pickBuscar(w);
   else if(pickEtapa === "usuarios") pickUsuarios(w);
@@ -8679,7 +8722,10 @@ const M04_STATUS = {
   verificar:  ["Conferir", "st-doing"],
   sem_cnpj:   ["Sem CNPJ", "st-todo"],
   mei:        ["MEI", "st-todo"],
-  outro_ramo: ["Outro ramo", "st-late"]
+  outro_ramo: ["Outro ramo", "st-late"],
+  ja_cadastro:["Já no Cadastro", "st-todo"],
+  fechado:    ["Fechado no Maps", "st-late"],
+  duplicado:  ["Repetido", "st-todo"]
 };
 
 window.addEventListener("message", ev => {
@@ -9163,6 +9209,8 @@ async function m04Importar(est){
     const cfgB = m04BuscaCfg(est.termo), soNovas = cfgB.soNovas !== false;
     const ramoCad = String(cfgB.ramo || "").trim();
     const buscaId = String(est.criadoEm || est.termo), rotulo = cfgB.rotulo || m04RotuloBusca(est);
+    /* lista do Maps: os resultados entram no lote de revisão (que pode juntar várias levas do mesmo lote) */
+    const stagingId = (est.lugaresProntos && cfgB.qrevId) || buscaId;
     const st = m04Stats(buscaId);
     const assin = new Map();
     const indexa = x => m04Assinaturas(x).forEach(a => { if(!assin.has(a)) assin.set(a, x); });
@@ -9188,7 +9236,8 @@ async function m04Importar(est){
         let antigo = existentes.get(r.chave);
         if(soNovas){
           const par = antigo || m04Assinaturas(r).map(a => assin.get(a)).find(Boolean);
-          if(par){
+          if(par && est.lugaresProntos){ r.status = "ja_cadastro"; r.motivo = "já está no Cadastro de leads"; antigo = null; }
+          else if(par){
             /* já estava: ignora. Exceções: veio da lista importada (preliminar) ou desta mesma busca — atualiza;
                estava "Sem CNPJ" e agora veio com CNPJ — completa o lead */
             if(par.preliminar){ antigo = par; st.novas++; novasCid++; if(r.status === "aprovado") st.aprovadas++; }
@@ -9214,13 +9263,13 @@ async function m04Importar(est){
         novo.capturadoEm = (antigo && (antigo.capturadoEm || antigo.importadoEm)) || agoraIso;
         ramoAplicar(novo, filtro);
         if(!antigo){ st.novas++; novasCid++; if(novo.status === "aprovado") st.aprovadas++; }
-        indexa(novo); existentes.set(novo.chave, novo);
+        if(!est.lugaresProntos){ indexa(novo); existentes.set(novo.chave, novo); }
         const d = cnpjDig(r.cnpj);
         if(d.length === 14 && r.receita){ try { qualifGravar(d, { receita: r.receita }); REQ.cache[d] = r.receita; } catch(e){} }
         return novo;
       }).filter(Boolean);
       /* lista do Maps em qualificação: fica na área de revisão de Qualificar Leads (não vai direto para o Cadastro) */
-      if(est.lugaresProntos){ if(lista.length) await qrevLoteGravar(buscaId, rotulo, ramoCad || est.termo, lista); }
+      if(est.lugaresProntos){ if(lista.length) await qrevLoteGravar(stagingId, rotulo, ramoCad || est.termo, lista); }
       else {
         if(remover.length) await NovosDB.excluir(remover);
         if(lista.length) await NovosDB.gravar(lista);
@@ -9239,7 +9288,9 @@ async function m04Importar(est){
     }
     if(M04.rodada && M04.rodada.cidades && est.lugaresProntos){
       M04.rodada = null; qrevPinta();
-      const L = (await qrevLotes())[buscaId], n = L ? Object.keys(L.regs).length : 0;
+      const L = (await qrevLotes())[stagingId], n = L ? Object.keys(L.regs).length : 0;
+      if(L && !L.concluidoEm){ L.concluidoEm = new Date().toISOString(); const t2 = await qrevLotes(); t2[stagingId] = L; await qrevLotesGravar(t2); }
+      fluxoHistPorStaging(stagingId, "terminou de conferir no MaisCNPJ e na Receita", "A extensão");
       toast("Qualificação concluída: " + n + " leads para revisar em Qualificar Leads. Escolha quem vai para a lista de leads.");
       novos = Math.max(novos, 1);
     }
@@ -9693,6 +9744,11 @@ function pickModelo04(host, modo){
         modo: cnae ? "cnae" : "maps", cnaes, vizinhas: cnae && selEsc.value === "cidades" && ckViz.checked, conhecidos,
         cnaesExcluir: ckCnSempre.checked ? cnaesDoTexto(inCnExc.value) : [] } }, 60000);
     /* guarda como foi a busca, para seguir sozinha nas cidades vizinhas se acabar antes da meta do dia */
+    if(resp && resp.existe && resp.criadoEm){
+      const cids = escolhidas.length ? escolhidas.slice(0, 2).join(", ") + (escolhidas.length > 2 ? "…" : "") : selUf.value;
+      fluxoNovo({ id: "b" + resp.criadoEm, tipo:"busca", modo: cnae ? "cnae" : "maps", buscaId: String(resp.criadoEm), nome: cids + " · " + (cnae ? "CNAE " + inCnae.value.trim() : "Maps “" + termo + "”") });
+      fluxoHist("b" + resp.criadoEm, "começou a busca " + (cnae ? "pelo CNAE" : "pelo Google Maps") + " (ramo " + ((!cnae && inRamoCad.value.trim()) || termo) + ")");
+    }
     m04UltimaBuscaGravar({ termo, uf: selUf.value, opcoes:{ intervalo: +selInt.value, maxPorCidade: +selMax.value, dividir: ckDiv.checked, maisTpl: inTpl.value.trim(),
       palavras: inPal.value.trim(), janela: selJan.value, modo: cnae ? "cnae" : "maps", cnaes, soNovas: ckNov.checked,
       cnaesExcluir: ckCnSempre.checked ? cnaesDoTexto(inCnExc.value) : [] } });
@@ -10008,6 +10064,11 @@ function pickNovos(host){
   setTimeout(cnaeAutoConferir, 2500);
   acoes.append(btEnviar, lbQtd, btXls, btCsv, btExcCid, btFiltro, mais, inCli, info);
 
+  /* desenho do fluxo quando o Cadastro está aberto num lote */
+  const fxCad = el("div"); fxCad.style.marginBottom = "14px";
+  { const ref = [...host.querySelectorAll(".metabox")].pop(); if(ref) ref.before(fxCad); else host.append(fxCad); }
+  { const f0 = NOVOS.filtro, Lf = f0.buscaId ? Object.values(fluxoLotes()).find(L => String(L.qrevId) === String(f0.buscaId) || String(L.buscaId) === String(f0.buscaId)) : null;
+    if(Lf) fluxoDiagrama(fxCad, Lf.id, Lf.tipo === "busca" ? (NOVOS.divisao === "campanhas" ? 2 : 1) : (NOVOS.divisao === "campanhas" ? 5 : 4)); }
   const mostrando = el("div","nmostrando");
   const divisoes = el("div","ndivisoes");
   barra.before(divisoes, mostrando);
@@ -16189,43 +16250,462 @@ function pickLeadsArquivo(host, aba){
   finally { SEM_TRILHA = false; }
 }
 
-/* ---------- Exportar do Google Maps: a pessoa busca e rola no Maps; o painel lê a lista e baixa ---------- */
-const GMAPS = { itens:[], busca:"", fim:false };
+/* ===================== Acompanhamento do fluxo dos lotes =====================
+   Cada busca vira um lote. O lote (nome, etapa, números de cada etapa e histórico) fica no banco do CRM,
+   compartilhado com a equipe. As unidades em si ficam neste navegador (Cadastro, lista do Maps e revisão).
+   Lote do Google Maps: 1 Buscar no Maps → 2 Filtrar categorias → 3 Conferir CNPJ e Receita → 4 Escolher leads
+   → 5 Lista de leads → 6 Exportar campanha. Voltar para uma etapa não desfaz o que já passou para frente. */
+function fluxoQuem(){ try { return (USR && (USR.nome || USR.login || USR.email)) || "Você"; } catch(e){ return "Você"; } }
+function fluxoLotes(){ return (typeof DB !== "undefined" && DB && DB.fluxoLotes) || {}; }
+function fluxoLote(id){ return fluxoLotes()[id] || null; }
+function fluxoSalvar(L){
+  if(typeof DB === "undefined" || !DB) return;
+  DB.fluxoLotes = DB.fluxoLotes || {};
+  L.atualizadoEm = new Date().toISOString(); L.por = fluxoQuem();
+  DB.fluxoLotes[L.id] = L;
+  try { persist(); } catch(e){}
+}
+function fluxoHist(id, txt, quem){
+  const L = fluxoLote(id); if(!L) return;
+  L.hist = (L.hist || []).concat([{ em: new Date().toISOString(), quem: quem || fluxoQuem(), txt }]).slice(-200);
+  fluxoSalvar(L);
+}
+const fluxoPorStaging = id => Object.values(fluxoLotes()).find(L => L.qrevId && String(L.qrevId) === String(id)) || null;
+function fluxoHistPorStaging(id, txt, quem){ const L = fluxoPorStaging(id); if(L) fluxoHist(L.id, txt, quem); }
+function fluxoNovo(L){ L.criadoEm = L.criadoEm || new Date().toISOString(); L.hist = L.hist || []; fluxoSalvar(L); return L; }
+
+/* lista do Maps de cada lote (neste navegador) */
+async function gmLotes(){ let m = null; try { m = await NovosDB.meta("gmapsLotes"); } catch(e){} return m && typeof m === "object" && !(m instanceof IDBRequest) ? m : {}; }
+async function gmLoteGravar(id, dados){ const t = await gmLotes(); t[id] = Object.assign(t[id] || {}, dados); await NovosDB.metaGravar("gmapsLotes", t); }
+
+/* números de cada etapa (com os dados deste navegador; sem eles, usa os últimos números guardados no lote) */
+async function fluxoCalcular(L){
+  if(!L) return null;
+  if(L.tipo === "busca") return fluxoCalcBusca(L);
+  const g = (await gmLotes())[L.id];
+  const S = L.qrevId ? (await qrevLotes())[L.qrevId] : null;
+  if(!g && !S) return Object.assign({ remoto:true }, L.contagens || {});
+  const cf = gmCatFora(), desc = new Set((g && g.desc) || []), forcar = new Set((g && g.forcar) || []), env = new Set((g && g.enviados) || []);
+  const itens = (g && g.itens) || [];
+  const foraCat = itens.filter(x => !desc.has(x.href) && !forcar.has(x.href) && cf.has(gmCat(x))).length;
+  const foraDesc = itens.filter(x => desc.has(x.href)).length;
+  const enviados = itens.filter(x => env.has(x.href)).length || (S && S.total) || 0;
+  const prontos = itens.filter(x => !desc.has(x.href) && !env.has(x.href) && (forcar.has(x.href) || !cf.has(gmCat(x)))).length;
+  const regs = S ? Object.values(S.regs || {}) : [], saidos = S ? Object.values(S.saidos || {}) : [];
+  const total = (S && S.total) || enviados;
+  const conferidas = regs.length + saidos.length;
+  const porSt = k => regs.filter(r => r.status === k).length + saidos.filter(r => r.status === k).length;
+  const naLista = saidos.filter(x => x.destino === "lista").length, descEsc = saidos.filter(x => x.destino === "descartado").length;
+  let lista = [], export_ = 0, comCel = 0;
+  if(L.qrevId){ lista = (await NovosDB.todos()).filter(x => String(x.buscaId) === String(L.qrevId)); export_ = lista.filter(x => x.campanha).length; comCel = lista.filter(novosTemCelular).length; }
+  const p = [];
+  const st = (feito, and) => feito ? "feito" : and ? "and" : "pend";
+  p.push({ t:"Buscar no Maps", st: st(itens.length > 0), num: itens.length + " unidades lidas",
+    checks:[[itens.length > 0, "Busca feita no Google Maps" + (L.busca ? ": “" + L.busca + "”" : "")], [!!(g && g.fim), "Lista rolada até o fim (“Você chegou ao final da lista”)"], [itens.length > 0, itens.length + " unidades lidas no painel"]],
+    nums:[[itens.length, "unidades lidas", ""]] });
+  p.push({ t:"Filtrar categorias", st: st(enviados > 0 && prontos === 0, itens.length > 0), num: (itens.length - foraCat - foraDesc) + " do ramo · " + (foraCat + foraDesc) + " fora",
+    checks:[[itens.length > 0 && (foraCat > 0 || enviados > 0), "Categorias revisadas"], [enviados > 0, enviados + " mandadas para conferir"], [prontos === 0 && itens.length > 0, prontos ? prontos + " prontas, ainda não mandadas" : "Nada pendente para mandar"]],
+    nums:[[itens.length - foraCat - foraDesc, "do meu ramo", "ok"], [foraCat, "de outra categoria", "bad"], [foraDesc, "descartadas por você", "bad"], [prontos, "prontas para conferir", prontos ? "al" : ""]] });
+  p.push({ t:"Conferir CNPJ e Receita", st: st(total > 0 && conferidas >= total, total > 0), num: conferidas + " de " + total + " conferidas",
+    checks:[[total > 0, total + " unidades mandadas para conferir"], [conferidas >= total && total > 0, "Conferência concluída" + (total > conferidas ? " (faltam " + (total - conferidas) + ")" : "")], [conferidas > 0, "CNPJ, natureza, abertura e CNAEs na Receita"]],
+    nums:[[total, "vieram da etapa anterior", ""], [conferidas, "conferidas", "ok"], [Math.max(0, total - conferidas), "na fila", total > conferidas ? "al" : ""]] });
+  p.push({ t:"Escolher leads", st: st(total > 0 && conferidas >= total && regs.length === 0, conferidas > 0), num: naLista + " escolhidos · " + regs.length + " pendentes",
+    checks:[[naLista > 0, "Leads escolhidos e mandados para a lista (" + naLista + ")"], [regs.length === 0 && conferidas > 0, regs.length ? regs.length + " ainda para decidir" : "Todos decididos"], [descEsc >= 0 && conferidas > 0, descEsc + " descartados"]],
+    nums:[[porSt("aprovado"), "LTDA com 6 meses ou mais", "ok"], [porSt("aguardando"), "LTDA com menos de 6 meses", "al"], [porSt("fora"), "fora do requisito (não LTDA…)", "bad"], [porSt("mei"), "MEI", ""],
+          [porSt("sem_cnpj"), "sem CNPJ", "al"], [porSt("outro_ramo"), "outro ramo (CNAE/nome)", "bad"], [porSt("verificar"), "para conferir", "al"], [porSt("ja_cadastro"), "já no Cadastro", ""], [porSt("fechado"), "fechados no Maps", "bad"], [porSt("duplicado"), "repetidos", ""]] });
+  p.push({ t:"Lista de leads", st: st(lista.length > 0 && regs.length === 0 && conferidas >= total, lista.length > 0), num: lista.length + " na lista",
+    checks:[[lista.length > 0, lista.length + " leads na lista de leads"], [comCel === lista.length && lista.length > 0, comCel + " com celular" + (lista.length - comCel ? " · " + (lista.length - comCel) + " só fixo (frios)" : "")]],
+    nums:[[lista.length, "na lista de leads", "ok"], [comCel, "com celular", ""], [lista.length - comCel, "só fixo (frios)", lista.length - comCel ? "al" : ""]] });
+  p.push({ t:"Exportar campanha", st: st(lista.length > 0 && export_ >= lista.length, export_ > 0), num: export_ ? export_ + " exportados" : "não exportado",
+    checks:[[export_ > 0, export_ + " exportados para Excel (campanha)"], [export_ >= lista.length && lista.length > 0, export_ < lista.length ? (lista.length - export_) + " ainda não exportados" : "Tudo exportado"]],
+    nums:[[export_, "exportados", "ok"], [Math.max(0, lista.length - export_), "falta exportar", ""]] });
+  const out = { passos: p, etapa: Math.max(0, p.findIndex(x => x.st !== "feito")) };
+  if(out.etapa < 0 || p.every(x => x.st === "feito")) out.etapa = p.length - 1;
+  return out;
+}
+/* lote de uma busca por cidade (Maps, CNAE ou lista do MaisCNPJ): 3 etapas */
+async function fluxoCalcBusca(L){
+  const lista = (await NovosDB.todos()).filter(x => String(x.buscaId) === String(L.buscaId));
+  if(!lista.length && L.contagens) return Object.assign({ remoto:true }, L.contagens);
+  const aprov = lista.filter(x => x.status === "aprovado"), exp = lista.filter(x => x.campanha).length;
+  const est = M04.estado && String(M04.estado.criadoEm) === String(L.buscaId) ? M04.estado : null;
+  const prontas = est ? (est.cidades || []).filter(c => c.status === "pronta").length : null, tot = est ? (est.cidades || []).length : null;
+  const conc = est ? !!est.concluido : lista.length > 0;
+  const st = (f, a) => f ? "feito" : a ? "and" : "pend";
+  const p = [
+    { t:"Buscar e conferir", st: st(conc, !!est || lista.length > 0), num: tot != null ? prontas + " de " + tot + " cidades" : lista.length + " leads",
+      checks:[[true, "Busca começada"], [conc, conc ? "Busca concluída" : "Busca rodando"]], nums:[[lista.length, "leads da busca", ""], [aprov.length, "aprovados", "ok"]] },
+    { t:"Lista de leads", st: st(aprov.length > 0 && conc, aprov.length > 0), num: aprov.length + " aprovados",
+      checks:[[aprov.length > 0, aprov.length + " aprovados na lista"]], nums:[[aprov.length, "aprovados", "ok"], [lista.filter(x => x.status === "outro_ramo").length, "outro ramo", "bad"], [lista.filter(x => x.status === "mei").length, "MEI", ""]] },
+    { t:"Exportar campanha", st: st(aprov.length > 0 && exp >= aprov.length, exp > 0), num: exp ? exp + " exportados" : "não exportado",
+      checks:[[exp > 0, exp + " exportados"]], nums:[[exp, "exportados", "ok"]] }
+  ];
+  return { passos: p, etapa: Math.max(0, p.findIndex(x => x.st !== "feito")) };
+}
+/* guarda os números no lote (para a equipe ver de outro computador), no máximo a cada 5 s por lote */
+const FLUXO_T = {};
+async function fluxoAtualizar(id){
+  const L = fluxoLote(id); if(!L) return;
+  if(FLUXO_T[id] && Date.now() - FLUXO_T[id] < 5000){ clearTimeout(FLUXO_T["t" + id]); FLUXO_T["t" + id] = setTimeout(() => fluxoAtualizar(id), 5200); return; }
+  FLUXO_T[id] = Date.now();
+  const c = await fluxoCalcular(L); if(!c || c.remoto) return;
+  const novo = JSON.stringify({ passos: c.passos, etapa: c.etapa });
+  if(JSON.stringify(L.contagens || null) !== novo){ L.contagens = JSON.parse(novo); fluxoSalvar(L); }
+  fluxoRedesenhar();
+}
+function fluxoAtualizarPorStaging(id){ const L = fluxoPorStaging(id); if(L) fluxoAtualizar(L.id); }
+const FLUXO_UI = [];
+function fluxoRedesenhar(){ FLUXO_UI.splice(0, FLUXO_UI.length, ...FLUXO_UI.filter(f => document.body.contains(f.host))); FLUXO_UI.forEach(f => f.desenhar()); }
+
+/* abrir uma etapa do lote (clique no desenho) */
+async function fluxoIr(L, i){
+  if(L.tipo === "busca"){
+    if(i === 0){ pickEtapa = L.modo === "cnae" ? "modelo05" : "modelo04"; }
+    else { Object.assign(NOVOS.filtro, { buscaId: String(L.buscaId), status:"", uf:"", cidade:"", ramo:"", busca:"", diaMeta:"" }); NOVOS.divisao = i === 1 ? "leads" : "campanhas"; NOVOS.campSel = ""; pickEtapa = "novos"; }
+  } else if(i <= 1){ await gmapsAbrir(L.id); pickEtapa = "gmaps"; }
+  else if(i <= 3){ QREV.lote = L.qrevId || ""; QREV.aba = i === 2 ? QREV.aba : "aprovado"; pickEtapa = "qualificar"; }
+  else { Object.assign(NOVOS.filtro, { buscaId: String(L.qrevId || ""), status:"", uf:"", cidade:"", ramo:"", busca:"", diaMeta:"" }); NOVOS.divisao = i === 4 ? "leads" : "campanhas"; NOVOS.campSel = ""; pickEtapa = "novos"; }
+  desenhaPicker(); $("#picker").scrollTop = 0;
+}
+/* desenho do fluxo (compacto no topo das telas, completo na tela de lotes) */
+function fluxoDiagrama(host, id, aquiFixo, aoClicar){
+  const box = el("div","fluxobox"); host.append(box);
+  const reg = { host: box, desenhar: async () => {
+    const L = fluxoLote(id); if(!L){ box.innerHTML = ""; return; }
+    const c = await fluxoCalcular(L); if(!c || !c.passos){ box.innerHTML = ""; return; }
+    box.innerHTML = "";
+    const topo = el("div","fluxotopo");
+    topo.append(el("b",null,"Lote: " + (L.nome || L.id)), el("span","leadshint"," · etapa " + (c.etapa + 1) + " de " + c.passos.length + (L.por ? " · última ação: " + L.por + " " + fluxoQuando(L.atualizadoEm) : "") + (c.remoto ? " · números guardados (as unidades estão em outro computador)" : "")));
+    const ver = el("button","btn sm","Ver todos os lotes"); ver.onclick = () => { FLUXO.sel = id; pickEtapa = "lotes"; desenhaPicker(); $("#picker").scrollTop = 0; };
+    topo.append(ver); box.append(topo);
+    const f = el("div","fluxo");
+    c.passos.forEach((p, i) => {
+      if(i) f.append(el("div","fluxoseta","→"));
+      const aqui = aquiFixo != null ? aquiFixo === i : c.etapa === i;
+      const d = el("div","fluxopasso " + p.st + (aqui ? " aqui" : ""));
+      const feitos = p.checks.filter(x => x[0]).length;
+      const cab = el("div"); cab.append(el("span","n", p.st === "feito" ? "✓" : String(i + 1)), el("span","t", p.t)); d.append(cab);
+      d.append(el("div","st", (p.st === "feito" ? "Feito" : p.st === "and" ? "Em andamento" : "A fazer") + " · " + feitos + "/" + p.checks.length), el("div","num", p.num));
+      d.title = "Abrir esta etapa"; d.onclick = () => aoClicar ? aoClicar(i) : fluxoIr(L, i);
+      f.append(d);
+    });
+    box.append(f);
+  } };
+  FLUXO_UI.push(reg); reg.desenhar();
+  return reg;
+}
+function fluxoQuando(iso){
+  if(!iso) return ""; const d = new Date(iso), m = Math.round((Date.now() - d) / 60000);
+  return m < 1 ? "agora" : m < 60 ? "há " + m + " min" : m < 24 * 60 ? "há " + Math.round(m / 60) + " h" : d.toLocaleDateString("pt-BR", { day:"2-digit", month:"2-digit" });
+}
+
+/* ---------- tela "Lotes em andamento" ---------- */
+const FLUXO = { sel:"", aqui:null, uSel:new Set(), uEtapa:"" };
+function pickLotes(host){
+  trilha(host, ["Lotes em andamento"], "frentes");
+  const hd = el("div","pickhead"); hd.append(el("h1",null,"Lotes em andamento"));
+  hd.append(el("p",null,"Cada busca vira um lote. O desenho mostra o que já foi feito em cada etapa; clique numa etapa para abrir (ou voltar para) ela. " +
+    "Os lotes e o histórico ficam no CRM, para a equipe toda ver.")); host.append(hd);
+  const grade = el("div","lotesgrade"); host.append(grade);
+  const lado = el("div","card lotesl"), main = el("div"); grade.append(lado, main);
+  const lotes = Object.values(fluxoLotes()).filter(L => !L.arquivado).sort((a, b) => String(b.atualizadoEm || b.criadoEm).localeCompare(String(a.atualizadoEm || a.criadoEm)));
+  lado.append(el("h3",null,"Lotes"));
+  if(!lotes.length){ lado.append(el("p","leadshint","Nenhum lote ainda. Comece em Buscar por cidade (Exportar do Google Maps, Pelo Google Maps, Pelo CNAE ou Importar lista do MaisCNPJ).")); return; }
+  if(!FLUXO.sel || !fluxoLote(FLUXO.sel)) FLUXO.sel = lotes[0].id;
+  lotes.forEach(L => {
+    const b = el("button","lotecard" + (L.id === FLUXO.sel ? " on" : ""));
+    const c = L.contagens || {};
+    b.append(el("b",null, L.nome || L.id), el("span","quem", (L.busca ? "“" + L.busca + "” · " : "") + new Date(L.criadoEm).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" })));
+    const mini = el("div","mini"); (c.passos || []).forEach(p => mini.append(el("i", p.st === "feito" ? "ok" : p.st === "and" ? "and" : ""))); b.append(mini);
+    if(c.passos) b.append(el("span","quem","Etapa " + ((c.etapa || 0) + 1) + " de " + c.passos.length + " · " + c.passos[c.etapa || 0].t + (L.por ? " · " + L.por + ", " + fluxoQuando(L.atualizadoEm) : "")));
+    b.onclick = () => { FLUXO.sel = L.id; FLUXO.aqui = null; FLUXO.uSel.clear(); desenhaPicker(); };
+    lado.append(b);
+    /* números de agora (com os dados deste navegador) */
+    fluxoCalcular(L).then(c => { if(!c || !c.passos || c.remoto) return;
+      mini.innerHTML = ""; c.passos.forEach(p => mini.append(el("i", p.st === "feito" ? "ok" : p.st === "and" ? "and" : "")));
+      const q = b.querySelectorAll(".quem"); const ult = q[q.length - 1];
+      const txt = "Etapa " + (c.etapa + 1) + " de " + c.passos.length + " · " + c.passos[c.etapa].t + (L.por ? " · " + L.por + ", " + fluxoQuando(L.atualizadoEm) : "");
+      if(q.length > 1) ult.textContent = txt; else b.append(el("span","quem",txt));
+      fluxoAtualizar(L.id); }).catch(() => {});
+  });
+  const L = fluxoLote(FLUXO.sel);
+  const hd2 = el("div","leadsacoes"); hd2.style.alignItems = "center";
+  hd2.append(el("h2",null, L.nome || L.id));
+  const btArq = el("button","btn sm","Arquivar lote"); btArq.title = "Some da lista de lotes (os leads continuam no Cadastro)";
+  btArq.onclick = () => { if(!confirm("Arquivar o lote " + (L.nome || "") + "? Os leads continuam no Cadastro.")) return; L.arquivado = true; fluxoHist(L.id, "arquivou o lote"); FLUXO.sel = ""; desenhaPicker(); };
+  hd2.append(btArq); main.append(hd2);
+  const diag = fluxoDiagrama(main, L.id, FLUXO.aqui, i => { FLUXO.aqui = i; desenhaPicker(); });
+  const etapa = el("div","card"); etapa.style.marginTop = "12px"; main.append(etapa);
+  const duas = el("div","lotesduas"); main.append(duas);
+  const unid = el("div","card"), hist = el("div","card"); duas.append(unid, hist);
+  (async () => {
+    const c = await fluxoCalcular(L); if(!c || !c.passos) return;
+    const i = FLUXO.aqui != null ? FLUXO.aqui : c.etapa, p = c.passos[i];
+    etapa.append(el("h3",null,"Etapa " + (i + 1) + " · " + p.t));
+    etapa.append(el("p","leadshint", i < c.etapa ? "Etapa já feita: dá para voltar aqui e mandar mais unidades para frente. O que já passou não muda." : i === c.etapa ? "Etapa atual do lote." : "Próxima etapa."));
+    const nums = el("div","fluxonums");
+    p.nums.filter(n => n[0] || i !== 3).forEach(n => { const d = el("div","nb " + (n[2] || "")); d.append(el("b",null, Number(n[0] || 0).toLocaleString("pt-BR")), el("span",null,n[1])); nums.append(d); });
+    etapa.append(nums);
+    if(i === 3){ const soma = p.nums.reduce((a, n) => a + (+n[0] || 0), 0), tot = c.passos[2].nums[0][0];
+      etapa.append(el("p","leadshint" + (soma === tot ? "" : " nfrio"), "Soma das situações: " + soma + " de " + tot + " que vieram da etapa anterior" + (soma === tot ? " ✓ bate" : " (faltam " + (tot - soma) + " na fila)"))); }
+    p.checks.forEach(ch => { const l = el("label","qualcheck"); l.style.margin = "4px 0"; const k = el("input"); k.type = "checkbox"; k.checked = !!ch[0]; k.disabled = true; l.append(k, document.createTextNode(" " + ch[1])); etapa.append(l); });
+    const ac = el("div","leadsacoes"); ac.style.marginTop = "10px";
+    const abrir = el("button","btn primary","Abrir esta etapa"); abrir.onclick = () => fluxoIr(L, i); ac.append(abrir);
+    if(i > 0){ const v = el("button","btn","‹ Ver a etapa " + i); v.onclick = () => { FLUXO.aqui = i - 1; desenhaPicker(); }; ac.append(v); }
+    etapa.append(ac);
+    /* histórico */
+    hist.append(el("h3",null,"Histórico do lote"));
+    const ul = el("ul","fluxohist");
+    (L.hist || []).slice().reverse().slice(0, 60).forEach(h => { const li = el("li"); li.append(el("b",null, new Date(h.em).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) + " "), document.createTextNode(h.quem + " " + h.txt)); ul.append(li); });
+    if(!(L.hist || []).length) ul.append(el("li",null,"Sem ações ainda."));
+    hist.append(ul);
+    const rg = el("div","fluxoregras");
+    rg.innerHTML = "<b>Regras de ir e voltar</b><ul><li>Voltar para uma etapa anterior <b>não desfaz</b> o que já passou para frente.</li>" +
+      "<li>Dá para escolher mais leads depois (ex.: os “Aguardando 6 meses”) e mandar só eles.</li><li>Um lead que já foi para a lista pode <b>voltar para a escolha</b>: sai da lista de leads e da meta do dia.</li>" +
+      "<li>Lead já exportado numa campanha só volta pelo “remarketing”.</li></ul>";
+    hist.append(rg);
+    /* onde está cada unidade */
+    if(L.tipo !== "busca") await lotesUnidades(unid, L); else { unid.append(el("h3",null,"Onde estão os leads")); unid.append(el("p","leadshint","Os leads desta busca estão no Cadastro: clique em “Lista de leads” no desenho.")); }
+  })();
+}
+/* tabela "Onde está cada unidade" do lote do Maps, com ir e voltar */
+async function lotesUnidades(host, L){
+  host.innerHTML = "";
+  host.append(el("h3",null,"Onde está cada unidade"));
+  const g = (await gmLotes())[L.id];
+  if(!g){ host.append(el("p","leadshint","As unidades deste lote estão em outro computador (o lote foi feito lá). Aqui aparecem só os números.")); return; }
+  const S = L.qrevId ? (await qrevLotes())[L.qrevId] : null;
+  const cad = new Map((await NovosDB.todos()).filter(x => L.qrevId && String(x.buscaId) === String(L.qrevId)).map(x => [x.chave, x]));
+  const cf = gmCatFora(), desc = new Set(g.desc || []), forcar = new Set(g.forcar || []), env = new Set(g.enviados || []), cancel = new Set((S && S.cancel) || []);
+  const pid = h => (String(h || "").match(/0x[0-9a-f]+:0x[0-9a-f]+/i) || [h])[0].toLowerCase();
+  const regPor = new Map(), saiPor = new Map();
+  if(S){ Object.values(S.regs || {}).forEach(r => regPor.set(pid(r.hrefLista || r.link), r)); Object.entries(S.saidos || {}).forEach(([k, x]) => saiPor.set(pid(x.href), Object.assign({ chave:k }, x))); }
+  const linhas = (g.itens || []).map(x => {
+    const k = pid(x.href), r = regPor.get(k), sa = saiPor.get(k);
+    let et, cod, sit = "", rec = null;
+    if(desc.has(x.href)){ et = "2 · Descartada no filtro"; cod = "f_desc"; }
+    else if(!forcar.has(x.href) && cf.has(gmCat(x))){ et = "2 · Fora (categoria)"; cod = "f_cat"; sit = gmCat(x); }
+    else if(!env.has(x.href)){ et = "2 · Pronta para conferir"; cod = "pronta"; }
+    else if(r){ et = "4 · Escolher leads"; cod = "escolha"; rec = r; sit = (M04_STATUS[r.status] || [r.status])[0]; }
+    else if(sa && sa.destino === "lista"){ rec = cad.get(sa.chave); et = rec && rec.campanha ? "6 · Exportado" : "5 · Na lista de leads"; cod = rec && rec.campanha ? "exportado" : "lista"; sit = (M04_STATUS[sa.status] || [sa.status])[0]; }
+    else if(sa){ et = "4 · Descartado na escolha"; cod = "desc_esc"; sit = (M04_STATUS[sa.status] || [sa.status])[0]; }
+    else { et = cancel.has(x.href) ? "3 · Sai ao terminar de conferir" : "3 · Conferindo"; cod = "conferindo"; }
+    return { x, et, cod, sit, r, sa, rec };
+  });
+  const etapas = [...new Set(linhas.map(l => l.et))].sort();
+  const bar = el("div","leadsacoes"); bar.style.cssText = "flex-wrap:wrap;align-items:center";
+  const sel = el("select"); sel.innerHTML = '<option value="">Etapa: todas (' + linhas.length + ')</option>' + etapas.map(e => '<option>' + esc(e) + '</option>').join("");
+  sel.value = FLUXO.uEtapa; sel.onchange = () => { FLUXO.uEtapa = sel.value; lotesUnidades(host, L); };
+  const marcadas = () => linhas.filter(l => FLUXO.uSel.has(l.x.href));
+  const btV = el("button","btn sm","Voltar marcadas uma etapa"), btF = el("button","btn sm","Mandar marcadas para frente"), btD = el("button","btn sm danger","Descartar marcadas");
+  btV.onclick = () => lotesMover(L, marcadas(), "voltar", host);
+  btF.onclick = () => lotesMover(L, marcadas(), "frente", host);
+  btD.onclick = () => lotesMover(L, marcadas(), "descartar", host);
+  bar.append(sel, btV, btF, btD); host.append(bar);
+  host.append(el("p","leadshint","Voltar: lista → escolha, descartada → escolha, fora/descartada no filtro → pronta. Frente: pronta → conferir (abre a etapa 2), escolha → lista. O que já passou para frente não muda."));
+  const vis = linhas.filter(l => !FLUXO.uEtapa || l.et === FLUXO.uEtapa);
+  const tw = el("div","tablewrap"); tw.style.maxHeight = "520px";
+  const tb = el("table","leadlista"), h = el("tr");
+  const ckA = el("input"); ckA.type = "checkbox"; ckA.checked = vis.length > 0 && vis.every(l => FLUXO.uSel.has(l.x.href));
+  ckA.onchange = () => { vis.forEach(l => ckA.checked ? FLUXO.uSel.add(l.x.href) : FLUXO.uSel.delete(l.x.href)); lotesUnidades(host, L); };
+  const th = el("th"); th.append(ckA); h.append(th); ["Unidade","Etapa","Situação"].forEach(t => h.append(el("th",null,t))); tb.append(h);
+  const pill = cod => ({ lista:"st-done", exportado:"st-done", escolha:"st-doing", conferindo:"st-doing", pronta:"st-todo", f_cat:"st-late", f_desc:"st-late", desc_esc:"st-late" })[cod] || "st-todo";
+  vis.forEach(l => {
+    const tr = el("tr"); const td = el("td","ck"), ck = el("input"); ck.type = "checkbox"; ck.checked = FLUXO.uSel.has(l.x.href);
+    ck.onchange = () => { ck.checked ? FLUXO.uSel.add(l.x.href) : FLUXO.uSel.delete(l.x.href); }; td.append(ck); tr.append(td);
+    const tn = el("td"); const a = el("a","nmaps", l.x.nome || "—"); a.href = l.x.href; a.target = "_blank"; a.rel = "noopener"; tn.append(a);
+    const sub = [l.x.categoria, l.rec && l.rec.cnpj, l.r && l.r.cnpj].filter(Boolean)[0]; if(sub) tn.append(el("div","sub", sub));
+    tr.append(tn); const te = el("td"); te.append(el("span","pill " + pill(l.cod), l.et)); tr.append(te, el("td",null, l.sit || "—"));
+    tb.append(tr);
+  });
+  tw.append(tb); host.append(tw);
+}
+/* ir e voltar das unidades */
+async function lotesMover(L, linhas, acao, host){
+  if(!linhas.length) return toast("Marque as unidades primeiro.");
+  const g = (await gmLotes())[L.id] || {};
+  const desc = new Set(g.desc || []), forcar = new Set(g.forcar || []);
+  const t = await qrevLotes(), S = L.qrevId ? t[L.qrevId] : null;
+  let n = 0, pulou = 0; const paraLista = [], paraDesc = [], paraEscolha = [], deVolta = [];
+  linhas.forEach(l => {
+    if(acao === "voltar"){
+      if(l.cod === "f_cat"){ forcar.add(l.x.href); n++; }
+      else if(l.cod === "f_desc"){ desc.delete(l.x.href); n++; }
+      else if(l.cod === "lista" && l.sa){ deVolta.push(l.sa); }
+      else if(l.cod === "desc_esc" && l.sa && S){ const r = (S.desc || {})[l.sa.chave]; if(r) paraEscolha.push(r); }
+      else pulou++;
+    } else if(acao === "frente"){
+      if(l.cod === "escolha" && l.r) paraLista.push(l.r);
+      else if(l.cod === "pronta" || l.cod === "f_cat" || l.cod === "f_desc"){ if(l.cod === "f_cat") forcar.add(l.x.href); desc.delete(l.x.href); n++; }
+      else pulou++;
+    } else {
+      if(l.cod === "pronta" || l.cod === "f_cat"){ desc.add(l.x.href); n++; }
+      else if(l.cod === "escolha" && l.r) paraDesc.push(l.r);
+      else if(l.cod === "conferindo" && S){ S.cancel = [...new Set((S.cancel || []).concat([l.x.href]))]; n++; }
+      else pulou++;
+    }
+  });
+  await gmLoteGravar(L.id, { desc:[...desc], forcar:[...forcar] });
+  if(S && (acao === "descartar")) await qrevLotesGravar(t);
+  if(paraLista.length) await qrevEnviar(L.qrevId, paraLista);
+  if(paraDesc.length){ const tt = await qrevLotes(), SS = tt[L.qrevId]; SS.desc = SS.desc || {}; SS.saidos = SS.saidos || {};
+    paraDesc.forEach(r => { delete SS.regs[r.chave]; SS.feitos[r.chave] = "descartado"; SS.desc[r.chave] = r; SS.saidos[r.chave] = { status: r.status, destino:"descartado", href: r.hrefLista || "", nome: r.nomeMaps || "" }; });
+    await qrevLotesGravar(tt); }
+  if(paraEscolha.length) await qrevRestaurar(L.qrevId, paraEscolha);
+  if(deVolta.length){ const r = await qrevVoltarDaLista(L.qrevId, deVolta.map(x => x.chave)); n += r.voltou; pulou += r.exportados; }
+  n += paraLista.length + paraDesc.length + paraEscolha.length;
+  fluxoHist(L.id, (acao === "voltar" ? "voltou " : acao === "frente" ? "mandou para frente " : "descartou ") + n + " unidades na tela de lotes");
+  if(GMAPS.loteId === L.id) await gmapsAbrir(L.id);
+  FLUXO.uSel.clear(); toast(n + " unidades movidas" + (pulou ? " · " + pulou + " não podiam ir nessa direção" : "") + ".");
+  if(acao === "frente" && linhas.some(l => l.cod === "pronta" || l.cod === "f_cat" || l.cod === "f_desc")) toast("Prontas para conferir: abra a etapa 2 e clique em “Qualificar esta lista”.");
+  await fluxoAtualizar(L.id); lotesUnidades(host, L);
+}
+/* lead que já foi para a lista volta para a escolha (sai do Cadastro e da meta); exportado não volta */
+async function qrevVoltarDaLista(id, chaves){
+  const t = await qrevLotes(), S = t[id]; if(!S) return { voltou:0, exportados:0 };
+  const cad = new Map((await NovosDB.todos()).map(x => [x.chave, x]));
+  const tirar = [], ok = []; let exportados = 0;
+  chaves.forEach(k => { const r = cad.get(k); if(r && r.campanha){ exportados++; return; } if(r) tirar.push(k); const base = r || (S.desc || {})[k]; if(base){ const y = Object.assign({}, base); delete y.buscaId; S.regs[k] = Object.assign(y, { status: (S.saidos[k] || {}).status || y.status }); } delete S.saidos[k]; delete S.feitos[k]; ok.push(k); });
+  if(tirar.length) await NovosDB.excluir(tirar);
+  await qrevLotesGravar(t);
+  if(ok.length){ metaAtualizar(); fluxoHistPorStaging(id, "voltou " + ok.length + " leads da lista para a escolha"); }
+  return { voltou: ok.length, exportados };
+}
+
+/* ---------- Exportar do Google Maps: a pessoa busca e rola no Maps; o painel lê a lista e baixa ----------
+   Filtro de categoria: as categorias desmarcadas (ex.: Salão de beleza, Manicure) ficam separadas e não vão para
+   a qualificação. Qualquer unidade também pode ser descartada na mão (outra categoria, MEI, fora da área). */
+const GMAPS = { itens:[], busca:"", fim:false, desc:new Set(), forcar:new Set(), enviados:new Set(), sel:new Set(), verFora:false, aba:"pend", loteId:"" };
 const GMAPS_CAB = ["Nome","Categoria","Nota","Avaliações","Endereço","Telefone","Site","Link Google Maps","Latitude","Longitude","Busca"];
-function gmapsLinhas(){
-  return [GMAPS_CAB].concat(GMAPS.itens.map(x => [x.nome, x.categoria, x.nota, x.avaliacoes, x.endereco, x.telefone, x.site, x.href, x.latitude, x.longitude, GMAPS.busca]
-    .map(v => v == null ? "" : String(v))));
+const gmCat = x => String(x.categoria || "").trim() || "(sem categoria)";
+function gmCatFora(){ try { return new Set(JSON.parse(localStorage.getItem("gmaps_catFora") || "[]")); } catch(e){ return new Set(); } }
+function gmCatForaGravar(set){ try { localStorage.setItem("gmaps_catFora", JSON.stringify([...set])); } catch(e){} }
+/* por que a unidade está fora (vazio = vai para a qualificação) */
+function gmFora(x, catFora){ return GMAPS.desc.has(x.href) ? "descartada por você" : !GMAPS.forcar.has(x.href) && (catFora || gmCatFora()).has(gmCat(x)) ? "categoria descartada" : ""; }
+const gmMantidos = () => { const cf = gmCatFora(); return GMAPS.itens.filter(x => !gmFora(x, cf)); };
+/* prontas para conferir: do ramo e ainda não mandadas */
+const gmPendentes = () => gmMantidos().filter(x => !GMAPS.enviados.has(x.href));
+/* a lista do Maps fica guardada no lote (neste navegador) */
+async function gmapsSalvar(){
+  if(!GMAPS.loteId) return;
+  await gmLoteGravar(GMAPS.loteId, { busca: GMAPS.busca, fim: GMAPS.fim, itens: GMAPS.itens, desc:[...GMAPS.desc], forcar:[...GMAPS.forcar], enviados:[...GMAPS.enviados] });
+  fluxoAtualizar(GMAPS.loteId);
+}
+async function gmapsAbrir(id){
+  const g = (await gmLotes())[id]; if(!g) return false;
+  Object.assign(GMAPS, { loteId: id, itens: g.itens || [], busca: g.busca || "", fim: !!g.fim, desc: new Set(g.desc || []), forcar: new Set(g.forcar || []), enviados: new Set(g.enviados || []) });
+  GMAPS.sel.clear(); return true;
+}
+function gmCidadeDaBusca(b){ const m = String(b || "").match(/\s(?:em|no|na)\s+(.+?)(?:\s*[-,]\s*[a-z]{2})?\s*$/i); return m ? m[1].replace(/(^|\s)\S/g, c => c.toUpperCase()) : ""; }
+function gmapsLinhas(lista, comSituacao){
+  const cf = gmCatFora();
+  return [GMAPS_CAB.concat(comSituacao ? ["Situação no filtro"] : [])].concat(lista.map(x => [x.nome, x.categoria, x.nota, x.avaliacoes, x.endereco, x.telefone, x.site, x.href, x.latitude, x.longitude, GMAPS.busca]
+    .concat(comSituacao ? [gmFora(x, cf) || "para qualificar"] : []).map(v => v == null ? "" : String(v))));
 }
 function pickExportMaps(host){
   const box = el("div");
   const passos = el("ol","leadshint"); passos.style.cssText = "font-size:13px;line-height:1.7;margin:0 0 14px;padding-left:20px";
   ["Abra o Google Maps numa aba do Chrome e busque do seu jeito (ex.: clínica de depilação campinas).",
    "Role a lista da esquerda até o fim, até aparecer “Você chegou ao final da lista” (ou use o botão “Rolar até o fim por mim”).",
-   "Volte aqui e clique em “Ler a lista do Maps”. Depois baixe em Excel ou CSV, ou mande direto para Qualificar Leads."].forEach(t => passos.append(el("li",null,t)));
+   "Volte aqui e clique em “Ler a lista do Maps”. Desmarque as categorias que não quer e descarte o que for de fora; depois baixe ou mande para Qualificar Leads."].forEach(t => passos.append(el("li",null,t)));
   box.append(passos);
   const acoes = el("div","leadsacoes"); acoes.style.flexWrap = "wrap";
   const btLer = el("button","btn primary","Ler a lista do Maps"), btRolar = el("button","btn","Rolar até o fim por mim e ler"),
-        btXls = el("button","btn","Baixar Excel"), btCsv = el("button","btn","Baixar CSV"), btQual = el("button","btn","Qualificar esta lista");
+        btXls = el("button","btn","Baixar Excel"), btCsv = el("button","btn","Baixar CSV"), btQual = el("button","btn primary","Qualificar esta lista");
   acoes.append(btLer, btRolar, btXls, btCsv, btQual); box.append(acoes);
-  const info = el("div","leadsprog"); const cab = el("div","leadscab"), grande = el("strong",null,"0"), sub = el("span",null,"unidades");
+  const info = el("div","leadsprog"); info.style.maxWidth = "none"; const cab = el("div","leadscab"), grande = el("strong",null,"0"), sub = el("span",null,"unidades");
   cab.append(grande, sub); const atual = el("p","leadsatual"), aviso = el("div","leadsmotivo"); aviso.hidden = true;
   info.append(cab, atual, aviso); box.append(info);
-  const tw = el("div","tablewrap"); tw.style.marginTop = "12px"; box.append(tw);
+  if(GMAPS.loteId && fluxoLote(GMAPS.loteId)){
+    const btNovo = el("button","btn","Começar outro lote"); btNovo.title = "Deixa este lote como está e começa outro com a próxima leitura do Maps";
+    btNovo.onclick = () => { Object.assign(GMAPS, { loteId:"", itens:[], busca:"", fim:false, desc:new Set(), forcar:new Set(), enviados:new Set() }); desenhaPicker(); };
+    acoes.append(btNovo);
+    const fx = el("div"); fx.style.margin = "0 0 14px"; box.prepend(fx); fluxoDiagrama(fx, GMAPS.loteId, 1);
+  }
+  if(!GMAPS.loteId){
+    const rec = Object.values(fluxoLotes()).filter(L => L.tipo === "gmaps" && !L.arquivado).sort((a, b) => String(b.atualizadoEm).localeCompare(String(a.atualizadoEm))).slice(0, 4);
+    if(rec.length){
+      const cont = el("div","leadsbotoes"); cont.style.margin = "0 0 12px"; cont.append(el("span","leadshint","Continuar um lote: "));
+      rec.forEach(L => { const b = el("button","btn sm", L.nome + " · " + fluxoQuando(L.atualizadoEm)); b.onclick = async () => { if(await gmapsAbrir(L.id)) desenhaPicker(); else toast("As unidades deste lote estão em outro computador."); }; cont.append(b); });
+      box.insertBefore(cont, info);
+    }
+  }
+  const filtro = el("div"); filtro.style.marginTop = "12px"; box.append(filtro);
+  const corpo = el("div"); corpo.style.marginTop = "12px"; box.append(corpo);
   host.append(box);
   const pinta = (txt) => {
-    grande.textContent = GMAPS.itens.length.toLocaleString("pt-BR");
-    sub.textContent = "unidades" + (GMAPS.busca ? " · busca “" + GMAPS.busca + "”" : "");
+    const cf = gmCatFora(), mant = gmPendentes(), fora = GMAPS.itens.filter(x => gmFora(x, cf)), jaEnv = gmMantidos().filter(x => GMAPS.enviados.has(x.href));
+    grande.textContent = mant.length.toLocaleString("pt-BR");
+    sub.textContent = "prontas para qualificar" + (jaEnv.length ? " · " + jaEnv.length + " já mandadas" : "") + (fora.length ? " · " + fora.length + " fora (categoria ou descartadas)" : "") +
+      " · " + GMAPS.itens.length + " lidas" + (GMAPS.busca ? " · busca “" + GMAPS.busca + "”" : "");
     atual.textContent = txt || (GMAPS.itens.length ? (GMAPS.fim ? "A lista chegou ao fim no Maps." : "Atenção: a lista do Maps não chegou ao fim. Role mais e leia de novo para pegar todas.") : "");
-    btXls.disabled = btCsv.disabled = btQual.disabled = !GMAPS.itens.length;
-    tw.innerHTML = "";
+    btXls.disabled = btCsv.disabled = !GMAPS.itens.length; btQual.disabled = !mant.length;
+    btQual.textContent = "Qualificar esta lista (" + mant.length + ")";
+    /* filtro de categorias */
+    filtro.innerHTML = "";
     if(GMAPS.itens.length){
-      const tb = el("table","leadlista"), h = el("tr");
-      ["Nome","Categoria","Nota","Endereço","Telefone"].forEach(x => h.append(el("th",null,x))); tb.append(h);
-      GMAPS.itens.slice(0, 300).forEach(x => { const tr = el("tr"); const td = el("td"); const a = el("a","nmaps",x.nome); a.href = x.href; a.target = "_blank"; a.rel = "noopener"; td.append(a); tr.append(td);
-        [x.categoria, x.nota + (x.avaliacoes ? " (" + x.avaliacoes + ")" : ""), x.endereco, x.telefone].forEach(v => tr.append(el("td",null,v || "—"))); tb.append(tr); });
-      tw.append(tb);
-      if(GMAPS.itens.length > 300) tw.append(el("p","leadshint","Mostrando 300 de " + GMAPS.itens.length + ". O Excel e o CSV levam todas."));
+      const cont = {}; GMAPS.itens.forEach(x => { const c = gmCat(x); cont[c] = (cont[c] || 0) + 1; });
+      const cats = Object.entries(cont).sort((a, b) => b[1] - a[1]);
+      const fb = el("div","metabox"); fb.style.margin = "0";
+      fb.append(el("b",null,"Categorias do Maps"), el("span","leadshint"," — desmarque as que não quer: ficam separadas e não vão para a qualificação (a escolha fica salva para as próximas buscas)."));
+      const lin = el("div"); lin.style.cssText = "display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px";
+      cats.forEach(([c, n]) => {
+        const l = el("label","qualcheck"); const ck = el("input"); ck.type = "checkbox"; ck.checked = !cf.has(c);
+        ck.onchange = () => { const s2 = gmCatFora(); ck.checked ? s2.delete(c) : s2.add(c); gmCatForaGravar(s2); gmapsSalvar(); if(GMAPS.loteId) fluxoHist(GMAPS.loteId, (ck.checked ? "marcou" : "desmarcou") + " a categoria “" + c + "”"); pinta(); };
+        l.append(ck, document.createTextNode(" " + c + " (" + n + ")")); if(cf.has(c)) l.style.cssText = "text-decoration:line-through;opacity:.7";
+        lin.append(l);
+      });
+      fb.append(lin);
+      const ba = el("div","leadsbotoes"); ba.style.marginTop = "8px";
+      const bTodas = el("button","btn sm","Marcar todas"), bSo = el("button","btn sm","Deixar só as que têm “depil” ou “laser”");
+      bTodas.onclick = () => { const s2 = gmCatFora(); cats.forEach(([c]) => s2.delete(c)); gmCatForaGravar(s2); gmapsSalvar(); pinta(); };
+      bSo.onclick = () => { const s2 = gmCatFora(); cats.forEach(([c]) => /depil|laser/i.test(c.normalize("NFD").replace(/[̀-ͯ]/g, "")) ? s2.delete(c) : s2.add(c)); gmCatForaGravar(s2); gmapsSalvar(); if(GMAPS.loteId) fluxoHist(GMAPS.loteId, "deixou só as categorias com depil/laser"); pinta(); };
+      ba.append(bTodas, bSo); fb.append(ba);
+      filtro.append(fb);
     }
+    /* lista: para qualificar ou fora */
+    corpo.innerHTML = "";
+    if(!GMAPS.itens.length) return;
+    const abas = el("div","ndivisoes");
+    [["pend","Para qualificar",mant.length],["env","Já mandadas para conferir",jaEnv.length],["fora","Fora da qualificação",fora.length]].filter(([v, , n]) => n || v !== "env").forEach(([v, rot, n]) => {
+      const b = el("button","ndiv" + (GMAPS.aba === v ? " on" : "")); b.append(document.createTextNode(rot + " "), el("span",null,String(n)));
+      b.onclick = () => { GMAPS.aba = v; GMAPS.sel.clear(); pinta(); }; abas.append(b);
+    });
+    corpo.append(abas);
+    GMAPS.verFora = GMAPS.aba === "fora";
+    const lista = GMAPS.aba === "fora" ? fora : GMAPS.aba === "env" ? jaEnv : mant;
+    const ac = el("div","leadsacoes"); ac.style.alignItems = "center";
+    const nSel = lista.filter(x => GMAPS.sel.has(x.href)).length;
+    if(GMAPS.aba === "env"){
+      ac.append(el("span","leadshint","Estas já foram para a conferência (etapa 3). Para tirar alguma de lá, use a tela de lotes ou a revisão em Qualificar Leads."));
+    } else if(!GMAPS.verFora){
+      const bD = el("button","btn danger","Descartar marcados (" + nSel + ")"); bD.disabled = !nSel;
+      bD.onclick = () => { const n0 = GMAPS.desc.size; lista.forEach(x => { if(GMAPS.sel.has(x.href)) GMAPS.desc.add(x.href); }); GMAPS.sel.clear(); gmapsSalvar(); if(GMAPS.loteId) fluxoHist(GMAPS.loteId, "descartou " + (GMAPS.desc.size - n0) + " unidades no filtro"); pinta(); };
+      ac.append(bD, el("span","leadshint","Marque o que é de outra categoria, MEI ou fora da sua área: sai da lista e não vai para a qualificação."));
+    } else {
+      const bV = el("button","btn","Voltar marcados para a lista (" + nSel + ")"); bV.disabled = !nSel;
+      bV.onclick = () => { let n = 0; lista.forEach(x => { if(GMAPS.sel.has(x.href)){ GMAPS.desc.delete(x.href); if(gmCatFora().has(gmCat(x))) GMAPS.forcar.add(x.href); n++; } }); GMAPS.sel.clear(); gmapsSalvar();
+        if(GMAPS.loteId) fluxoHist(GMAPS.loteId, "voltou " + n + " unidades para a lista de qualificar"); pinta(); };
+      ac.append(bV, el("span","leadshint","Volta só as unidades marcadas (a categoria continua desmarcada para as outras)."));
+    }
+    corpo.append(ac);
+    const tw = el("div","tablewrap"); tw.style.maxHeight = "560px";
+    const tb = el("table","leadlista"), h = el("tr");
+    const ckAll = el("input"); ckAll.type = "checkbox"; ckAll.checked = lista.length > 0 && lista.every(x => GMAPS.sel.has(x.href));
+    ckAll.onchange = () => { lista.forEach(x => ckAll.checked ? GMAPS.sel.add(x.href) : GMAPS.sel.delete(x.href)); pinta(); };
+    const th0 = el("th"); th0.append(ckAll); h.append(th0);
+    ["Nome","Categoria","Nota","Endereço","Telefone"].concat(GMAPS.verFora ? ["Por que está fora"] : []).forEach(x => h.append(el("th",null,x))); tb.append(h);
+    const cf2 = gmCatFora();
+    lista.forEach(x => {
+      const tr = el("tr"); const td0 = el("td","ck"), ck = el("input"); ck.type = "checkbox"; ck.checked = GMAPS.sel.has(x.href);
+      ck.onchange = () => { ck.checked ? GMAPS.sel.add(x.href) : GMAPS.sel.delete(x.href); pinta(); };
+      td0.append(ck); tr.append(td0);
+      const td = el("td"); const a = el("a","nmaps",x.nome); a.href = x.href; a.target = "_blank"; a.rel = "noopener"; td.append(a); tr.append(td);
+      [x.categoria, x.nota ? x.nota + (x.avaliacoes ? " (" + x.avaliacoes + ")" : "") : "", x.endereco, x.telefone].forEach(v => tr.append(el("td",null,v || "—")));
+      if(GMAPS.verFora) tr.append(el("td",null,gmFora(x, cf2)));
+      tb.append(tr);
+    });
+    tw.append(tb); corpo.append(tw);
   };
   const ler = async (rolar) => {
     aviso.hidden = true; btLer.disabled = btRolar.disabled = true;
@@ -16235,15 +16715,37 @@ function pickExportMaps(host){
     if(erro || !resp){ aviso.hidden = false; aviso.textContent = "A extensão não respondeu (" + (erro || "sem resposta") + "). Confira se está na versão 2.5 e recarregue esta página."; return pinta(""); }
     if(resp.semAba){ aviso.hidden = false; aviso.textContent = "Não achei nenhuma aba do Google Maps aberta. Abra o Maps, faça a busca e tente de novo."; return pinta(""); }
     if(resp.semLista){ aviso.hidden = false; aviso.textContent = "A aba do Maps não está mostrando uma lista de resultados. Faça a busca (ex.: clínica de depilação campinas) e deixe a lista da esquerda aberta."; return pinta(""); }
-    GMAPS.itens = resp.itens || []; GMAPS.busca = resp.busca || ""; GMAPS.fim = !!resp.fim;
-    pinta(); toast(GMAPS.itens.length + " unidades lidas do Maps.");
+    const mesma = GMAPS.loteId && ramoNorm(GMAPS.busca) === ramoNorm(resp.busca || "") && fluxoLote(GMAPS.loteId);
+    const antigos = mesma ? GMAPS.itens.slice() : [];
+    if(!mesma){
+      /* busca nova: lote novo */
+      Object.assign(GMAPS, { loteId: "g" + Date.now().toString(36), desc: new Set(), forcar: new Set(), enviados: new Set() });
+      const cid = gmCidadeDaBusca(resp.busca);
+      fluxoNovo({ id: GMAPS.loteId, tipo:"gmaps", nome: (cid || "Busca") + " · Google Maps", busca: resp.busca || "" });
+    }
+    /* lida de novo: junta o que já tinha (o que já foi mandado para conferir continua marcado) */
+    const novosHref = new Set((resp.itens || []).map(x => x.href));
+    GMAPS.itens = (resp.itens || []).concat(antigos.filter(x => !novosHref.has(x.href)));
+    GMAPS.busca = resp.busca || ""; GMAPS.fim = !!resp.fim; GMAPS.sel.clear(); GMAPS.aba = "pend";
+    await gmapsSalvar();
+    fluxoHist(GMAPS.loteId, (mesma ? "leu de novo " : "leu ") + (resp.itens || []).length + " unidades do Google Maps" + (resp.fim ? " (lista até o fim)" : " (a lista não chegou ao fim)"));
+    desenhaPicker(); toast(GMAPS.itens.length + " unidades no lote.");
   };
   btLer.onclick = () => ler(false);
   btRolar.onclick = () => ler(true);
   const nomeArq = () => novosNomeArquivo(["google-maps", GMAPS.busca || "busca", stamp()]);
-  btXls.onclick = () => baixarXlsx(nomeArq(), gmapsLinhas(), [34,26,6,10,50,18,30,50,11,11,30]);
-  btCsv.onclick = () => novosBaixarArquivo("csv", nomeArq(), gmapsLinhas());
-  btQual.onclick = () => { QUALMAPS.itens = GMAPS.itens.map(x => Object.assign({}, x)); QUALMAPS.origem = "busca “" + (GMAPS.busca || "Maps") + "”"; QUALMAPS.auto = true; QUALMAPS.ramo = "";
+  const larg = [34,26,6,10,50,18,30,50,11,11,30];
+  /* Excel: aba "Para qualificar" e aba "Fora" (categoria descartada ou descartada por você) */
+  btXls.onclick = () => {
+    const cf = gmCatFora(), fora = GMAPS.itens.filter(x => gmFora(x, cf));
+    const abas = [{ nome:"Para qualificar", linhas: gmapsLinhas(gmMantidos(), false), larguras: larg }];
+    if(fora.length) abas.push({ nome:"Fora", linhas: gmapsLinhas(fora, true), larguras: larg.concat([22]) });
+    XlsxLite.buildAsync(abas).then(blob => { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = nomeArq() + ".xlsx";
+      document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); });
+  };
+  btCsv.onclick = () => novosBaixarArquivo("csv", nomeArq(), gmapsLinhas(gmMantidos(), false));
+  btQual.onclick = () => { QUALMAPS.itens = gmPendentes().map(x => Object.assign({}, x)); QUALMAPS.origem = "busca “" + (GMAPS.busca || "Maps") + "”"; QUALMAPS.auto = true; QUALMAPS.loteId = GMAPS.loteId;
+    QUALMAPS.ramo = (fluxoLote(GMAPS.loteId) || {}).ramo || "";
     pickEtapa = "qualificar"; desenhaPicker(); $("#picker").scrollTop = 0; };
   pinta();
 }
@@ -16271,8 +16773,16 @@ async function qrevLotesGravar(t){ await NovosDB.metaGravar("qualifLotes", t); }
 async function qrevLoteGravar(id, rotulo, ramo, regs){
   const t = await qrevLotes();
   const L = t[id] = t[id] || { id, rotulo, ramo, criadoEm: new Date().toISOString(), regs:{}, feitos:{} };
-  regs.forEach(r => { if(!L.feitos[r.chave]) L.regs[r.chave] = r; });
+  L.saidos = L.saidos || {}; L.desc = L.desc || {};
+  const cancel = new Set(L.cancel || []);
+  regs.forEach(r => {
+    if(L.feitos[r.chave]) return;
+    /* tirada da conferência enquanto estava na fila: já entra como descartada */
+    if(r.hrefLista && cancel.has(r.hrefLista)){ L.feitos[r.chave] = "descartado"; L.desc[r.chave] = r; L.saidos[r.chave] = { status: r.status, destino:"descartado", href: r.hrefLista, nome: r.nomeMaps || "" }; return; }
+    L.regs[r.chave] = r;
+  });
   await qrevLotesGravar(t);
+  fluxoAtualizarPorStaging(id);
 }
 /* ramo e estado a partir da busca do Maps ("clinica de depilação em marília - sp") */
 function qualRamoDaBusca(busca, ramos){
@@ -16284,8 +16794,11 @@ function qualRamoDaBusca(busca, ramos){
 function qualUfDaBusca(busca){ const m = String(busca || "").match(/(?:-|,|\s)\s*([a-z]{2})\s*$/i); return m && M04_UFS.includes(m[1].toUpperCase()) ? m[1].toUpperCase() : ""; }
 
 const QREV = { sel:new Set(), vistos:new Set(), aba:"aprovado", lote:"", ui:null, timer:null };
-const QUAL_ABAS = [["aprovado","Aprovados"],["aguardando","Aguardando 6 meses"],["fora","Fora do requisito"],["sem_cnpj","Sem CNPJ"],["mei","MEI"],["outro_ramo","Outro ramo"],["verificar","Conferir"]];
+const QUAL_ABAS = [["aprovado","Aprovados"],["aguardando","Aguardando 6 meses"],["fora","Fora do requisito"],["sem_cnpj","Sem CNPJ"],["mei","MEI"],["outro_ramo","Outro ramo"],["verificar","Conferir"],
+  ["ja_cadastro","Já no Cadastro"],["fechado","Fechado no Maps"],["duplicado","Repetido"]];
 async function qualMapsIniciar(ramo, uf, cnTxt){
+  /* uma unidade por lugar do Maps (o mesmo lugar com dois links contaria duas vezes) */
+  { const vis = new Set(); QUALMAPS.itens = QUALMAPS.itens.filter(x => { const k = (String(x.href).match(/0x[0-9a-f]+:0x[0-9a-f]+/i) || [x.href])[0].toLowerCase(); if(vis.has(k)) return false; vis.add(k); return true; }); }
   if(!QUALMAPS.itens.length){ toast("Escolha a planilha do Google Maps primeiro."); return false; }
   if(!ramo){ toast("Digite o ramo no Cadastro (ex.: Clínica de depilação)."); return false; }
   const { resp: est, erro } = await m04Enviar({ type:"estado" }, 5000);
@@ -16306,10 +16819,33 @@ async function qualMapsIniciar(ramo, uf, cnTxt){
     janela:"fixada", intervalo:1500, conhecidos, cnaesExcluir: cnaesDoTexto(cnTxt),
     lugaresProntos: QUALMAPS.itens.map(x => ({ href: x.href, nome: x.nome, categoria: x.categoria, texto: [x.categoria, x.endereco].filter(Boolean).join(" · ") })) } }, 60000);
   if(e2 || !resp || !resp.existe){ toast("Não consegui começar: " + (e2 || (resp && resp.aviso) || "sem resposta da extensão")); return false; }
-  if(!resp.lugaresProntos){ toast("A extensão está numa versão antiga: atualize para a 2.5."); return false; }
-  QREV.lote = String(resp.criadoEm || ""); QREV.aba = "aprovado";
-  await qrevLoteGravar(QREV.lote, rotulo, ramo, []);
-  toast(QUALMAPS.itens.length + " unidades em qualificação. Lote: " + rotulo + ".");
+
+  if(!resp.lugaresProntos){ toast("A extensão está numa versão antiga: atualize para a 2.6."); return false; }
+  /* lote do fluxo: o mesmo da tela anterior (Exportar do Google Maps) ou um novo, se veio de uma planilha */
+  let loteF = QUALMAPS.loteId ? fluxoLote(QUALMAPS.loteId) : null;
+  if(!loteF){
+    const id = "g" + Date.now().toString(36);
+    loteF = fluxoNovo({ id, tipo:"gmaps", nome: (gmCidadeDaBusca(GMAPS.busca) || cidade || "Planilha") + " · " + (QUALMAPS.origem || "Google Maps"), busca: GMAPS.busca || "" });
+    await gmLoteGravar(id, { busca: GMAPS.busca || "", fim: true, itens: QUALMAPS.itens, desc:[], forcar:[], enviados: QUALMAPS.itens.map(x => x.href) });
+    QUALMAPS.loteId = id;
+  }
+  /* várias levas do mesmo lote juntam na mesma revisão */
+  const stagingId = loteF.qrevId || String(resp.criadoEm || "");
+  m04BuscaCfgGravar(ramo, { ramo:"", soNovas:true, rotulo, qrevId: stagingId });
+  const t = await qrevLotes();
+  const S = t[stagingId] = t[stagingId] || { id: stagingId, rotulo, ramo, criadoEm: new Date().toISOString(), regs:{}, feitos:{}, saidos:{}, desc:{} };
+  const hrefs = QUALMAPS.itens.map(x => x.href);
+  S.enviadosHref = [...new Set((S.enviadosHref || []).concat(hrefs))];
+  S.total = S.enviadosHref.length; S.concluidoEm = "";
+  await qrevLotesGravar(t);
+  /* marca as unidades como mandadas na lista do Maps do lote */
+  if(GMAPS.loteId === QUALMAPS.loteId){ hrefs.forEach(h => GMAPS.enviados.add(h)); await gmapsSalvar(); }
+  else { const g = (await gmLotes())[QUALMAPS.loteId] || {}; await gmLoteGravar(QUALMAPS.loteId, { enviados: [...new Set((g.enviados || []).concat(hrefs))] }); }
+  loteF.qrevId = stagingId; loteF.ramo = ramo; fluxoSalvar(loteF);
+  fluxoHist(loteF.id, "mandou " + hrefs.length + " unidades para conferir CNPJ e Receita (ramo " + ramo + ")");
+  QREV.lote = stagingId; QREV.aba = "aprovado"; QREV.loteF = loteF.id;
+  toast(hrefs.length + " unidades em qualificação. Lote: " + (S.rotulo || rotulo) + ".");
+  fluxoAtualizar(loteF.id);
   return true;
 }
 function qualMapsPainel(host){
@@ -16337,8 +16873,16 @@ function qualMapsPainel(host){
   const acoes = el("div","leadsacoes"); const bt = el("button","btn primary","Começar a qualificação"); acoes.append(bt); box.append(acoes);
   /* revisão */
   const rev = el("div"); rev.style.marginTop = "16px"; box.append(rev);
+  const fx = el("div"); fx.style.marginBottom = "12px"; box.prepend(fx);
   host.append(box);
-  QREV.ui = { box, rev };
+  QREV.ui = { box, rev, fx, fxId:"" };
+  /* o que veio da tela anterior, antes de começar */
+  if(QUALMAPS.itens.length && QUALMAPS.auto !== "feito"){
+    const vb = el("div","qconta"); vb.append(el("div","qcontatopo"));
+    vb.firstChild.append(el("span",null,"Vieram da etapa anterior: "), el("b",null, QUALMAPS.itens.length + " unidades"), el("span",null," (" + QUALMAPS.origem + ")"));
+    vb.append(el("div","leadshint","Ao começar, cada uma é conferida e cai numa situação (aprovado, aguardando 6 meses, MEI, outro ramo…). A soma no fim tem que dar " + QUALMAPS.itens.length + "."));
+    acoes.before(vb); QREV.ui.vb = vb;
+  }
   /* valores iniciais: o que veio da busca do Maps */
   NovosDB.todos().then(l => {
     const ramos = [...new Set(l.map(x => x.termo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
@@ -16347,14 +16891,22 @@ function qualMapsPainel(host){
     selUf.value = qualUfDaBusca(GMAPS.busca) || QUALMAPS.uf || (M04.campos && M04.campos.uf) || "SP";
     cn0();
     /* veio do botão “Qualificar esta lista”: começa sozinho */
-    if(QUALMAPS.auto && QUALMAPS.itens.length && inRamo.value){ QUALMAPS.auto = false; bt.click(); }
+    if(QUALMAPS.auto === true && QUALMAPS.itens.length){
+      if(!inRamo.value){ inRamo.value = qualRamoDaBusca(GMAPS.busca, []) || ""; cn0(); }
+      if(inRamo.value){ QUALMAPS.auto = "feito"; bt.click(); }
+      else lbArq.textContent = "Digite o ramo no Cadastro e clique em “Começar a qualificação”.";
+    }
   }).catch(() => {});
   inArq.onchange = async () => {
     const f = inArq.files[0]; if(!f) return;
-    try { QUALMAPS.itens = await qualMapsLerArquivo(f); QUALMAPS.origem = f.name; lbArq.textContent = QUALMAPS.itens.length + " unidades lidas de " + f.name + "."; }
+    try { const todas = await qualMapsLerArquivo(f), cf = gmCatFora(); QUALMAPS.itens = todas.filter(x => !cf.has(gmCat(x))); QUALMAPS.origem = f.name;
+      lbArq.textContent = QUALMAPS.itens.length + " unidades lidas de " + f.name + (todas.length > QUALMAPS.itens.length ? " (" + (todas.length - QUALMAPS.itens.length) + " de categorias descartadas ficaram de fora)" : "") + "."; }
     catch(e){ QUALMAPS.itens = []; lbArq.textContent = "Não consegui ler a planilha: " + (e.message || e); }
   };
-  bt.onclick = async () => { bt.disabled = true; try { if(await qualMapsIniciar(inRamo.value.trim(), selUf.value, inCn.value)) qrevPinta(); } finally { bt.disabled = false; } };
+  bt.onclick = async () => { bt.disabled = true; bt.textContent = "Começando…";
+    try { if(await qualMapsIniciar(inRamo.value.trim(), selUf.value, inCn.value)){ QUALMAPS.itens = []; QUALMAPS.auto = "feito"; if(QREV.ui.vb) QREV.ui.vb.remove(); lbArq.textContent = "Qualificação começada. Acompanhe abaixo."; qrevPinta(); }
+          else lbArq.textContent = "Não começou: veja o aviso. Depois clique em “Começar a qualificação”."; }
+    finally { bt.disabled = false; bt.textContent = "Começar a qualificação"; } };
   qrevPinta();
   /* acompanha a extensão enquanto a tela estiver aberta */
   clearInterval(QREV.timer);
@@ -16391,17 +16943,43 @@ async function qrevPinta(){
     "Qualificando " + Math.min((est.li || 0) + 1, est.lugaresTotal || 0) + " de " + (est.lugaresTotal || "…") + (est.atual ? " · " + est.atual : "")) : "";
   if(andamento) cab.append(el("span","leadshint", andamento));
   u.rev.append(cab);
+  /* desenho do fluxo do lote */
+  const loteF = fluxoPorStaging(L.id);
+  if(u.fx && (!loteF || u.fxId !== loteF.id)){ u.fx.innerHTML = ""; u.fxId = ""; }
+  if(u.fx && loteF && u.fxId !== loteF.id){ u.fxId = loteF.id; fluxoDiagrama(u.fx, loteF.id, 2); }
+  /* conta que bate: o que veio da etapa anterior = soma das situações + o que ainda está na fila */
+  const saidos = Object.values(L.saidos || {});
+  const total = L.total || (regs.length + saidos.length), conferidas = regs.length + saidos.length, fila = Math.max(0, total - conferidas);
+  const conta = el("div","qconta");
+  const cab2 = el("div","qcontatopo");
+  cab2.append(el("span",null,"Vieram da etapa anterior: "), el("b",null, total.toLocaleString("pt-BR")), el("span",null," · conferidas: "), el("b",null, conferidas.toLocaleString("pt-BR")),
+    el("span",null," · na fila: "), el("b",null, fila.toLocaleString("pt-BR")));
+  conta.append(cab2);
+  const chipsC = el("div","leadschips");
+  QUAL_ABAS.forEach(([k, rot]) => { const n = regs.filter(r => r.status === k).length + saidos.filter(r => r.status === k).length; const c = leadsChip(n, rot.toLowerCase(), k === "aprovado" ? "ok" : /fora|outro|fechado/.test(k) ? "alerta" : ""); if(c) chipsC.append(c); });
+  const outros = conferidas - QUAL_ABAS.reduce((a, [k]) => a + regs.filter(r => r.status === k).length + saidos.filter(r => r.status === k).length, 0);
+  if(outros > 0) chipsC.append(leadsChip(outros, "outras situações", ""));
+  if(fila) chipsC.append(leadsChip(fila, "na fila", "novo"));
+  conta.append(chipsC);
+  const somaOk = conferidas + fila === total;
+  conta.append(el("div","leadshint" + (fila ? "" : somaOk ? " qok" : " nfrio"), fila ? "A soma das situações vai crescendo até chegar a " + total + "." :
+    somaOk ? "✓ Soma das situações = " + total + ": bate com o que veio da etapa anterior." : "A soma (" + conferidas + ") não bate com " + total + ". Clique em “Procurar CNPJ de novo” no Cadastro ou leia a lista de novo."));
+  const nSaida = { lista: saidos.filter(x => x.destino === "lista").length, desc: saidos.filter(x => x.destino === "descartado").length };
+  if(nSaida.lista || nSaida.desc) conta.append(el("div","leadshint", "Desta soma, " + nSaida.lista + " já foram para a lista de leads e " + nSaida.desc + " foram descartados; os outros " + regs.length + " estão nas abas abaixo para você escolher."));
+  u.rev.append(conta);
   if(doLote && !est.concluido && est.lugaresTotal){ const bar = el("div","leadsbar"), f = el("i"); f.style.width = Math.min(100, (est.li || 0) / est.lugaresTotal * 100) + "%"; bar.append(f); u.rev.append(bar); }
   /* abas por tipo */
   const nAba = k => regs.filter(r => r.status === k).length;
   const abas = el("div","ndivisoes");
-  QUAL_ABAS.filter(([k]) => nAba(k) || k === "aprovado").forEach(([k, rot]) => {
-    const b = el("button","ndiv" + (QREV.aba === k ? " on" : "")); b.append(document.createTextNode(rot + " "), el("span",null,String(nAba(k))));
+  const descs = Object.values(L.desc || {});
+  QUAL_ABAS.concat([["__desc","Descartados"]]).filter(([k]) => (k === "__desc" ? descs.length : nAba(k)) || k === "aprovado").forEach(([k, rot]) => {
+    const b = el("button","ndiv" + (QREV.aba === k ? " on" : "")); b.append(document.createTextNode(rot + " "), el("span",null,String(k === "__desc" ? descs.length : nAba(k))));
     b.onclick = () => { QREV.aba = k; qrevPinta(); }; abas.append(b);
   });
   u.rev.append(abas);
-  const daAba = regs.filter(r => r.status === QREV.aba).sort((a, b) => String(a.nomeMaps || "").localeCompare(String(b.nomeMaps || ""), "pt-BR"));
-  const marc = regs.filter(r => QREV.sel.has(r.chave));
+  const verDesc = QREV.aba === "__desc";
+  const daAba = (verDesc ? descs : regs.filter(r => r.status === QREV.aba)).sort((a, b) => String(a.nomeMaps || "").localeCompare(String(b.nomeMaps || ""), "pt-BR"));
+  const marc = (verDesc ? descs : regs).filter(r => QREV.sel.has(r.chave));
   /* ações */
   const ac = el("div","leadsacoes"); ac.style.flexWrap = "wrap";
   const btEnv = el("button","btn primary","Mandar marcados para a lista de leads (" + marc.length + ")");
@@ -16410,7 +16988,8 @@ async function qrevPinta(){
   btNenhum.onclick = () => { daAba.forEach(r => QREV.sel.delete(r.chave)); qrevPinta(); };
   btEnv.onclick = () => qrevEnviar(L.id, marc);
   btDesc.onclick = () => qrevDescartar(L.id, marc);
-  ac.append(btEnv, btTodos, btNenhum, btDesc);
+  if(verDesc){ const btVolta = el("button","btn primary","Voltar marcados para a revisão (" + marc.length + ")"); btVolta.onclick = () => qrevRestaurar(L.id, marc); ac.append(btVolta, btTodos, btNenhum); }
+  else ac.append(btEnv, btTodos, btNenhum, btDesc, el("span","leadshint","Marque qualquer lead de outra categoria, MEI ou fora da sua área e clique em Descartar."));
   if(marc.length) ac.append(el("span","leadshint", "Marcados: " + QUAL_ABAS.map(([k, rot]) => [rot, marc.filter(r => r.status === k).length]).filter(x => x[1]).map(x => x[1] + " " + x[0].toLowerCase()).join(" · ")));
   u.rev.append(ac);
   /* lista da aba */
@@ -16447,8 +17026,10 @@ async function qrevEnviar(id, lote){
   const agora = new Date().toISOString();
   const novos = lote.filter(r => !ja.has(r.chave)).map(r => Object.assign({}, r, { buscaId: id, buscaRotulo: L.rotulo, capturadoEm: agora, importadoEm: agora }));
   if(novos.length) await NovosDB.gravar(novos);
-  lote.forEach(r => { delete L.regs[r.chave]; L.feitos[r.chave] = "enviado"; QREV.sel.delete(r.chave); });
+  L.saidos = L.saidos || {};
+  lote.forEach(r => { delete L.regs[r.chave]; L.feitos[r.chave] = "enviado"; L.saidos[r.chave] = { status: r.status, destino:"lista", href: r.hrefLista || "", nome: r.nomeMaps || "" }; QREV.sel.delete(r.chave); });
   await qrevLotesGravar(t);
+  fluxoHistPorStaging(id, "mandou " + novos.length + " leads para a lista de leads"); fluxoAtualizarPorStaging(id);
   toast(novos.length + " leads mandados para a lista de leads (lote " + L.rotulo + ")" + (lote.length > novos.length ? " · " + (lote.length - novos.length) + " já estavam lá" : "") + ".");
   metaAtualizar(); setTimeout(cnaeAutoConferir, 1500); qrevPinta();
 }
@@ -16456,8 +17037,18 @@ async function qrevDescartar(id, lote){
   if(!lote.length) return toast("Marque os leads que quer descartar.");
   if(!confirm("Descartar " + lote.length + " leads deste lote? Eles não vão para a lista de leads.")) return;
   const t = await qrevLotes(), L = t[id]; if(!L) return;
-  lote.forEach(r => { delete L.regs[r.chave]; L.feitos[r.chave] = "descartado"; QREV.sel.delete(r.chave); });
+  L.desc = L.desc || {}; L.saidos = L.saidos || {};
+  lote.forEach(r => { delete L.regs[r.chave]; L.feitos[r.chave] = "descartado"; L.desc[r.chave] = r; L.saidos[r.chave] = { status: r.status, destino:"descartado", href: r.hrefLista || "", nome: r.nomeMaps || "" }; QREV.sel.delete(r.chave); });
   await qrevLotesGravar(t); qrevPinta();
+  fluxoHistPorStaging(id, "descartou " + lote.length + " leads na escolha"); fluxoAtualizarPorStaging(id);
+}
+/* descartado por engano: volta para a revisão */
+async function qrevRestaurar(id, lote){
+  if(!lote.length) return toast("Marque os leads que quer voltar.");
+  const t = await qrevLotes(), L = t[id]; if(!L) return;
+  lote.forEach(r => { L.regs[r.chave] = r; delete (L.desc || {})[r.chave]; delete L.feitos[r.chave]; delete (L.saidos || {})[r.chave]; QREV.sel.delete(r.chave); });
+  fluxoHistPorStaging(id, "voltou " + lote.length + " leads descartados para a escolha");
+  await qrevLotesGravar(t); toast(lote.length + " leads voltaram para a revisão."); qrevPinta();
 }
 
 /* ---------- Importar lista do MaisCNPJ ----------
@@ -16592,6 +17183,8 @@ async function listaImportarEBuscar(){
     intervalo: LISTA.pausa, janela: LISTA.janela, mapsMei: LISTA.mapsMei, listaItens: itensExt, conhecidos, cnaesExcluir: LISTA.cnaesExcluir || [] } }, 60000);
   if(erro || !resp || !resp.existe){ LISTA.erro = "Não consegui começar a conferência na extensão: " + (erro || (resp && resp.aviso) || "sem resposta") + "."; return; }
   if(!resp.listaPronta){ LISTA.erro = "A extensão está numa versão antiga: atualize para a 2.1 para conferir a lista no Maps. As empresas já foram importadas no Cadastro."; }
+  if(resp.criadoEm){ fluxoNovo({ id: "b" + resp.criadoEm, tipo:"busca", modo:"cnae", buscaId: String(resp.criadoEm), nome: cidade + " · lista do MaisCNPJ (" + P.atividade + ")" });
+    fluxoHist("b" + resp.criadoEm, "importou " + LISTA.itens.length + " empresas da lista do MaisCNPJ (ramo " + ramo + ")"); }
   /* importa já todas as empresas da lista (as que ainda não estão no Cadastro) */
   const buscaId = String(resp.criadoEm || ""), rotulo = m04RotuloBusca(resp), agora = new Date().toISOString();
   const tipo = { ltda:"verificar", mei:"mei", pessoa:"mei", outra:"fora" };
@@ -16738,6 +17331,14 @@ function pickFrentes(host){
     "Escolhe as cidades e busca pelo Google Maps (tipo de cliente) ou pelo CNAE no MaisCNPJ. Acha o CNPJ, confere LTDA e 6 meses e entrega os leads a cada cidade. Também importa qualquer lista do MaisCNPJ e confere no Maps.",
     ["Maps ou CNAE","Importar lista do MaisCNPJ"], podeInicio("modelo04") ? "modelo04" : "modelo05");
 
+  /* acompanhamento dos lotes: o desenho do fluxo de cada busca */
+  if(podeInicio("modelo04") || podeInicio("modelo05") || podeInicio("novos")){
+    const nl = Object.values(fluxoLotes()).filter(L => !L.arquivado).length;
+    const c = cartaoLead("","Lotes em andamento",
+      "O desenho do fluxo de cada busca: o que já foi feito, quantos leads há em cada etapa e o histórico de quem fez o quê. Clique numa etapa para ir até ela.",
+      [nl + (nl === 1 ? " lote" : " lotes"), "Para a equipe toda"], podeInicio("modelo04") ? "modelo04" : "novos", " arquivo");
+    if(c) c.onclick = () => { pickEtapa = "lotes"; desenhaPicker(); };
+  }
   /* uma tela só para os leads: Novos (das buscas) e Base (enviados), em abas */
   cartaoLead("","Leads",
     "Os leads das buscas (aprovados, MEI, frios, outro ramo…) e a Base de Leads com o que já foi enviado, por ramo, estado e cidade. Meta de leads no topo.",
@@ -25011,7 +25612,7 @@ function fotografarBase(snap){
   snap = snap || snapshot();
   baseMapas = {
     usuarios: jmap(snap.usuarios), perfis: jmap(snap.perfis), frentes: jmap(snap.frentes),
-    leads: jobj(snap.leadsAtrib), logArq: jobj(snap.logArquivo),
+    leads: jobj(snap.leadsAtrib), logArq: jobj(snap.logArquivo), fluxo: jobj(snap.fluxoLotes),
     topo: Object.fromEntries(CHAVES_TOPO.map(k => [k, JSON.stringify(snap[k] === undefined ? null : snap[k])]))
   };
 }
@@ -25078,6 +25679,9 @@ function mesclarCom(atual){
   DB.leadsAtrib = l.out; veio = veio || l.veio;
   const la = juntarMapa(baseMapas.logArq || new Map(), DB.logArquivo || {}, atual.logArquivo);
   DB.logArquivo = la.out; veio = veio || la.veio;
+  const fl = juntarMapa(baseMapas.fluxo || new Map(), DB.fluxoLotes || {}, atual.fluxoLotes);
+  DB.fluxoLotes = fl.out; veio = veio || fl.veio;
+  if(fl.veio && typeof fluxoRedesenhar === "function") setTimeout(fluxoRedesenhar, 0);
   CHAVES_TOPO.forEach(k => {
     const b = baseMapas.topo[k], mj = JSON.stringify(meu[k] === undefined ? null : meu[k]);
     const tv = atual[k] === undefined ? null : atual[k], tj = JSON.stringify(tv);
@@ -25393,6 +25997,7 @@ function carregarDB(bruto){
     if(bruto.leadsAtrib && typeof bruto.leadsAtrib === "object") DB.leadsAtrib = bruto.leadsAtrib;
     if(Array.isArray(bruto.statusLead) && bruto.statusLead.length) DB.statusLead = bruto.statusLead;
     if(bruto.logArquivo && typeof bruto.logArquivo === "object") DB.logArquivo = bruto.logArquivo;
+    if(bruto.fluxoLotes && typeof bruto.fluxoLotes === "object") DB.fluxoLotes = bruto.fluxoLotes;
   } else if(bruto && Array.isArray(bruto.sections)){
     /* Versões anteriores guardavam um projeto único. Ele vira a primeira frente. */
     DB = {
