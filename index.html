@@ -1418,6 +1418,8 @@ a.nmaps::after{content:" ↗";font-size:11px;color:var(--teal);font-weight:400}
 .cattag{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:700;padding:1px 8px;border-radius:999px;background:#EAF1FE;color:#1d4ed8;vertical-align:middle;letter-spacing:.02em}
 .ndiv.dsep{border-color:#0f766e} .dsepinfo{background:#F1F5F4;border:1px solid var(--line);border-radius:8px;padding:8px 12px}
 .cattag.septag{background:#ECFDF5;color:#047857}
+.camphist{background:#F5F3FF;border:1px solid #DDD6FE;border-radius:8px;padding:8px 12px;margin:0 0 10px;font-size:12.5px;color:#4c1d95}
+.camphist ul{margin:4px 0 0;padding-left:18px}
 .novotag{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:999px;background:var(--amber-soft);color:#8A5A12;vertical-align:middle}
 .abastela{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 18px;padding-bottom:12px;border-bottom:1px solid var(--line)}
 /* menu "Mais ações" do Cadastro */
@@ -10412,7 +10414,22 @@ async function novosTirarListaSep(){
   await NovosDB.gravar(lote.map(x => { const y = Object.assign({}, x); delete y.listaSep; delete y.listaSepEm; delete y.listaSepPor; return y; }));
   NOVOS.sel.clear(); toast(lote.length + " leads voltaram para Leads."); novosDesenhar();
 }
+/* de uma campanha para a LISTA CONFERIDA: sai da campanha (fica o registro com dia e hora) */
+async function novosCampanhaParaConferida(){
+  const lote = (await NovosDB.todos()).filter(x => NOVOS.sel.has(x.chave) && x.campanha);
+  if(!lote.length) return toast("Marque, em CAMPANHAS, os leads que vão para a LISTA CONFERIDA.");
+  const nomes = [...new Set(lote.map(x => x.campanha))];
+  if(!confirm("Mandar " + lote.length + " leads da campanha " + nomes.join(", ") + " para a LISTA CONFERIDA?\n\nEles saem da campanha e ficam prontos para uma nova campanha. Na campanha fica registrado o dia e a hora da transferência.")) return;
+  const agora = new Date().toISOString(), quem = fluxoQuem();
+  await NovosDB.gravar(lote.map(x => { const y = Object.assign({}, x);
+    y.campanhasAnteriores = (x.campanhasAnteriores || []).concat([{ nome: x.campanha, em: x.campanhaEm || "", voltouEm: agora, para:"LISTA CONFERIDA", por: quem }]);
+    delete y.campanha; delete y.campanhaEm; delete y.listaSep; y.conferidaEm = agora; y.conferidaPor = quem; return y; }));
+  NOVOS.sel.clear();
+  toast(lote.length + " leads foram da campanha " + nomes.join(", ") + " para a LISTA CONFERIDA em " + new Date(agora).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) + ".");
+  novosDesenhar();
+}
 async function novosMandarConferida(){
+  if(NOVOS.divisao === "campanhas") return novosCampanhaParaConferida();
   const lote = (await NovosDB.todos()).filter(x => NOVOS.sel.has(x.chave));
   if(!lote.length) return toast("Marque os leads que vão para a LISTA CONFERIDA.");
   const ok = [], pul = { campanha:0, cliente:0, status:0, celular:0, ja:0 };
@@ -10621,7 +10638,8 @@ async function novosDesenhar(){
   const redes = [...new Set(tudo.filter(x => x.rede).map(x => x.rede))].sort((a, b) => a.localeCompare(b, "pt-BR"));
   if(NOVOS.redeSel && !redes.includes(NOVOS.redeSel)) NOVOS.redeSel = "";
   /* na REDE, cada rede é uma divisão própria */
-  const campanhas = [...new Set(tudo.filter(x => x.campanha).map(x => x.campanha))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const campanhas = [...new Set(tudo.filter(x => x.campanha).map(x => x.campanha)
+    .concat(tudo.flatMap(x => (x.campanhasAnteriores || []).filter(c => c.para).map(c => c.nome))))].filter(Boolean).sort((a, b) => a.localeCompare(b, "pt-BR"));
   if(NOVOS.campSel && !/^__dia:/.test(NOVOS.campSel) && !campanhas.includes(NOVOS.campSel)) NOVOS.campSel = "";
   const ultSet = f.ultimos ? new Set(f.ultChaves || (ultimosEnviados() || {}).chaves || []) : null;
   const todos = ultSet ? tudo.filter(x => ultSet.has(x.chave)) : (f.ramo ? daDivisao.filter(x => novosRamoKey(x) === f.ramo) : daDivisao)
@@ -11388,6 +11406,13 @@ function novosPerguntarCampanha(resumo, existentes){
 /* barra da divisão Campanhas: uma pílula por campanha, baixar de novo e voltar para remarketing */
 /* dia (local) em que o lead foi exportado para Excel (entrou na campanha) */
 function novosDiaExport(x){ return x.campanha && x.campanhaEm ? metaIso(new Date(x.campanhaEm)) : ""; }
+/* transferências que saíram de uma campanha (para a LISTA CONFERIDA), agrupadas por dia e hora */
+function novosHistCampanha(tudo, nome){
+  const g = {};
+  tudo.forEach(x => (x.campanhasAnteriores || []).forEach(c => { if(c.para && (!nome || c.nome === nome)){ const k = String(c.voltouEm || "").slice(0, 16) + "|" + c.nome + "|" + c.para;
+    const it = g[k] = g[k] || { em: c.voltouEm, nome: c.nome, para: c.para, n:0, quem: c.por || "" }; it.n++; } }));
+  return Object.values(g).sort((a, b) => String(b.em).localeCompare(String(a.em)));
+}
 function novosNavCampanhas(host, tudo, campanhas, f, noLugar, passaFiltro){
   if(!campanhas.length) return;
   const daRamo = tudo.filter(x => x.campanha && (!f.ramo || novosRamoKey(x) === f.ramo));
@@ -11415,6 +11440,9 @@ function novosNavCampanhas(host, tudo, campanhas, f, noLugar, passaFiltro){
   campanhas.forEach(n => nav.append(pill(n, n, daRamo.filter(x => x.campanha === n))));
   host.append(nav);
   const bar = el("div","ncampinfo");
+  const btConfC = el("button","btn sm","Mandar marcados para a LISTA CONFERIDA");
+  btConfC.title = "Tira os leads marcados da campanha e manda para a LISTA CONFERIDA. A campanha guarda o dia e a hora da transferência.";
+  btConfC.onclick = () => novosCampanhaParaConferida();
   /* tirar leads da exportação: voltam para a lista de leads (como se não tivessem sido exportados) */
   const btVolta = el("button","btn sm","Tirar marcados da exportação");
   btVolta.title = "Os leads marcados saem da campanha e voltam para a lista de leads (podem ser exportados de novo). Para apagar de vez, use Mais ações › Excluir marcados.";
@@ -11431,17 +11459,29 @@ function novosNavCampanhas(host, tudo, campanhas, f, noLugar, passaFiltro){
       ". Marque os que quer tirar e baixe o Excel de novo."));
     const bx = el("button","btn sm","Baixar Excel de novo (" + unid.length + ")");
     bx.onclick = () => novosBaixarArquivo("xlsx", novosNomeArquivo([nomes.length === 1 ? "campanha_" + nomes[0] : "exportados_" + diaSel, stamp()]), novosLinhasExport(unid));
-    bar.append(bx, btVolta);
+    bar.append(bx, btConfC, btVolta);
   } else if(!NOVOS.campSel){
-    bar.append(el("span","leadshint","Escolha uma campanha para baixar a lista de novo ou voltar a campanha inteira para remarketing."));
+    bar.append(el("span","leadshint","Escolha uma campanha para baixar a lista de novo ou voltar a campanha inteira para remarketing."), btConfC);
+    const histT = novosHistCampanha(tudo, "");
+    if(histT.length){ const hb = el("div","camphist"); hb.append(el("b",null,"Últimas transferências das campanhas"));
+      const ul = el("ul"); histT.slice(0, 8).forEach(h => ul.append(el("li",null, new Date(h.em).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) +
+        " · campanha " + h.nome + ": " + h.n + (h.n === 1 ? " lead" : " leads") + " para a " + h.para))); hb.append(ul); host.append(hb); }
   } else {
     const nome = NOVOS.campSel, unid = tudo.filter(x => x.campanha === nome);
+    const hist = novosHistCampanha(tudo, nome);
+    if(hist.length){
+      const hb = el("div","camphist"); hb.append(el("b",null,"Transferências desta campanha"));
+      const ul = el("ul");
+      hist.forEach(h => ul.append(el("li",null, new Date(h.em).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" }) +
+        " · " + h.n + (h.n === 1 ? " lead transferido" : " leads transferidos") + " para a " + h.para + (h.quem ? " · " + h.quem : ""))));
+      hb.append(ul); host.append(hb);
+    }
     const datas = [...new Set(unid.map(x => (x.campanhaEm || "").slice(0, 10)).filter(Boolean))].sort();
     bar.append(el("span","leadshint", unid.length + " leads na campanha " + nome +
       (datas.length ? " · exportados em " + datas.map(d => d.split("-").reverse().join("/")).join(", ") : "")));
     const bx = el("button","btn sm","Baixar Excel de novo (" + unid.length + ")");
     bx.onclick = () => novosBaixarArquivo("xlsx", novosNomeArquivo(["campanha", nome, stamp()]), novosLinhasExport(unid));
-    bar.append(bx, btVolta);
+    bar.append(bx, btConfC, btVolta);
     const br = el("button","btn sm danger","Voltar campanha inteira para remarketing");
     br.title = "Tira os " + unid.length + " leads da campanha: eles voltam para a lista de leads e podem ser exportados de novo";
     br.onclick = () => novosRemarketing(nome);
