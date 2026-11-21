@@ -9175,7 +9175,7 @@ async function m04Importar(est){
       if(erro || !resp) break;
       /* segunda trava: mesmo que a extensão traga algo de outro ramo, só entra o ramo buscado */
       const pal = (est.palavras && est.palavras.length) ? est.palavras : ramoPalavras(est.termo, "");
-      const doRamo = r => est.modo === "cnae" || r.origem === "cnae" || ramoConfere(pal, [r.nomeMaps, r.nomeFantasia, r.razaoSocial, r.categoria].join(" "));
+      const doRamo = r => est.modo === "cnae" || est.lugaresProntos || r.origem === "cnae" || ramoConfere(pal, [r.nomeMaps, r.nomeFantasia, r.razaoSocial, r.categoria].join(" "));
       /* terceira trava (vale também para o CNAE): nome/categoria de outro ramo vira “Outro ramo” e não conta na meta */
       const filtro = cfgB.semFiltro ? null : ramoFiltroDe(ramoCad || est.termo);
       const agoraIso = new Date().toISOString();
@@ -9219,12 +9219,16 @@ async function m04Importar(est){
         if(d.length === 14 && r.receita){ try { qualifGravar(d, { receita: r.receita }); REQ.cache[d] = r.receita; } catch(e){} }
         return novo;
       }).filter(Boolean);
-      if(remover.length) await NovosDB.excluir(remover);
-      if(lista.length) await NovosDB.gravar(lista);
+      /* lista do Maps em qualificação: fica na área de revisão de Qualificar Leads (não vai direto para o Cadastro) */
+      if(est.lugaresProntos){ if(lista.length) await qrevLoteGravar(buscaId, rotulo, ramoCad || est.termo, lista); }
+      else {
+        if(remover.length) await NovosDB.excluir(remover);
+        if(lista.length) await NovosDB.gravar(lista);
+      }
       m04StatsGravar(buscaId, st);
       M04.novasCidade = M04.novasCidade || {}; M04.novasCidade[buscaId + "|" + i] = (M04.novasCidade[buscaId + "|" + i] || 0) + novasCid;
       novasCid = M04.novasCidade[buscaId + "|" + i]; repCid = (M04.repCidade || {})[buscaId + "|" + i] || 0;
-      if(!final){ if(lista.length){ novos = Math.max(novos, 1); metaAtualizar(); } continue; }
+      if(!final){ if(lista.length){ novos = Math.max(novos, 1); if(est.lugaresProntos) qrevPinta(); else metaAtualizar(); } continue; }
       feitas[k] = new Date().toISOString();
       await NovosDB.metaGravar("importadas", feitas);
       /* avisa a extensão que já pode apagar os resultados desta cidade (libera espaço) */
@@ -9232,6 +9236,12 @@ async function m04Importar(est){
       M04.rodada = M04.rodada || { cidades:0, aprov:0, ultima:"", novas:0, rep:0, soNovas };
       M04.rodada.cidades++; M04.rodada.aprov += lista.filter(x => x.status === "aprovado").length; M04.rodada.ultima = c.nome + (c.zona ? " (Zona " + c.zona + ")" : "");
       M04.rodada.novas += novasCid; M04.rodada.rep += repCid; M04.rodada.comp = (M04.rodada.comp || 0) + compCid;
+    }
+    if(M04.rodada && M04.rodada.cidades && est.lugaresProntos){
+      M04.rodada = null; qrevPinta();
+      const L = (await qrevLotes())[buscaId], n = L ? Object.keys(L.regs).length : 0;
+      toast("Qualificação concluída: " + n + " leads para revisar em Qualificar Leads. Escolha quem vai para a lista de leads.");
+      novos = Math.max(novos, 1);
     }
     if(M04.rodada && M04.rodada.cidades){
       const r = M04.rodada; M04.rodada = null;
@@ -16233,7 +16243,8 @@ function pickExportMaps(host){
   const nomeArq = () => novosNomeArquivo(["google-maps", GMAPS.busca || "busca", stamp()]);
   btXls.onclick = () => baixarXlsx(nomeArq(), gmapsLinhas(), [34,26,6,10,50,18,30,50,11,11,30]);
   btCsv.onclick = () => novosBaixarArquivo("csv", nomeArq(), gmapsLinhas());
-  btQual.onclick = () => { QUALMAPS.itens = GMAPS.itens.map(x => Object.assign({}, x)); QUALMAPS.origem = "busca “" + (GMAPS.busca || "Maps") + "”"; pickEtapa = "qualificar"; desenhaPicker(); };
+  btQual.onclick = () => { QUALMAPS.itens = GMAPS.itens.map(x => Object.assign({}, x)); QUALMAPS.origem = "busca “" + (GMAPS.busca || "Maps") + "”"; QUALMAPS.auto = true; QUALMAPS.ramo = "";
+    pickEtapa = "qualificar"; desenhaPicker(); $("#picker").scrollTop = 0; };
   pinta();
 }
 
@@ -16254,67 +16265,199 @@ async function qualMapsLerArquivo(file){
     telefone: v(r, ci.tel), site: v(r, ci.site), href: v(r, ci.link), latitude: v(r, ci.lat), longitude: v(r, ci.lon) }))
     .filter(x => /google\.[^/]+\/maps/.test(x.href));
 }
+/* área de revisão: lotes qualificados, ainda fora do Cadastro */
+async function qrevLotes(){ let m = null; try { m = await NovosDB.meta("qualifLotes"); } catch(e){} return m && typeof m === "object" && !(m instanceof IDBRequest) ? m : {}; }
+async function qrevLotesGravar(t){ await NovosDB.metaGravar("qualifLotes", t); }
+async function qrevLoteGravar(id, rotulo, ramo, regs){
+  const t = await qrevLotes();
+  const L = t[id] = t[id] || { id, rotulo, ramo, criadoEm: new Date().toISOString(), regs:{}, feitos:{} };
+  regs.forEach(r => { if(!L.feitos[r.chave]) L.regs[r.chave] = r; });
+  await qrevLotesGravar(t);
+}
+/* ramo e estado a partir da busca do Maps ("clinica de depilação em marília - sp") */
+function qualRamoDaBusca(busca, ramos){
+  const t = String(busca || "").split(/\s+(?:em|no|na)\s+|\s+-\s+|,/i)[0].trim();
+  const raiz = ramoPalavras(t, "");
+  const ja = (ramos || []).find(r => ramoPalavras(r, "").some(x => raiz.includes(x)));
+  return ja || (t ? t[0].toUpperCase() + t.slice(1) : "");
+}
+function qualUfDaBusca(busca){ const m = String(busca || "").match(/(?:-|,|\s)\s*([a-z]{2})\s*$/i); return m && M04_UFS.includes(m[1].toUpperCase()) ? m[1].toUpperCase() : ""; }
+
+const QREV = { sel:new Set(), vistos:new Set(), aba:"aprovado", lote:"", ui:null, timer:null };
+const QUAL_ABAS = [["aprovado","Aprovados"],["aguardando","Aguardando 6 meses"],["fora","Fora do requisito"],["sem_cnpj","Sem CNPJ"],["mei","MEI"],["outro_ramo","Outro ramo"],["verificar","Conferir"]];
+async function qualMapsIniciar(ramo, uf, cnTxt){
+  if(!QUALMAPS.itens.length){ toast("Escolha a planilha do Google Maps primeiro."); return false; }
+  if(!ramo){ toast("Digite o ramo no Cadastro (ex.: Clínica de depilação)."); return false; }
+  const { resp: est, erro } = await m04Enviar({ type:"estado" }, 5000);
+  if(erro){ toast("A extensão Elosgate · Modelo 04 não respondeu. Confira se está na versão 2.5 e recarregue esta página."); return false; }
+  if(est && est.existe && est.rodando && !est.concluido){ toast("Já tem uma busca rodando. Pare ou espere terminar para qualificar esta lista."); return false; }
+  if(est && est.existe) await m04Importar(est);
+  QUALMAPS.uf = uf; QUALMAPS.ramo = ramo;
+  const { resp: rc } = await m04Enviar({ type:"cidades", uf }, 20000);
+  const nomes = (rc && rc.cidades) || [];
+  const txt = " " + ramoNorm([QUALMAPS.origem, GMAPS.busca].concat(QUALMAPS.itens.slice(0, 50).map(x => x.endereco)).join(" ")) + " ";
+  const cidade = nomes.filter(n => txt.includes(" " + ramoNorm(n) + " ")).sort((a, b) => b.length - a.length)[0] || M04_CAPITAIS[uf];
+  const quando = new Date().toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" }).replace(",", "");
+  const rotulo = "Leads tratados " + ramo + " " + quando;
+  ramoCfgGravar(ramo, Object.assign({}, ramoCfg(ramo), { cnaesExcluir: cnaesDoTexto(cnTxt).join(", "), cnaeSempre: true }));
+  m04BuscaCfgGravar(ramo, { ramo:"", soNovas:true, rotulo });
+  const conhecidos = await m04Conhecidos(uf);
+  const { resp, erro: e2 } = await m04Enviar({ type:"iniciar", termo: ramo, uf, opcoes:{ modo:"maps", escopo:"cidades", cidades:[cidade], maxPorCidade: 100000, dividir:false,
+    janela:"fixada", intervalo:1500, conhecidos, cnaesExcluir: cnaesDoTexto(cnTxt),
+    lugaresProntos: QUALMAPS.itens.map(x => ({ href: x.href, nome: x.nome, categoria: x.categoria, texto: [x.categoria, x.endereco].filter(Boolean).join(" · ") })) } }, 60000);
+  if(e2 || !resp || !resp.existe){ toast("Não consegui começar: " + (e2 || (resp && resp.aviso) || "sem resposta da extensão")); return false; }
+  if(!resp.lugaresProntos){ toast("A extensão está numa versão antiga: atualize para a 2.5."); return false; }
+  QREV.lote = String(resp.criadoEm || ""); QREV.aba = "aprovado";
+  await qrevLoteGravar(QREV.lote, rotulo, ramo, []);
+  toast(QUALMAPS.itens.length + " unidades em qualificação. Lote: " + rotulo + ".");
+  return true;
+}
 function qualMapsPainel(host){
   const box = el("div","metabox");
   box.append(el("h3",null,"Qualificar uma lista do Google Maps"));
-  box.append(el("p","leadshint","Use a planilha baixada em Buscar por cidade › Exportar do Google Maps (Excel ou CSV). Cada unidade é aberta no Maps, o CNPJ é achado no MaisCNPJ " +
-    "e conferido na Receita (LTDA, 6 meses, CNAEs). Os leads entram no Cadastro já separados (aprovados, aguardando, fora, sem CNPJ, outro ramo) num lote com o nome " +
-    "“Leads tratados <ramo> <dia e hora>”. As unidades que já estão no Cadastro são puladas."));
+  box.append(el("p","leadshint","Use a planilha baixada em Buscar por cidade › Exportar do Google Maps (ou clique em “Qualificar esta lista” lá). Cada unidade é aberta no Maps, " +
+    "o CNPJ é achado no MaisCNPJ e conferido na Receita (LTDA, 6 meses, CNAEs). Os resultados ficam aqui, separados por tipo, e você escolhe quem vai para a lista de leads."));
   const form = el("div","leadsform");
   const campo = (rot, ctl, dica) => { const c = el("div","leadscampo"); c.append(el("label",null,rot), ctl); if(dica) c.append(el("span","leadshint",dica)); form.append(c); return ctl; };
   const inArq = el("input"); inArq.type = "file"; inArq.accept = ".xlsx,.csv";
-  campo("Planilha do Google Maps", inArq, QUALMAPS.itens.length ? QUALMAPS.itens.length + " unidades prontas (" + QUALMAPS.origem + "). Ou escolha outra planilha." : ".xlsx ou .csv");
+  const dicaArq = campo("Planilha do Google Maps", inArq, "").nextSibling || null;
+  const lbArq = el("span","leadshint", QUALMAPS.itens.length ? QUALMAPS.itens.length + " unidades prontas (" + QUALMAPS.origem + "). Ou escolha outra planilha." : ".xlsx ou .csv");
+  inArq.parentElement.append(lbArq);
   const inRamo = el("input"); inRamo.type = "text"; inRamo.placeholder = "ex.: Clínica de depilação"; inRamo.setAttribute("list","qualRamos");
-  inRamo.value = QUALMAPS.ramo || "";
   const dl = el("datalist"); dl.id = "qualRamos";
-  campo("Ramo no Cadastro", inRamo, "Os leads entram neste ramo e no lote “Leads tratados <ramo> <dia e hora>”.");
+  campo("Ramo no Cadastro", inRamo, "Lote: “Leads tratados <ramo> <dia e hora>”.");
   inRamo.parentElement.append(dl);
-  NovosDB.todos().then(l => [...new Set(l.map(x => x.termo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR")).forEach(n => { const o = el("option"); o.value = n; dl.append(o); })).catch(() => {});
   const selUf = el("select"); M04_UFS.forEach(u => { const o = el("option",null,u); o.value = u; selUf.append(o); });
-  selUf.value = QUALMAPS.uf || (M04.campos && M04.campos.uf) || "SP";
-  campo("Estado da lista", selUf, "A cidade de cada lead vem do endereço completo que a extensão lê no Maps.");
+  campo("Estado da lista", selUf, "A cidade de cada lead vem do endereço que a extensão lê no Maps.");
   const inCn = el("input"); inCn.type = "text"; inCn.placeholder = "ex.: 8630-5/01, 9602-5/01";
-  campo("CNAEs de outro ramo — descartar (opcional)", inCn, "Principal ou secundário. Vai para “Outro ramo”.");
+  campo("CNAEs de outro ramo — descartar (opcional)", inCn, "Principal ou secundário: vai para a aba “Outro ramo”.");
   const cn0 = () => { const c = ramoCfg(inRamo.value); inCn.value = c.cnaesExcluir != null ? c.cnaesExcluir : ramoCnaesPadrao(inRamo.value); };
-  inRamo.addEventListener("change", cn0); cn0();
+  inRamo.addEventListener("change", cn0);
   box.append(form);
-  const acoes = el("div","leadsacoes"); const bt = el("button","btn primary","Qualificar e mandar para o Cadastro"); acoes.append(bt); box.append(acoes);
-  const st = el("p","leadshint"); box.append(st);
+  const acoes = el("div","leadsacoes"); const bt = el("button","btn primary","Começar a qualificação"); acoes.append(bt); box.append(acoes);
+  /* revisão */
+  const rev = el("div"); rev.style.marginTop = "16px"; box.append(rev);
+  host.append(box);
+  QREV.ui = { box, rev };
+  /* valores iniciais: o que veio da busca do Maps */
+  NovosDB.todos().then(l => {
+    const ramos = [...new Set(l.map(x => x.termo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+    ramos.forEach(n => { const o = el("option"); o.value = n; dl.append(o); });
+    inRamo.value = QUALMAPS.ramo || qualRamoDaBusca(GMAPS.busca, ramos) || "";
+    selUf.value = qualUfDaBusca(GMAPS.busca) || QUALMAPS.uf || (M04.campos && M04.campos.uf) || "SP";
+    cn0();
+    /* veio do botão “Qualificar esta lista”: começa sozinho */
+    if(QUALMAPS.auto && QUALMAPS.itens.length && inRamo.value){ QUALMAPS.auto = false; bt.click(); }
+  }).catch(() => {});
   inArq.onchange = async () => {
     const f = inArq.files[0]; if(!f) return;
-    try { QUALMAPS.itens = await qualMapsLerArquivo(f); QUALMAPS.origem = f.name; st.textContent = QUALMAPS.itens.length + " unidades lidas de " + f.name + "."; }
-    catch(e){ QUALMAPS.itens = []; st.textContent = "Não consegui ler a planilha: " + (e.message || e); }
+    try { QUALMAPS.itens = await qualMapsLerArquivo(f); QUALMAPS.origem = f.name; lbArq.textContent = QUALMAPS.itens.length + " unidades lidas de " + f.name + "."; }
+    catch(e){ QUALMAPS.itens = []; lbArq.textContent = "Não consegui ler a planilha: " + (e.message || e); }
   };
-  bt.onclick = async () => {
-    const ramo = inRamo.value.trim();
-    if(!QUALMAPS.itens.length) return toast("Escolha a planilha do Google Maps primeiro.");
-    if(!ramo){ inRamo.focus(); return toast("Digite o ramo no Cadastro (ex.: Clínica de depilação)."); }
-    const { resp: est, erro } = await m04Enviar({ type:"estado" }, 5000);
-    if(erro) return toast("A extensão Elosgate · Modelo 04 não respondeu. Confira se está na versão 2.5 e recarregue esta página.");
-    if(est && est.existe && est.rodando && !est.concluido) return toast("Já tem uma busca rodando em Buscar por cidade. Pare ou espere terminar.");
-    if(est && est.existe){ if(!confirm("A extensão ainda guarda a busca anterior. Ela será trocada por esta (o que já entrou no Cadastro fica). Continuar?")) return; await m04Importar(est); }
-    /* cidade da busca: o nome de cidade do estado que aparece na busca do Maps (ex.: "… campinas") ou nos endereços */
-    const uf = selUf.value; QUALMAPS.uf = uf;
-    const { resp: rc } = await m04Enviar({ type:"cidades", uf }, 20000);
-    const nomes = (rc && rc.cidades) || [];
-    const txt = " " + ramoNorm([QUALMAPS.origem, GMAPS.busca].concat(QUALMAPS.itens.slice(0, 50).map(x => x.endereco)).join(" ")) + " ";
-    let cidade = nomes.filter(n => txt.includes(" " + ramoNorm(n) + " ")).sort((a, b) => b.length - a.length)[0] || M04_CAPITAIS[uf];
-    const quando = new Date().toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" }).replace(",", "");
-    const rotulo = "Leads tratados " + ramo + " " + quando;
-    ramoCfgGravar(ramo, Object.assign({}, ramoCfg(ramo), { cnaesExcluir: cnaesDoTexto(inCn.value).join(", "), cnaeSempre: true }));
-    m04BuscaCfgGravar(ramo, { ramo:"", soNovas:true, rotulo });
-    const conhecidos = await m04Conhecidos(uf);
-    const { resp, erro: e2 } = await m04Enviar({ type:"iniciar", termo: ramo, uf, opcoes:{ modo:"maps", escopo:"cidades", cidades:[cidade], maxPorCidade: 100000, dividir:false,
-      janela:"fixada", intervalo:1500, conhecidos, cnaesExcluir: cnaesDoTexto(inCn.value),
-      lugaresProntos: QUALMAPS.itens.map(x => ({ href: x.href, nome: x.nome, categoria: x.categoria, texto: [x.categoria, x.endereco].filter(Boolean).join(" · ") })) } }, 60000);
-    if(e2 || !resp || !resp.existe) return toast("Não consegui começar: " + (e2 || (resp && resp.aviso) || "sem resposta da extensão"));
-    if(!resp.lugaresProntos) return toast("A extensão está numa versão antiga: atualize para a 2.5.");
-    QUALMAPS.ramo = ramo;
-    toast(QUALMAPS.itens.length + " unidades mandadas para qualificar. Lote: " + rotulo + ".");
-    M04.campos = Object.assign({}, M04.campos || {}, { termo: ramo, uf });
-    pickEtapa = "modelo04"; desenhaPicker();
-  };
-  host.append(box);
+  bt.onclick = async () => { bt.disabled = true; try { if(await qualMapsIniciar(inRamo.value.trim(), selUf.value, inCn.value)) qrevPinta(); } finally { bt.disabled = false; } };
+  qrevPinta();
+  /* acompanha a extensão enquanto a tela estiver aberta */
+  clearInterval(QREV.timer);
+  QREV.timer = setInterval(async () => {
+    if(!QREV.ui || !document.body.contains(QREV.ui.box)){ clearInterval(QREV.timer); return; }
+    const { resp } = await m04Enviar({ type:"estado" }, 5000);
+    QREV.est = resp || null;
+    if(resp && resp.existe && resp.lugaresProntos) await m04Importar(resp);
+    qrevPinta();
+  }, 3000);
+}
+async function qrevPinta(){
+  const u = QREV.ui; if(!u || !document.body.contains(u.box)) return;
+  const t = await qrevLotes();
+  const lotes = Object.values(t).sort((a, b) => String(b.criadoEm).localeCompare(String(a.criadoEm)));
+  if(!QREV.lote || !t[QREV.lote]) QREV.lote = (lotes.find(L => Object.keys(L.regs).length) || lotes[0] || {}).id || "";
+  const L = t[QREV.lote];
+  const rolagem = u.rev.querySelector(".tablewrap") ? u.rev.querySelector(".tablewrap").scrollTop : 0;
+  u.rev.innerHTML = "";
+  if(!L){ return; }
+  const regs = Object.values(L.regs);
+  regs.forEach(r => { if(!QREV.vistos.has(r.chave)){ QREV.vistos.add(r.chave); if(r.status === "aprovado" && novosTemCelular(r)) QREV.sel.add(r.chave); } });
+  /* cabeçalho do lote e andamento */
+  const cab = el("div","leadsacoes"); cab.style.cssText = "align-items:center;flex-wrap:wrap";
+  if(lotes.length > 1){
+    const sl = el("select"); sl.style.cssText = "padding:6px 8px";
+    lotes.forEach(x => { const o = el("option",null, x.rotulo + " · " + Object.keys(x.regs).length + " para revisar"); o.value = x.id; sl.append(o); });
+    sl.value = QREV.lote; sl.onchange = () => { QREV.lote = sl.value; qrevPinta(); };
+    cab.append(sl);
+  } else cab.append(el("b",null, L.rotulo));
+  const est = QREV.est;
+  const doLote = est && est.existe && est.lugaresProntos && String(est.criadoEm) === String(L.id);
+  const andamento = doLote ? (est.concluido ? "Qualificação concluída." : est.pausado ? "Pausada: " + (est.motivo || est.bloqueio || "") :
+    "Qualificando " + Math.min((est.li || 0) + 1, est.lugaresTotal || 0) + " de " + (est.lugaresTotal || "…") + (est.atual ? " · " + est.atual : "")) : "";
+  if(andamento) cab.append(el("span","leadshint", andamento));
+  u.rev.append(cab);
+  if(doLote && !est.concluido && est.lugaresTotal){ const bar = el("div","leadsbar"), f = el("i"); f.style.width = Math.min(100, (est.li || 0) / est.lugaresTotal * 100) + "%"; bar.append(f); u.rev.append(bar); }
+  /* abas por tipo */
+  const nAba = k => regs.filter(r => r.status === k).length;
+  const abas = el("div","ndivisoes");
+  QUAL_ABAS.filter(([k]) => nAba(k) || k === "aprovado").forEach(([k, rot]) => {
+    const b = el("button","ndiv" + (QREV.aba === k ? " on" : "")); b.append(document.createTextNode(rot + " "), el("span",null,String(nAba(k))));
+    b.onclick = () => { QREV.aba = k; qrevPinta(); }; abas.append(b);
+  });
+  u.rev.append(abas);
+  const daAba = regs.filter(r => r.status === QREV.aba).sort((a, b) => String(a.nomeMaps || "").localeCompare(String(b.nomeMaps || ""), "pt-BR"));
+  const marc = regs.filter(r => QREV.sel.has(r.chave));
+  /* ações */
+  const ac = el("div","leadsacoes"); ac.style.flexWrap = "wrap";
+  const btEnv = el("button","btn primary","Mandar marcados para a lista de leads (" + marc.length + ")");
+  const btTodos = el("button","btn","Marcar todos desta aba"), btNenhum = el("button","btn","Desmarcar desta aba"), btDesc = el("button","btn danger","Descartar marcados");
+  btTodos.onclick = () => { daAba.forEach(r => QREV.sel.add(r.chave)); qrevPinta(); };
+  btNenhum.onclick = () => { daAba.forEach(r => QREV.sel.delete(r.chave)); qrevPinta(); };
+  btEnv.onclick = () => qrevEnviar(L.id, marc);
+  btDesc.onclick = () => qrevDescartar(L.id, marc);
+  ac.append(btEnv, btTodos, btNenhum, btDesc);
+  if(marc.length) ac.append(el("span","leadshint", "Marcados: " + QUAL_ABAS.map(([k, rot]) => [rot, marc.filter(r => r.status === k).length]).filter(x => x[1]).map(x => x[1] + " " + x[0].toLowerCase()).join(" · ")));
+  u.rev.append(ac);
+  /* lista da aba */
+  const tw = el("div","tablewrap"); tw.style.maxHeight = "520px";
+  if(!daAba.length) tw.append(el("p","leadshint", doLote && !est.concluido ? "Ainda nenhum lead nesta aba. Os resultados vão aparecendo enquanto a qualificação anda." : "Nenhum lead nesta aba."));
+  else {
+    const tb = el("table","leadlista"), h = el("tr");
+    const ckAll = el("input"); ckAll.type = "checkbox"; ckAll.checked = daAba.every(r => QREV.sel.has(r.chave));
+    ckAll.onchange = () => { daAba.forEach(r => ckAll.checked ? QREV.sel.add(r.chave) : QREV.sel.delete(r.chave)); qrevPinta(); };
+    const th0 = el("th"); th0.append(ckAll); h.append(th0);
+    ["Empresa","CNPJ","Cidade","Tel. Maps","Tel. Receita","Situação"].forEach(x => h.append(el("th",null,x))); tb.append(h);
+    daAba.forEach(r => {
+      const tr = el("tr"); const td0 = el("td","ck"), ck = el("input"); ck.type = "checkbox"; ck.checked = QREV.sel.has(r.chave);
+      ck.onchange = () => { ck.checked ? QREV.sel.add(r.chave) : QREV.sel.delete(r.chave); qrevPinta(); };
+      td0.append(ck); tr.append(td0);
+      const te = el("td"); te.append(novosNomeMaps(r, r.nomeMaps || r.nomeFantasia || r.razaoSocial || "—")); if(r.razaoSocial) te.append(el("div","sub", r.razaoSocial));
+      if(!novosTemCelular(r)) te.append(el("div","quem nfrio","sem celular (frio)"));
+      tr.append(te, el("td",null, r.cnpj || "—"), el("td",null, (r.cidade || "") + (r.uf ? "/" + r.uf : "")), el("td","tel", r.telMaps || "—"),
+        el("td","tel", r.telMaisCnpj || (r.telReceita || []).join(" / ") || "—"));
+      const ts = el("td"); const [rot, cls] = M04_STATUS[r.status] || [r.status, "st-todo"]; ts.append(el("span","pill " + cls, rot));
+      [r.motivo && r.status !== "aprovado" ? r.motivo : "", r.ramoMotivo ? "ramo: " + r.ramoMotivo : ""].filter(Boolean).forEach(x => ts.append(el("div","sub",x)));
+      tr.append(ts); tb.append(tr);
+    });
+    tw.append(tb);
+  }
+  u.rev.append(tw);
+  tw.scrollTop = rolagem;
+}
+/* manda para o Cadastro (lista de leads definitiva) */
+async function qrevEnviar(id, lote){
+  if(!lote.length) return toast("Marque os leads que vão para a lista de leads.");
+  const t = await qrevLotes(), L = t[id]; if(!L) return;
+  const ja = new Set((await NovosDB.todos()).map(x => x.chave));
+  const agora = new Date().toISOString();
+  const novos = lote.filter(r => !ja.has(r.chave)).map(r => Object.assign({}, r, { buscaId: id, buscaRotulo: L.rotulo, capturadoEm: agora, importadoEm: agora }));
+  if(novos.length) await NovosDB.gravar(novos);
+  lote.forEach(r => { delete L.regs[r.chave]; L.feitos[r.chave] = "enviado"; QREV.sel.delete(r.chave); });
+  await qrevLotesGravar(t);
+  toast(novos.length + " leads mandados para a lista de leads (lote " + L.rotulo + ")" + (lote.length > novos.length ? " · " + (lote.length - novos.length) + " já estavam lá" : "") + ".");
+  metaAtualizar(); setTimeout(cnaeAutoConferir, 1500); qrevPinta();
+}
+async function qrevDescartar(id, lote){
+  if(!lote.length) return toast("Marque os leads que quer descartar.");
+  if(!confirm("Descartar " + lote.length + " leads deste lote? Eles não vão para a lista de leads.")) return;
+  const t = await qrevLotes(), L = t[id]; if(!L) return;
+  lote.forEach(r => { delete L.regs[r.chave]; L.feitos[r.chave] = "descartado"; QREV.sel.delete(r.chave); });
+  await qrevLotesGravar(t); qrevPinta();
 }
 
 /* ---------- Importar lista do MaisCNPJ ----------
