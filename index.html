@@ -1414,6 +1414,8 @@ a.nmaps::after{content:" ↗";font-size:11px;color:var(--teal);font-weight:400}
 .ndiv.dcamp{border-color:#7c3aed;color:#6d28d9} .ndiv.dcamp.on{background:#7c3aed;border-color:#7c3aed;color:#fff}
 .ndivsep{width:1px;height:26px;background:var(--line);margin:0 4px}
 .dconfinfo{background:#EAF1FE;border:1px solid #BFD3FB;border-radius:8px;padding:8px 12px;color:#1e3a8a}
+.cnaecat.cconf{border-color:#2563eb;color:#1d4ed8} .cnaecat.cconf.on{background:#2563eb;color:#fff}
+.cattag{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:700;padding:1px 8px;border-radius:999px;background:#EAF1FE;color:#1d4ed8;vertical-align:middle;letter-spacing:.02em}
 .novotag{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:999px;background:var(--amber-soft);color:#8A5A12;vertical-align:middle}
 .abastela{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 18px;padding-bottom:12px;border-bottom:1px solid var(--line)}
 /* menu "Mais ações" do Cadastro */
@@ -10006,6 +10008,7 @@ function pickNovos(host){
   host.append(barra);
 
   const chips = el("div","leadschips"); chips.style.margin = "0 0 12px"; host.append(chips);
+  const catsConfBox = el("div","cnaecats"); host.append(catsConfBox);
   const cnaeCats = el("div","cnaecats"); host.append(cnaeCats);
 
   const acoes = el("div","leadsacoes");
@@ -10090,7 +10093,9 @@ function pickNovos(host){
   btConf.onclick = () => novosMandarConferida();
   const btTiraConf = el("button","btn","Tirar marcados da LISTA CONFERIDA (voltam para Leads)");
   btTiraConf.onclick = () => novosTirarConferida();
-  menu.append(btConf, btTiraConf, el("hr"), btRede, btExcluir, btRamoOk, btRamoRe, btRefazer, btAtual, el("hr"), btCli, btManter);
+  const btCat = el("button","btn","Mudar a categoria dos marcados (LISTA CONFERIDA)");
+  btCat.onclick = () => novosMudarCategoria();
+  menu.append(btConf, btTiraConf, btCat, el("hr"), btRede, btExcluir, btRamoOk, btRamoRe, btRefazer, btAtual, el("hr"), btCli, btManter);
   menu.addEventListener("click", ev => { if(ev.target.closest("button")) mais.open = false; });
   document.addEventListener("click", ev => { if(mais.open && !mais.contains(ev.target)) mais.open = false; });
   mais.append(sm, menu);
@@ -10112,7 +10117,7 @@ function pickNovos(host){
   host.append(acoes);
 
   const corpo = el("div"); host.append(corpo);
-  NOVOS.ui = { cnaeCats, btExcCid, inB, sSt, sUf, sCid, sBus, ckN, chips, corpo, info, btEnviar, btExcluir, ramos, mostrando, divisoes, btCsv, btXls, btRede, btManter, inQtd, lbQtd };
+  NOVOS.ui = { catsConf: catsConfBox, cnaeCats, btExcCid, inB, sSt, sUf, sCid, sBus, ckN, chips, corpo, info, btEnviar, btExcluir, ramos, mostrando, divisoes, btCsv, btXls, btRede, btManter, inQtd, lbQtd };
 
   let t = null;
   inB.oninput = () => { clearTimeout(t); t = setTimeout(() => { NOVOS.filtro.busca = inB.value; NOVOS.mostrar = 200; novosDesenhar(); }, 250); };
@@ -10311,6 +10316,51 @@ function novosNomeMaps(r, texto){
 }
 
 /* ---------- LISTA CONFERIDA: leads conferidos, prontos para a campanha ---------- */
+/* categorias da lista conferida (ex.: ESTÉTICA CORPORAL, DEPILAÇÃO A LASER) */
+function catsConf(){ try { return JSON.parse(localStorage.getItem("m04_catsConf") || "[]") || []; } catch(e){ return []; } }
+function catsConfGravar(l){ try { localStorage.setItem("m04_catsConf", JSON.stringify([...new Set(l)].sort((a, b) => a.localeCompare(b, "pt-BR")))); } catch(e){} }
+const catNorm = t => String(t || "").trim().replace(/\s+/g, " ").toUpperCase();
+/* pergunta a categoria: escolher uma que já existe ou cadastrar nova; resolve com o nome, "" (sem categoria) ou null (cancelou) */
+async function novosPerguntarCategoria(texto){
+  const usadas = [...new Set((await NovosDB.todos()).map(x => x.categoriaConf).filter(Boolean))];
+  const lista = [...new Set(catsConf().concat(usadas))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  return new Promise(ok => {
+    let resp = null;
+    const dlg = el("dialog","nrededlg"); dlg.style.width = "min(560px,94vw)";
+    dlg.append(el("h3",null,"Categoria na LISTA CONFERIDA"));
+    dlg.append(el("p","leadshint", texto));
+    let escolhida = "";
+    const chips = el("div","nredejas");
+    const pintaChips = () => { chips.innerHTML = ""; if(!lista.length) chips.append(el("span","leadshint","Nenhuma categoria cadastrada ainda: digite a primeira abaixo."));
+      lista.forEach(c => { const b = el("button","ndiv" + (escolhida === c ? " on" : ""), c); b.type = "button"; b.onclick = () => { escolhida = c; inp.value = ""; pintaChips(); }; chips.append(b); }); };
+    dlg.append(chips);
+    dlg.append(el("label","leadshint","Ou cadastre uma categoria nova:"));
+    const inp = el("input"); inp.type = "text"; inp.placeholder = "ex.: ESTÉTICA CORPORAL";
+    inp.oninput = () => { if(inp.value.trim()){ escolhida = ""; pintaChips(); } };
+    dlg.append(inp);
+    pintaChips();
+    const bt = el("div","leadsbotoes");
+    const okb = el("button","btn primary","Mandar para a LISTA CONFERIDA"), sem = el("button","btn","Mandar sem categoria"), cancela = el("button","btn","Cancelar");
+    [okb, sem, cancela].forEach(b => b.type = "button"); bt.append(okb, sem, cancela); dlg.append(bt);
+    const fechar = v => { resp = v; dlg.close(); };
+    okb.onclick = () => { const nova = catNorm(inp.value); const c = nova || escolhida; if(!c) return toast("Escolha uma categoria ou digite uma nova (ou use “Mandar sem categoria”).");
+      if(nova){ catsConfGravar(catsConf().concat([nova])); } fechar(c); };
+    sem.onclick = () => fechar("");
+    cancela.onclick = () => fechar(null);
+    inp.onkeydown = ev => { if(ev.key === "Enter"){ ev.preventDefault(); okb.click(); } };
+    dlg.addEventListener("close", () => { dlg.remove(); ok(resp); });
+    document.body.append(dlg); dlg.showModal(); inp.focus();
+  });
+}
+/* trocar a categoria dos marcados (na lista conferida ou em campanhas) */
+async function novosMudarCategoria(){
+  const lote = (await NovosDB.todos()).filter(x => NOVOS.sel.has(x.chave) && x.conferidaEm);
+  if(!lote.length) return toast("Marque, na LISTA CONFERIDA, os leads que vão mudar de categoria.");
+  const c = await novosPerguntarCategoria("Nova categoria para os " + lote.length + " leads marcados.");
+  if(c === null) return;
+  await NovosDB.gravar(lote.map(x => Object.assign({}, x, { categoriaConf: c })));
+  NOVOS.sel.clear(); toast(lote.length + " leads " + (c ? "na categoria " + c : "sem categoria") + "."); novosDesenhar();
+}
 async function novosMandarConferida(){
   const lote = (await NovosDB.todos()).filter(x => NOVOS.sel.has(x.chave));
   if(!lote.length) return toast("Marque os leads que vão para a LISTA CONFERIDA.");
@@ -10322,11 +10372,12 @@ async function novosMandarConferida(){
   const motivos = [pul.campanha && pul.campanha + " já estão em campanha", pul.cliente && pul.cliente + " já são clientes", pul.ja && pul.ja + " já estavam na lista conferida",
     pul.status && pul.status + " não são Aprovados", pul.celular && pul.celular + " sem celular"].filter(Boolean);
   if(!ok.length) return toast("Nenhum lead foi para a LISTA CONFERIDA: " + motivos.join(", ") + ".");
-  if(!confirm("Mandar " + ok.length + " leads para a LISTA CONFERIDA? Eles saem das outras listas e ficam prontos para a campanha." + (motivos.length ? "\n\nFicam de fora: " + motivos.join(", ") + "." : ""))) return;
+  const cat = await novosPerguntarCategoria(ok.length + " leads vão para a LISTA CONFERIDA e saem das outras listas." + (motivos.length ? " Ficam de fora: " + motivos.join(", ") + "." : "") + " Em que categoria eles entram?");
+  if(cat === null) return;
   const agora = new Date().toISOString(), quem = fluxoQuem();
-  await NovosDB.gravar(ok.map(x => Object.assign({}, x, { conferidaEm: agora, conferidaPor: quem })));
+  await NovosDB.gravar(ok.map(x => Object.assign({}, x, { conferidaEm: agora, conferidaPor: quem, categoriaConf: cat })));
   NOVOS.sel.clear();
-  toast(ok.length + " leads na LISTA CONFERIDA" + (motivos.length ? " · ficaram de fora: " + motivos.join(", ") : "") + ". A campanha é exportada de lá.");
+  toast(ok.length + " leads na LISTA CONFERIDA" + (cat ? " · categoria " + cat : "") + (motivos.length ? " · ficaram de fora: " + motivos.join(", ") : "") + ". A campanha é exportada de lá.");
   novosDesenhar();
 }
 async function novosTirarConferida(){
@@ -10604,7 +10655,23 @@ async function novosDesenhar(){
     (!alocMeta || alocMeta.get(x.chave) === f.diaMeta));
   /* categoria pelo CNAE secundário */
   const naCat = x => !f.cnaeCat ? true : f.cnaeCat === "__nao" ? !leadSecConferido(x) : f.cnaeCat === "__sem" ? leadSecConferido(x) && !leadSecs(x).length : leadSecs(x).includes(f.cnaeCat);
-  const noRecorte = noRecorte0.filter(naCat);
+  /* categoria da lista conferida (na LISTA CONFERIDA e em CAMPANHAS) */
+  const usaCatConf = dv === "conferida" || dv === "campanhas";
+  if(!usaCatConf) f.catConf = "";
+  const naCatConf = x => !f.catConf || (f.catConf === "__sem" ? !x.categoriaConf : x.categoriaConf === f.catConf);
+  const noRecorte = noRecorte0.filter(naCat).filter(naCatConf);
+  if(u.catsConf){ u.catsConf.innerHTML = "";
+    if(usaCatConf && noRecorte0.length){
+      const cont = {}; let sem = 0; noRecorte0.forEach(x => { if(x.categoriaConf) cont[x.categoriaConf] = (cont[x.categoriaConf] || 0) + 1; else sem++; });
+      u.catsConf.append(el("span","cnaecatsrot","Categoria:"));
+      const chip = (rot, n, k) => { const b = el("button","cnaecat cconf" + (f.catConf === k ? " on" : "")); b.append(document.createTextNode(rot + " "), el("b",null, n.toLocaleString("pt-BR")));
+        b.onclick = () => { f.catConf = f.catConf === k ? "" : k; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); }; u.catsConf.append(b); };
+      chip("Todas", noRecorte0.length, "");
+      Object.entries(cont).sort((a, b) => b[1] - a[1]).forEach(([c, n]) => chip(c, n, c));
+      if(sem) chip("Sem categoria", sem, "__sem");
+      if(dv === "conferida") u.catsConf.append(el("span","leadshint"," · escolha uma categoria para exportar a campanha só dela"));
+    }
+  }
   { const box = u.cnaeCats; box.innerHTML = "";
     const cont = {}, ex = {}; let sem = 0, nao = 0;
     noRecorte0.forEach(x => { if(!leadSecConferido(x)){ nao++; return; } const sc = leadSecs(x); if(!sc.length) sem++; sc.forEach(c => { cont[c] = (cont[c] || 0) + 1; ex[c] = ex[c] || x; }); });
@@ -10707,7 +10774,9 @@ async function novosDesenhar(){
   if(dv === "conferida"){
     const bar = el("div","ncampinfo dconfinfo");
     bar.append(el("span",null,"LISTA CONFERIDA: leads aprovados, com celular, conferidos e prontos para a campanha. Use “Baixar Excel” para exportar a campanha: os exportados vão para CAMPANHAS e não voltam a ser escolhidos para contato."));
-    const bt = el("button","btn sm","Tirar marcados (voltam para Leads)"); bt.onclick = novosTirarConferida; bar.append(bt);
+    const bt = el("button","btn sm","Tirar marcados (voltam para Leads)"); bt.onclick = novosTirarConferida;
+    const bc = el("button","btn sm","Mudar a categoria dos marcados"); bc.onclick = novosMudarCategoria;
+    bar.append(bt, bc);
     u.corpo.append(bar);
   }
   if(dv === "leads"){
@@ -10827,6 +10896,7 @@ async function novosDesenhar(){
     if(r.campanha) te.append(el("div","quem","campanha " + r.campanha + (r.campanhaEm ? " · exportado em " + new Date(r.campanhaEm).toLocaleDateString("pt-BR") : "")));
     else if((r.campanhasAnteriores || []).length) te.append(el("div","quem","remarketing · já esteve em " + r.campanhasAnteriores.map(c => c.nome).join(", ")));
     if(dv === "frios") te.append(el("div","quem nfrio","frio · sem celular"));
+    if(r.categoriaConf && (r.conferidaEm || r.campanha)) te.append(el("span","cattag", r.categoriaConf));
     if(r.conferidaEm && !r.campanha) te.append(el("div","quem","na lista conferida desde " + new Date(r.conferidaEm).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) + (r.conferidaPor ? " · " + r.conferidaPor : "")));
     tr.append(te);
 
@@ -11145,7 +11215,7 @@ function novosTemCelular(r){ return novosCelulares(r).length > 0; }
 
 function novosLinhasExport(lista){
   const data = d => d ? String(d).slice(0, 10).split("-").reverse().join("/") : "";
-  const cab = ["Campanha","Exportado em","Celular (WhatsApp)","Outros telefones","Ramo","Situação","Empresa (Google Maps)","Razão social","Nome fantasia","CNPJ","Natureza jurídica","Abertura","Situação cadastral",
+  const cab = ["Campanha","Exportado em","Celular (WhatsApp)","Outros telefones","Ramo","Categoria (lista conferida)","Situação","Empresa (Google Maps)","Razão social","Nome fantasia","CNPJ","Natureza jurídica","Abertura","Situação cadastral",
     "Porte","Capital social","Endereço (Google Maps)","Bairro","CEP","Cidade","UF","Zona","Distrito","Rede","Endereço (Receita)","Telefone Google Maps","Telefone MaisCNPJ",
     "Telefone Receita","E-mail","Site","Nota Google","Avaliações","Categoria","Link Google Maps","Link MaisCNPJ","Enviado à Base","Encontrado em"];
   return [cab].concat(lista.map(r => {
@@ -11153,7 +11223,7 @@ function novosLinhasExport(lista){
     return [
       r.campanha || "", r.campanhaEm ? new Date(r.campanhaEm).toLocaleDateString("pt-BR") : "",
       cels.join(" / "), novosTelefones(r).filter(t => !cels.includes(t)).join(" / "),
-      r.termo || "", (M04_STATUS[r.status] || [r.status])[0],
+      r.termo || "", r.categoriaConf || "", (M04_STATUS[r.status] || [r.status])[0],
       r.nomeMaps || "", r.razaoSocial || "", r.nomeFantasia || "", r.cnpj || "", r.natureza || "", data(r.abertura), r.situacao || "",
       r.porte || "", r.capital ? String(r.capital) : "", r.endereco || "", r.bairro || "", r.cep || "", r.cidade || "", r.uf || "", r.zona || "", r.distrito || "", r.rede || "",
       r.enderecoReceita || "", r.telMaps || "", r.telMaisCnpj || "", (r.telReceita || []).join(" / "), r.email || "", r.site || "",
@@ -11162,7 +11232,7 @@ function novosLinhasExport(lista){
     ].map(v => v == null ? "" : String(v));
   }));
 }
-const NOVOS_EXPORT_LARG = [18,12,22,26,22,12,34,40,30,20,34,12,14,14,14,50,22,10,22,6,10,22,24,50,18,22,26,30,30,8,10,24,40,40,10,12];
+const NOVOS_EXPORT_LARG = [18,12,22,26,22,22,12,34,40,30,20,34,12,14,14,14,50,22,10,22,6,10,22,24,50,18,22,26,30,30,8,10,24,40,40,10,12];
 function novosNomeArquivo(partes){
   return partes.filter(Boolean).join("_").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^\w\-]+/g, "-").toLowerCase();
 }
