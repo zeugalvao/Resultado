@@ -9817,6 +9817,11 @@ function m04Polling(){
 
 function m04Pinta(s){
   const u = M04.ui; if(!u) return;
+  /* desenho do fluxo acompanha a busca que está na extensão */
+  if(M04.fx && document.body.contains(M04.fx) && s && s.existe && !s.lugaresProntos){
+    const idB = "b" + s.criadoEm;
+    if(fluxoLote(idB) && M04.fx.dataset.lote !== idB) fluxoBarra(M04.fx, idB, 0, "busca");
+  }
   M04.estado = s;
   s = s || { existe:false };
   u.aviso.hidden = true;
@@ -10068,7 +10073,8 @@ function pickNovos(host){
   const fxCad = el("div"); fxCad.style.marginBottom = "14px";
   { const ref = [...host.querySelectorAll(".metabox")].pop(); if(ref) ref.before(fxCad); else host.append(fxCad); }
   { const f0 = NOVOS.filtro, Lf = f0.buscaId ? Object.values(fluxoLotes()).find(L => String(L.qrevId) === String(f0.buscaId) || String(L.buscaId) === String(f0.buscaId)) : null;
-    if(Lf) fluxoDiagrama(fxCad, Lf.id, Lf.tipo === "busca" ? (NOVOS.divisao === "campanhas" ? 2 : 1) : (NOVOS.divisao === "campanhas" ? 5 : 4)); }
+    if(Lf) fluxoDiagrama(fxCad, Lf.id, Lf.tipo === "busca" ? (NOVOS.divisao === "campanhas" ? 2 : 1) : (NOVOS.divisao === "campanhas" ? 5 : 4));
+    else fluxoDiagramaGenerico(fxCad, "gmaps", NOVOS.divisao === "campanhas" ? 5 : 4, L => fluxoIr(L, L.tipo === "busca" ? 1 : 4)); }
   const mostrando = el("div","nmostrando");
   const divisoes = el("div","ndivisoes");
   barra.before(divisoes, mostrando);
@@ -16229,6 +16235,12 @@ function pickBuscaCidade(host, modo){
   if(!abas.some(([k]) => k === modo)) modo = (abas[0] || ["maps"])[0];
   trilha(host, ["Buscar por cidade"], "frentes");
   abasTela(host, abas, modo, k => { pickEtapa = k === "maps" ? "modelo04" : k === "cnae" ? "modelo05" : k; desenhaPicker(); });
+  /* desenho do fluxo: o lote da busca que está na extensão (ou o genérico) */
+  if(modo !== "gmaps"){
+    const fxB = el("div"); fxB.style.marginBottom = "14px"; host.append(fxB); M04.fx = fxB;
+    const e0 = M04.estado, idB = e0 && e0.existe && !e0.lugaresProntos ? "b" + e0.criadoEm : "";
+    fluxoBarra(fxB, idB, 0, "busca", L => fluxoIr(L, 0));
+  }
   SEM_TRILHA = true;
   try {
     if(modo === "lista"){ const hd = el("div","pickhead"); hd.append(el("h1",null,"Importar uma lista do MaisCNPJ")); host.append(hd); pickListaMais(host); }
@@ -16286,11 +16298,12 @@ async function fluxoCalcular(L){
   const S = L.qrevId ? (await qrevLotes())[L.qrevId] : null;
   if(!g && !S) return Object.assign({ remoto:true }, L.contagens || {});
   const cf = gmCatFora(), desc = new Set((g && g.desc) || []), forcar = new Set((g && g.forcar) || []), env = new Set((g && g.enviados) || []);
-  const itens = (g && g.itens) || [];
-  const foraCat = itens.filter(x => !desc.has(x.href) && !forcar.has(x.href) && cf.has(gmCat(x))).length;
+  const semG = !g && !!S;
+  const itens = (g && g.itens) || (semG ? (S.enviadosHref || []).map(h => ({ href: h })) : []);
+  const foraCat = semG ? 0 : itens.filter(x => !desc.has(x.href) && !forcar.has(x.href) && cf.has(gmCat(x))).length;
   const foraDesc = itens.filter(x => desc.has(x.href)).length;
-  const enviados = itens.filter(x => env.has(x.href)).length || (S && S.total) || 0;
-  const prontos = itens.filter(x => !desc.has(x.href) && !env.has(x.href) && (forcar.has(x.href) || !cf.has(gmCat(x)))).length;
+  const enviados = semG ? ((S && S.total) || Object.keys(S.regs || {}).length + Object.keys(S.saidos || {}).length) : (itens.filter(x => env.has(x.href)).length || (S && S.total) || 0);
+  const prontos = semG ? 0 : itens.filter(x => !desc.has(x.href) && !env.has(x.href) && (forcar.has(x.href) || !cf.has(gmCat(x)))).length;
   const regs = S ? Object.values(S.regs || {}) : [], saidos = S ? Object.values(S.saidos || {}) : [];
   const total = (S && S.total) || enviados;
   const conferidas = regs.length + saidos.length;
@@ -16300,10 +16313,10 @@ async function fluxoCalcular(L){
   if(L.qrevId){ lista = (await NovosDB.todos()).filter(x => String(x.buscaId) === String(L.qrevId)); export_ = lista.filter(x => x.campanha).length; comCel = lista.filter(novosTemCelular).length; }
   const p = [];
   const st = (feito, and) => feito ? "feito" : and ? "and" : "pend";
-  p.push({ t:"Buscar no Maps", st: st(itens.length > 0), num: itens.length + " unidades lidas",
+  p.push({ t:"Buscar no Maps", st: st(itens.length > 0 || semG), num: semG ? "lista feita antes do acompanhamento" : itens.length + " unidades lidas",
     checks:[[itens.length > 0, "Busca feita no Google Maps" + (L.busca ? ": “" + L.busca + "”" : "")], [!!(g && g.fim), "Lista rolada até o fim (“Você chegou ao final da lista”)"], [itens.length > 0, itens.length + " unidades lidas no painel"]],
     nums:[[itens.length, "unidades lidas", ""]] });
-  p.push({ t:"Filtrar categorias", st: st(enviados > 0 && prontos === 0, itens.length > 0), num: (itens.length - foraCat - foraDesc) + " do ramo · " + (foraCat + foraDesc) + " fora",
+  p.push({ t:"Filtrar categorias", st: st(enviados > 0 && prontos === 0, itens.length > 0 || semG), num: semG ? enviados + " mandadas para conferir" : (itens.length - foraCat - foraDesc) + " do ramo · " + (foraCat + foraDesc) + " fora",
     checks:[[itens.length > 0 && (foraCat > 0 || enviados > 0), "Categorias revisadas"], [enviados > 0, enviados + " mandadas para conferir"], [prontos === 0 && itens.length > 0, prontos ? prontos + " prontas, ainda não mandadas" : "Nada pendente para mandar"]],
     nums:[[itens.length - foraCat - foraDesc, "do meu ramo", "ok"], [foraCat, "de outra categoria", "bad"], [foraDesc, "descartadas por você", "bad"], [prontos, "prontas para conferir", prontos ? "al" : ""]] });
   p.push({ t:"Conferir CNPJ e Receita", st: st(total > 0 && conferidas >= total, total > 0), num: conferidas + " de " + total + " conferidas",
@@ -16393,6 +16406,55 @@ function fluxoDiagrama(host, id, aquiFixo, aoClicar){
   } };
   FLUXO_UI.push(reg); reg.desenhar();
   return reg;
+}
+/* desenho do fluxo sem lote escolhido: mostra as etapas e onde você está; clicar leva para a etapa */
+const FLUXO_ETAPAS = { gmaps:["Buscar no Maps","Filtrar categorias","Conferir CNPJ e Receita","Escolher leads","Lista de leads","Exportar campanha"],
+                       busca:["Buscar e conferir","Lista de leads","Exportar campanha"] };
+function fluxoGenericoIr(tipo, i){
+  if(tipo === "busca"){ if(i === 0) pickEtapa = "modelo04"; else { NOVOS.filtro.buscaId = ""; NOVOS.divisao = i === 1 ? "leads" : "campanhas"; pickEtapa = "novos"; } }
+  else if(i <= 1) pickEtapa = "gmaps";
+  else if(i <= 3) pickEtapa = "qualificar";
+  else { NOVOS.filtro.buscaId = ""; NOVOS.divisao = i === 4 ? "leads" : "campanhas"; pickEtapa = "novos"; }
+  desenhaPicker(); $("#picker").scrollTop = 0;
+}
+function fluxoDiagramaGenerico(host, tipo, aqui, aoEscolherLote){
+  const box = el("div","fluxobox"); host.append(box);
+  const topo = el("div","fluxotopo");
+  topo.append(el("b",null,"Fluxo do lote"), el("span","leadshint"," · nenhum lote aberto nesta tela"));
+  const lotes = Object.values(fluxoLotes()).filter(L => !L.arquivado).sort((a, b) => String(b.atualizadoEm || "").localeCompare(String(a.atualizadoEm || "")));
+  if(lotes.length && aoEscolherLote){
+    const sl = el("select"); sl.style.cssText = "padding:4px 8px;font-size:12.5px";
+    sl.innerHTML = '<option value="">Abrir um lote…</option>' + lotes.slice(0, 20).map(L => '<option value="' + esc(L.id) + '">' + esc(L.nome || L.id) + ' · ' + esc(fluxoQuando(L.atualizadoEm)) + '</option>').join("");
+    sl.onchange = () => { if(sl.value) aoEscolherLote(fluxoLote(sl.value)); };
+    topo.append(sl);
+  }
+  const ver = el("button","btn sm","Ver todos os lotes"); ver.onclick = () => { pickEtapa = "lotes"; desenhaPicker(); $("#picker").scrollTop = 0; };
+  topo.append(ver); box.append(topo);
+  const f = el("div","fluxo");
+  FLUXO_ETAPAS[tipo].forEach((t, i) => {
+    if(i) f.append(el("div","fluxoseta","→"));
+    const d = el("div","fluxopasso " + (i === aqui ? "and aqui" : "pend"));
+    const cab = el("div"); cab.append(el("span","n", String(i + 1)), el("span","t", t)); d.append(cab);
+    d.append(el("div","st", i < aqui ? "Etapa anterior" : i === aqui ? "Esta tela" : "Próxima etapa"));
+    d.title = "Ir para esta etapa"; d.onclick = () => fluxoGenericoIr(tipo, i);
+    f.append(d);
+  });
+  box.append(f);
+  return box;
+}
+/* desenho na tela: o do lote, se houver; senão o genérico */
+function fluxoBarra(host, loteId, aqui, tipoGen, aoEscolherLote){
+  host.innerHTML = "";
+  if(loteId && fluxoLote(loteId)){ host.dataset.lote = loteId; return fluxoDiagrama(host, loteId, aqui); }
+  host.dataset.lote = "";
+  return fluxoDiagramaGenerico(host, tipoGen || "gmaps", aqui, aoEscolherLote);
+}
+/* lote do fluxo para uma revisão antiga (feita antes do acompanhamento): cria na hora */
+function fluxoAdotarStaging(S){
+  let L = fluxoPorStaging(S.id); if(L) return L;
+  L = fluxoNovo({ id: "q" + String(S.id).replace(/\W/g, ""), tipo:"gmaps", nome: S.rotulo || "Qualificação", qrevId: S.id, ramo: S.ramo || "" });
+  fluxoHist(L.id, "lote criado a partir da qualificação já existente", "O painel");
+  return L;
 }
 function fluxoQuando(iso){
   if(!iso) return ""; const d = new Date(iso), m = Math.round((Date.now() - d) / 60000);
@@ -16616,6 +16678,10 @@ function pickExportMaps(host){
   const info = el("div","leadsprog"); info.style.maxWidth = "none"; const cab = el("div","leadscab"), grande = el("strong",null,"0"), sub = el("span",null,"unidades");
   cab.append(grande, sub); const atual = el("p","leadsatual"), aviso = el("div","leadsmotivo"); aviso.hidden = true;
   info.append(cab, atual, aviso); box.append(info);
+  if(!(GMAPS.loteId && fluxoLote(GMAPS.loteId))){
+    const fx0 = el("div"); fx0.style.margin = "0 0 14px"; box.prepend(fx0);
+    fluxoDiagramaGenerico(fx0, "gmaps", 0, async L => { if(L.tipo === "gmaps" && await gmapsAbrir(L.id)) desenhaPicker(); else fluxoIr(L, 0); });
+  }
   if(GMAPS.loteId && fluxoLote(GMAPS.loteId)){
     const btNovo = el("button","btn","Começar outro lote"); btNovo.title = "Deixa este lote como está e começa outro com a próxima leitura do Maps";
     btNovo.onclick = () => { Object.assign(GMAPS, { loteId:"", itens:[], busca:"", fim:false, desc:new Set(), forcar:new Set(), enviados:new Set() }); desenhaPicker(); };
@@ -16876,6 +16942,7 @@ function qualMapsPainel(host){
   const fx = el("div"); fx.style.marginBottom = "12px"; box.prepend(fx);
   host.append(box);
   QREV.ui = { box, rev, fx, fxId:"" };
+  fluxoDiagramaGenerico(fx, "gmaps", 2, L => { if(L.qrevId){ QREV.lote = L.qrevId; QREV.ui.fxId = ""; fx.innerHTML = ""; qrevPinta(); } else fluxoIr(L, L.tipo === "busca" ? 0 : 1); });
   /* o que veio da tela anterior, antes de começar */
   if(QUALMAPS.itens.length && QUALMAPS.auto !== "feito"){
     const vb = el("div","qconta"); vb.append(el("div","qcontatopo"));
@@ -16944,9 +17011,10 @@ async function qrevPinta(){
   if(andamento) cab.append(el("span","leadshint", andamento));
   u.rev.append(cab);
   /* desenho do fluxo do lote */
-  const loteF = fluxoPorStaging(L.id);
-  if(u.fx && (!loteF || u.fxId !== loteF.id)){ u.fx.innerHTML = ""; u.fxId = ""; }
-  if(u.fx && loteF && u.fxId !== loteF.id){ u.fxId = loteF.id; fluxoDiagrama(u.fx, loteF.id, 2); }
+  const loteF = fluxoPorStaging(L.id) || fluxoAdotarStaging(L);
+  { const nConf = Object.keys(L.regs || {}).length + Object.keys(L.saidos || {}).length, nTot = L.total || nConf;
+    const aquiQ = nConf < nTot ? 2 : 3, chave = loteF ? loteF.id + "|" + aquiQ : "";
+    if(u.fx && loteF && u.fxId !== chave){ u.fx.innerHTML = ""; u.fxId = chave; fluxoDiagrama(u.fx, loteF.id, aquiQ); } }
   /* conta que bate: o que veio da etapa anterior = soma das situações + o que ainda está na fila */
   const saidos = Object.values(L.saidos || {});
   const total = L.total || (regs.length + saidos.length), conferidas = regs.length + saidos.length, fila = Math.max(0, total - conferidas);
