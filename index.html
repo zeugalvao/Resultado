@@ -1427,6 +1427,8 @@ a.nmaps::after{content:" ↗";font-size:11px;color:var(--teal);font-weight:400}
 .audtag{font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px;background:#EEF2F4}
 .audint{font-size:10.5px;padding:1px 7px;border-radius:999px;border:1px solid currentColor}
 .audtag.ok,.audint.ok{color:var(--teal-deep);background:var(--teal-soft)} .audtag.al,.audint.al{color:#8A5A12;background:var(--amber-soft)} .audtag.bad,.audint.bad{color:var(--brick);background:var(--brick-soft)}
+.auditmot{font-size:11.5px;margin:4px 0;padding:4px 8px;border-radius:6px;max-width:560px;white-space:normal}
+.auditmot.ok{background:var(--teal-soft);color:var(--teal-deep)} .auditmot.bad{background:var(--brick-soft);color:var(--brick)} .auditmot.al{background:var(--amber-soft);color:#8A5A12}
 .auditcats{margin:6px 0;padding-left:16px;font-size:12px;max-width:520px}
 .auditcats li{margin:4px 0}
 .auditev{color:var(--muted);font-size:11.5px;white-space:normal}
@@ -10114,7 +10116,8 @@ function pickNovos(host){
   btSep.onclick = () => novosMandarListaSep();
   const btAud = el("button","btn","Analisar o negócio dos marcados (Google, Maps, Instagram, site)");
   btAud.onclick = async () => auditarVarios((await NovosDB.todos()).filter(x => NOVOS.sel.has(x.chave)));
-  menu.append(btConf, btTiraConf, el("hr"), btSep, btAud, el("hr"), btRede, btExcluir, btRamoOk, btRamoRe, btRefazer, btAtual, el("hr"), btCli, btManter);
+  const btAlvo = el("button","btn","Critério da análise (o que você procura)"); btAlvo.onclick = () => auditPerguntarAlvo(0, true);
+  menu.append(btConf, btTiraConf, el("hr"), btSep, btAud, btAlvo, el("hr"), btRede, btExcluir, btRamoOk, btRamoRe, btRefazer, btAtual, el("hr"), btCli, btManter);
   menu.addEventListener("click", ev => { if(ev.target.closest("button")) mais.open = false; });
   document.addEventListener("click", ev => { if(mais.open && !mais.contains(ev.target)) mais.open = false; });
   mais.append(sm, menu);
@@ -10356,6 +10359,53 @@ const AUDIT_CATS = [
   ["Tatuagem / piercing", /tatuage|tattoo|piercing/gi, false]
 ];
 const AUDIT_PESO = { maps:3, instagram:2.5, site:2, "instagram-google":1.5, google:1, "cnpj-google":1 };
+/* o que você procura: o serviço tem que ser o principal da empresa e ter pelo menos X% do que foi achado */
+function auditAlvo(){ let c = {}; try { c = JSON.parse(localStorage.getItem("m04_auditAlvo") || "{}") || {}; } catch(e){}
+  return Object.assign({ alvos:["Depilação a laser"], minimo:50, principal:true, avaliar:false, naoPerguntar:false }, c); }
+function auditAlvoGravar(c){ try { localStorage.setItem("m04_auditAlvo", JSON.stringify(c)); } catch(e){} }
+function auditAvaliar(cats, alvo){
+  alvo = alvo || auditAlvo();
+  if(!cats || !cats.length) return { interessa:"sem dados", motivo:"não achei informação pública suficiente" };
+  const doAlvo = cats.filter(c => alvo.alvos.includes(c.nome));
+  const pct = doAlvo.reduce((a, c) => a + c.pct, 0);
+  const ehPrincipal = alvo.alvos.includes(cats[0].nome);
+  const nomeAlvo = alvo.alvos.join(" ou ");
+  if(pct >= alvo.minimo && (!alvo.principal || ehPrincipal)) return { interessa:"interessa", motivo: nomeAlvo + " é " + pct + "% do que a empresa faz" + (ehPrincipal ? " (serviço principal)" : "") };
+  if(alvo.avaliar && pct >= alvo.minimo / 2) return { interessa:"avaliar", motivo: nomeAlvo + " é só " + pct + "% (pedido: " + alvo.minimo + "%)" };
+  return { interessa:"não interessa", motivo: pct ? nomeAlvo + " é só " + pct + "% do que a empresa faz (pedido: pelo menos " + alvo.minimo + "%" + (alvo.principal ? " e ser o principal" : "") + "); o principal é " + cats[0].nome
+    : "não achei " + nomeAlvo + "; o principal é " + cats[0].nome };
+}
+/* antes de analisar: dizer o que você procura */
+function auditPerguntarAlvo(n, forcar){
+  const alvo = auditAlvo();
+  if(alvo.naoPerguntar && !forcar) return Promise.resolve(true);
+  return new Promise(ok => {
+    let resp = false;
+    const dlg = el("dialog","nrededlg"); dlg.style.width = "min(620px,94vw)";
+    dlg.append(el("h3",null,"O que você procura neste lead?"));
+    dlg.append(el("p","leadshint", (n ? n + (n === 1 ? " lead vai" : " leads vão") + " ser analisado" + (n === 1 ? "" : "s") + ". " : "") +
+      "Marque o tipo de negócio que interessa. A análise diz “interessa” só quando esse serviço é o forte da empresa."));
+    const grade = el("div"); grade.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;margin:8px 0";
+    const cks = AUDIT_CATS.map(([nome]) => { const l = el("label","qualcheck"); const c = el("input"); c.type = "checkbox"; c.checked = alvo.alvos.includes(nome); l.append(c, document.createTextNode(" " + nome)); grade.append(l); return { nome, c }; });
+    dlg.append(grade);
+    const linha = el("div"); linha.style.cssText = "display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0";
+    const sel = el("select"); [[30,"30%"],[40,"40%"],[50,"50% (metade ou mais)"],[60,"60%"],[70,"70%"]].forEach(([v, r]) => { const o = el("option",null,r); o.value = v; sel.append(o); });
+    sel.value = String(alvo.minimo); sel.style.cssText = "padding:4px 8px";
+    linha.append(el("span",null,"O serviço precisa ser pelo menos"), sel, el("span",null,"do que a empresa faz"));
+    dlg.append(linha);
+    const mk = (txt, on) => { const l = el("label","qualcheck"); l.style.margin = "4px 0"; const c = el("input"); c.type = "checkbox"; c.checked = on; l.append(c, document.createTextNode(" " + txt)); dlg.append(l); return c; };
+    const ckP = mk("E tem que ser o serviço principal (o que mais aparece)", alvo.principal);
+    const ckA = mk("Mostrar “avaliar” quando o serviço aparece, mas abaixo do pedido", alvo.avaliar);
+    const ckN = mk("Não perguntar de novo (dá para mudar em “Critério da análise”)", alvo.naoPerguntar);
+    const bt = el("div","leadsbotoes"), okb = el("button","btn primary", n ? "Analisar" : "Salvar"), cancela = el("button","btn","Cancelar");
+    okb.type = cancela.type = "button"; bt.append(okb, cancela); dlg.append(bt);
+    okb.onclick = () => { const alvos = cks.filter(x => x.c.checked).map(x => x.nome); if(!alvos.length) return toast("Marque pelo menos um tipo de negócio.");
+      auditAlvoGravar({ alvos, minimo: +sel.value, principal: ckP.checked, avaliar: ckA.checked, naoPerguntar: ckN.checked }); resp = true; dlg.close(); };
+    cancela.onclick = () => dlg.close();
+    dlg.addEventListener("close", () => { dlg.remove(); ok(resp); if(resp && typeof novosDesenhar === "function") novosDesenhar(); });
+    document.body.append(dlg); dlg.showModal();
+  });
+}
 function auditClassificar(fontes, nome){
   const pontos = {}, evid = {};
   const add = (cat, n, ev) => { pontos[cat] = (pontos[cat] || 0) + n; evid[cat] = evid[cat] || []; if(ev && evid[cat].length < 6) evid[cat].push(ev); };
@@ -10374,9 +10424,8 @@ function auditClassificar(fontes, nome){
   const total = cats.reduce((a, c) => a + c.pontos, 0) || 1;
   cats.forEach(c => c.pct = Math.round(c.pontos / total * 100));
   const principal = cats[0] ? cats[0].nome : "Sem informação";
-  const laser = cats.find(c => c.nome === "Depilação a laser");
-  const interessa = !cats.length ? "sem dados" : laser && (principal === "Depilação a laser" || laser.pct >= 20) ? "interessa" : laser ? "avaliar" : "não interessa";
-  return { principal, interessa, cats };
+  const av = auditAvaliar(cats);
+  return { principal, interessa: av.interessa, motivo: av.motivo, cats };
 }
 const AUDIT = { rodando:false, parar:false, feitos:0, total:0, atual:"" };
 async function auditarLead(x){
@@ -10393,6 +10442,7 @@ async function auditarLead(x){
 async function auditarVarios(lista){
   if(AUDIT.rodando) return toast("Já tem uma análise rodando (veja a barra no canto).");
   if(!lista.length) return toast("Marque os leads que quer analisar.");
+  if(!(await auditPerguntarAlvo(lista.length))) return;
   AUDIT.rodando = true; AUDIT.parar = false; AUDIT.feitos = 0; AUDIT.total = lista.length;
   let ok = 0, captcha = false;
   try {
@@ -10415,10 +10465,13 @@ function auditBloco(r){
   bt.title = "Pesquisa a empresa no Google, Google Maps, Instagram e site, e diz que serviços ela faz";
   bt.onclick = ev => { ev.stopPropagation(); auditarVarios([r]); };
   if(!a){ box.append(bt); return box; }
-  const cls = a.interessa === "interessa" ? "ok" : a.interessa === "avaliar" ? "al" : "bad";
+  const av = auditAvaliar(a.cats);   /* sempre pelo critério atual: mudou o critério, muda a etiqueta */
+  const cls = av.interessa === "interessa" ? "ok" : av.interessa === "avaliar" ? "al" : "bad";
   const det = el("details","auditdet");
-  const sm = el("summary"); sm.append(el("span","audtag " + cls, a.principal), el("span","audint " + cls, a.interessa === "interessa" ? "interessa" : a.interessa === "avaliar" ? "avaliar" : a.interessa));
+  const sm = el("summary"); sm.append(el("span","audtag", a.principal), el("span","audint " + cls, av.interessa));
   det.append(sm);
+  const alvo = auditAlvo();
+  det.append(el("div","auditmot " + cls, "Procurado: " + alvo.alvos.join(" ou ") + " (pelo menos " + alvo.minimo + "%" + (alvo.principal ? ", principal" : "") + ") · " + av.motivo));
   const ul = el("ul","auditcats");
   a.cats.slice(0, 6).forEach(c => { const li = el("li"); li.append(el("b",null, c.nome + " · " + c.pct + "%"));
     c.evid.slice(0, 2).forEach(e => { const d = el("div","auditev"); if(e.url){ const l = el("a",null,e.fonte); l.href = e.url; l.target = "_blank"; l.rel = "noopener"; d.append(l); } else d.append(el("span",null,e.fonte));
@@ -10843,7 +10896,7 @@ async function novosDesenhar(){
   if(!usaCatConf) f.catConf = "";
   const naCatConf = x => !f.catConf || (f.catConf === "__sem" ? !x.categoriaConf : x.categoriaConf === f.catConf);
   /* categoria pela análise do negócio */
-  const naAud = x => !f.audCat || (f.audCat === "__nao" ? !x.auditoria : x.auditoria && x.auditoria.principal === f.audCat);
+  const naAud = x => !f.audCat || (f.audCat === "__nao" ? !x.auditoria : /^__int:/.test(f.audCat) ? x.auditoria && auditAvaliar(x.auditoria.cats).interessa === f.audCat.slice(6) : x.auditoria && x.auditoria.principal === f.audCat);
   const noRecorte = noRecorte0.filter(naCat).filter(naCatConf).filter(naAud);
   if(u.audCats){ u.audCats.innerHTML = "";
     const comA = noRecorte0.filter(x => x.auditoria);
@@ -10855,6 +10908,10 @@ async function novosDesenhar(){
       chip("Todas", noRecorte0.length, "");
       Object.entries(cont).sort((a, b) => b[1] - a[1]).forEach(([c, n]) => chip(c, n, c, c === "Depilação a laser" ? "ok" : ""));
       chip("Não analisado", noRecorte0.length - comA.length, "__nao", "nao");
+      const ci = { interessa:0, "não interessa":0, avaliar:0, "sem dados":0 }; comA.forEach(x => { ci[auditAvaliar(x.auditoria.cats).interessa]++; });
+      u.audCats.append(el("span","cnaecatsrot"," · pelo seu critério:"));
+      Object.entries(ci).filter(([, n]) => n).forEach(([k, n]) => chip(k, n, "__int:" + k, k === "interessa" ? "ok" : k === "não interessa" ? "ruim" : ""));
+      const bc = el("button","btn sm","Critério da análise"); bc.onclick = () => auditPerguntarAlvo(0, true); u.audCats.append(bc);
     }
   }
   if(u.catsConf){ u.catsConf.innerHTML = "";
