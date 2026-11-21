@@ -6366,6 +6366,7 @@ function desenhaPicker(){
   else if(pickEtapa === "modelo04") pickBuscaCidade(w, "maps");
   else if(pickEtapa === "modelo05") pickBuscaCidade(w, "cnae");
   else if(pickEtapa === "lista") pickBuscaCidade(w, "lista");
+  else if(pickEtapa === "gmaps") pickBuscaCidade(w, "gmaps");
   else if(pickEtapa === "novos") pickLeadsArquivo(w, "novos");
   else if(pickEtapa === "receita") pickBuscar(w);
   else if(pickEtapa === "usuarios") pickUsuarios(w);
@@ -6835,6 +6836,7 @@ function pickQualificar(host){
 
   const hd = el("div","pickhead");
   hd.append(el("h1",null,"Qualificar Leads"));
+  setTimeout(() => { const ref = host.querySelector(".pickhead"); const tmp = el("div"); qualMapsPainel(tmp); if(ref) ref.after(...tmp.childNodes); }, 0);
   hd.append(el("p",null,"Importe a planilha de empresas e cada uma é procurada no Google Maps. " +
     "O endereço do CNPJ é conferido e, quando estiver desatualizado, trocado pelo do Maps — " +
     "junto vêm telefone, site, bairro, CEP, nota e horário."));
@@ -9048,7 +9050,7 @@ async function metaControle(est){
       return;
     }
     /* acabou sem bater a meta: segue para as cidades vizinhas */
-    if(bateu || !est.concluido || est.paradaMeta || META_AUTO.seguiu[est.criadoEm]) return;
+    if(bateu || !est.concluido || est.paradaMeta || est.lugaresProntos || est.listaPronta && false || META_AUTO.seguiu[est.criadoEm]) return;
     let feitas = {}; try { feitas = await NovosDB.meta("importadas") || {}; } catch(e){}
     const faltaImportar = (est.cidades || []).some((x, i) => x.status === "pronta" && !feitas[est.uf + "|" + est.termo + "|" + est.criadoEm + "|" + i]);
     if(faltaImportar) return;
@@ -9160,7 +9162,7 @@ async function m04Importar(est){
     const existentes = new Map(todosDB.map(x => [x.chave, x]));
     const cfgB = m04BuscaCfg(est.termo), soNovas = cfgB.soNovas !== false;
     const ramoCad = String(cfgB.ramo || "").trim();
-    const buscaId = String(est.criadoEm || est.termo), rotulo = m04RotuloBusca(est);
+    const buscaId = String(est.criadoEm || est.termo), rotulo = cfgB.rotulo || m04RotuloBusca(est);
     const st = m04Stats(buscaId);
     const assin = new Map();
     const indexa = x => m04Assinaturas(x).forEach(a => { if(!assin.has(a)) assin.set(a, x); });
@@ -16150,14 +16152,16 @@ function abasTela(host, abas, atual, aoTrocar){
 function pickBuscaCidade(host, modo){
   const abas = [["maps","Pelo Google Maps","Digite o tipo de cliente; procura no Maps e acha o CNPJ"],
                 ["cnae","Pelo CNAE (MaisCNPJ)","Digite o CNAE; lê a lista do MaisCNPJ e confirma no Maps"],
-                ["lista","Importar lista do MaisCNPJ","Cole o endereço de uma lista do MaisCNPJ: importa tudo e confere no Maps"]]
+                ["lista","Importar lista do MaisCNPJ","Cole o endereço de uma lista do MaisCNPJ: importa tudo e confere no Maps"],
+                ["gmaps","Exportar do Google Maps","Você busca e rola no Maps; aqui baixa a lista em Excel ou CSV"]]
     .filter(([k]) => podeInicio(k === "maps" ? "modelo04" : "modelo05"));
   if(!abas.some(([k]) => k === modo)) modo = (abas[0] || ["maps"])[0];
   trilha(host, ["Buscar por cidade"], "frentes");
-  abasTela(host, abas, modo, k => { pickEtapa = k === "maps" ? "modelo04" : k === "cnae" ? "modelo05" : "lista"; desenhaPicker(); });
+  abasTela(host, abas, modo, k => { pickEtapa = k === "maps" ? "modelo04" : k === "cnae" ? "modelo05" : k; desenhaPicker(); });
   SEM_TRILHA = true;
   try {
     if(modo === "lista"){ const hd = el("div","pickhead"); hd.append(el("h1",null,"Importar uma lista do MaisCNPJ")); host.append(hd); pickListaMais(host); }
+    else if(modo === "gmaps"){ const hd = el("div","pickhead"); hd.append(el("h1",null,"Exportar uma busca do Google Maps")); host.append(hd); pickExportMaps(host); }
     else pickModelo04(host, modo === "cnae" ? "cnae" : undefined);
   }
   finally { SEM_TRILHA = false; }
@@ -16173,6 +16177,144 @@ function pickLeadsArquivo(host, aba){
   SEM_TRILHA = true;
   try { if(aba === "base") pickBase(host); else pickNovos(host); }
   finally { SEM_TRILHA = false; }
+}
+
+/* ---------- Exportar do Google Maps: a pessoa busca e rola no Maps; o painel lê a lista e baixa ---------- */
+const GMAPS = { itens:[], busca:"", fim:false };
+const GMAPS_CAB = ["Nome","Categoria","Nota","Avaliações","Endereço","Telefone","Site","Link Google Maps","Latitude","Longitude","Busca"];
+function gmapsLinhas(){
+  return [GMAPS_CAB].concat(GMAPS.itens.map(x => [x.nome, x.categoria, x.nota, x.avaliacoes, x.endereco, x.telefone, x.site, x.href, x.latitude, x.longitude, GMAPS.busca]
+    .map(v => v == null ? "" : String(v))));
+}
+function pickExportMaps(host){
+  const box = el("div");
+  const passos = el("ol","leadshint"); passos.style.cssText = "font-size:13px;line-height:1.7;margin:0 0 14px;padding-left:20px";
+  ["Abra o Google Maps numa aba do Chrome e busque do seu jeito (ex.: clínica de depilação campinas).",
+   "Role a lista da esquerda até o fim, até aparecer “Você chegou ao final da lista” (ou use o botão “Rolar até o fim por mim”).",
+   "Volte aqui e clique em “Ler a lista do Maps”. Depois baixe em Excel ou CSV, ou mande direto para Qualificar Leads."].forEach(t => passos.append(el("li",null,t)));
+  box.append(passos);
+  const acoes = el("div","leadsacoes"); acoes.style.flexWrap = "wrap";
+  const btLer = el("button","btn primary","Ler a lista do Maps"), btRolar = el("button","btn","Rolar até o fim por mim e ler"),
+        btXls = el("button","btn","Baixar Excel"), btCsv = el("button","btn","Baixar CSV"), btQual = el("button","btn","Qualificar esta lista");
+  acoes.append(btLer, btRolar, btXls, btCsv, btQual); box.append(acoes);
+  const info = el("div","leadsprog"); const cab = el("div","leadscab"), grande = el("strong",null,"0"), sub = el("span",null,"unidades");
+  cab.append(grande, sub); const atual = el("p","leadsatual"), aviso = el("div","leadsmotivo"); aviso.hidden = true;
+  info.append(cab, atual, aviso); box.append(info);
+  const tw = el("div","tablewrap"); tw.style.marginTop = "12px"; box.append(tw);
+  host.append(box);
+  const pinta = (txt) => {
+    grande.textContent = GMAPS.itens.length.toLocaleString("pt-BR");
+    sub.textContent = "unidades" + (GMAPS.busca ? " · busca “" + GMAPS.busca + "”" : "");
+    atual.textContent = txt || (GMAPS.itens.length ? (GMAPS.fim ? "A lista chegou ao fim no Maps." : "Atenção: a lista do Maps não chegou ao fim. Role mais e leia de novo para pegar todas.") : "");
+    btXls.disabled = btCsv.disabled = btQual.disabled = !GMAPS.itens.length;
+    tw.innerHTML = "";
+    if(GMAPS.itens.length){
+      const tb = el("table","leadlista"), h = el("tr");
+      ["Nome","Categoria","Nota","Endereço","Telefone"].forEach(x => h.append(el("th",null,x))); tb.append(h);
+      GMAPS.itens.slice(0, 300).forEach(x => { const tr = el("tr"); const td = el("td"); const a = el("a","nmaps",x.nome); a.href = x.href; a.target = "_blank"; a.rel = "noopener"; td.append(a); tr.append(td);
+        [x.categoria, x.nota + (x.avaliacoes ? " (" + x.avaliacoes + ")" : ""), x.endereco, x.telefone].forEach(v => tr.append(el("td",null,v || "—"))); tb.append(tr); });
+      tw.append(tb);
+      if(GMAPS.itens.length > 300) tw.append(el("p","leadshint","Mostrando 300 de " + GMAPS.itens.length + ". O Excel e o CSV levam todas."));
+    }
+  };
+  const ler = async (rolar) => {
+    aviso.hidden = true; btLer.disabled = btRolar.disabled = true;
+    pinta(rolar ? "Rolando a lista no Maps até o fim (pode levar alguns minutos; deixe a aba do Maps aberta)…" : "Lendo a lista do Maps…");
+    const { resp, erro } = await m04Enviar({ type:"mapsLerAberta", rolar }, rolar ? 300000 : 60000);
+    btLer.disabled = btRolar.disabled = false;
+    if(erro || !resp){ aviso.hidden = false; aviso.textContent = "A extensão não respondeu (" + (erro || "sem resposta") + "). Confira se está na versão 2.5 e recarregue esta página."; return pinta(""); }
+    if(resp.semAba){ aviso.hidden = false; aviso.textContent = "Não achei nenhuma aba do Google Maps aberta. Abra o Maps, faça a busca e tente de novo."; return pinta(""); }
+    if(resp.semLista){ aviso.hidden = false; aviso.textContent = "A aba do Maps não está mostrando uma lista de resultados. Faça a busca (ex.: clínica de depilação campinas) e deixe a lista da esquerda aberta."; return pinta(""); }
+    GMAPS.itens = resp.itens || []; GMAPS.busca = resp.busca || ""; GMAPS.fim = !!resp.fim;
+    pinta(); toast(GMAPS.itens.length + " unidades lidas do Maps.");
+  };
+  btLer.onclick = () => ler(false);
+  btRolar.onclick = () => ler(true);
+  const nomeArq = () => novosNomeArquivo(["google-maps", GMAPS.busca || "busca", stamp()]);
+  btXls.onclick = () => baixarXlsx(nomeArq(), gmapsLinhas(), [34,26,6,10,50,18,30,50,11,11,30]);
+  btCsv.onclick = () => novosBaixarArquivo("csv", nomeArq(), gmapsLinhas());
+  btQual.onclick = () => { QUALMAPS.itens = GMAPS.itens.map(x => Object.assign({}, x)); QUALMAPS.origem = "busca “" + (GMAPS.busca || "Maps") + "”"; pickEtapa = "qualificar"; desenhaPicker(); };
+  pinta();
+}
+
+/* ---------- Qualificar uma lista do Google Maps (exportada aqui) ----------
+   Cada unidade vai para a extensão, que abre o local, acha o CNPJ, confere LTDA e 6 meses e separa.
+   Os leads entram no Cadastro num lote com nome "Leads tratados <ramo> <dia e hora>". */
+const QUALMAPS = { itens:[], origem:"" };
+async function qualMapsLerArquivo(file){
+  const rows = await SheetReader.read(file);
+  if(!rows || rows.length < 2) throw new Error("planilha vazia");
+  const cab = rows[0].map(c => baseChave(c));
+  const col = re => cab.findIndex(c => re.test(c));
+  const ci = { nome: col(/^NOME|EMPRESA/), cat: col(/CATEG/), nota: col(/^NOTA/), aval: col(/AVALIA/), end: col(/ENDERE/), tel: col(/TELEF/), site: col(/^SITE/),
+               link: col(/LINK|URL/), lat: col(/LATIT/), lon: col(/LONGIT/) };
+  if(ci.link < 0) throw new Error("não achei a coluna “Link Google Maps”. Use a planilha baixada em Exportar do Google Maps.");
+  const v = (r, i) => i >= 0 ? String(r[i] == null ? "" : r[i]).trim() : "";
+  return rows.slice(1).map(r => ({ nome: v(r, ci.nome), categoria: v(r, ci.cat), nota: v(r, ci.nota), avaliacoes: v(r, ci.aval), endereco: v(r, ci.end),
+    telefone: v(r, ci.tel), site: v(r, ci.site), href: v(r, ci.link), latitude: v(r, ci.lat), longitude: v(r, ci.lon) }))
+    .filter(x => /google\.[^/]+\/maps/.test(x.href));
+}
+function qualMapsPainel(host){
+  const box = el("div","metabox");
+  box.append(el("h3",null,"Qualificar uma lista do Google Maps"));
+  box.append(el("p","leadshint","Use a planilha baixada em Buscar por cidade › Exportar do Google Maps (Excel ou CSV). Cada unidade é aberta no Maps, o CNPJ é achado no MaisCNPJ " +
+    "e conferido na Receita (LTDA, 6 meses, CNAEs). Os leads entram no Cadastro já separados (aprovados, aguardando, fora, sem CNPJ, outro ramo) num lote com o nome " +
+    "“Leads tratados <ramo> <dia e hora>”. As unidades que já estão no Cadastro são puladas."));
+  const form = el("div","leadsform");
+  const campo = (rot, ctl, dica) => { const c = el("div","leadscampo"); c.append(el("label",null,rot), ctl); if(dica) c.append(el("span","leadshint",dica)); form.append(c); return ctl; };
+  const inArq = el("input"); inArq.type = "file"; inArq.accept = ".xlsx,.csv";
+  campo("Planilha do Google Maps", inArq, QUALMAPS.itens.length ? QUALMAPS.itens.length + " unidades prontas (" + QUALMAPS.origem + "). Ou escolha outra planilha." : ".xlsx ou .csv");
+  const inRamo = el("input"); inRamo.type = "text"; inRamo.placeholder = "ex.: Clínica de depilação"; inRamo.setAttribute("list","qualRamos");
+  inRamo.value = QUALMAPS.ramo || "";
+  const dl = el("datalist"); dl.id = "qualRamos";
+  campo("Ramo no Cadastro", inRamo, "Os leads entram neste ramo e no lote “Leads tratados <ramo> <dia e hora>”.");
+  inRamo.parentElement.append(dl);
+  NovosDB.todos().then(l => [...new Set(l.map(x => x.termo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR")).forEach(n => { const o = el("option"); o.value = n; dl.append(o); })).catch(() => {});
+  const selUf = el("select"); M04_UFS.forEach(u => { const o = el("option",null,u); o.value = u; selUf.append(o); });
+  selUf.value = QUALMAPS.uf || (M04.campos && M04.campos.uf) || "SP";
+  campo("Estado da lista", selUf, "A cidade de cada lead vem do endereço completo que a extensão lê no Maps.");
+  const inCn = el("input"); inCn.type = "text"; inCn.placeholder = "ex.: 8630-5/01, 9602-5/01";
+  campo("CNAEs de outro ramo — descartar (opcional)", inCn, "Principal ou secundário. Vai para “Outro ramo”.");
+  const cn0 = () => { const c = ramoCfg(inRamo.value); inCn.value = c.cnaesExcluir != null ? c.cnaesExcluir : ramoCnaesPadrao(inRamo.value); };
+  inRamo.addEventListener("change", cn0); cn0();
+  box.append(form);
+  const acoes = el("div","leadsacoes"); const bt = el("button","btn primary","Qualificar e mandar para o Cadastro"); acoes.append(bt); box.append(acoes);
+  const st = el("p","leadshint"); box.append(st);
+  inArq.onchange = async () => {
+    const f = inArq.files[0]; if(!f) return;
+    try { QUALMAPS.itens = await qualMapsLerArquivo(f); QUALMAPS.origem = f.name; st.textContent = QUALMAPS.itens.length + " unidades lidas de " + f.name + "."; }
+    catch(e){ QUALMAPS.itens = []; st.textContent = "Não consegui ler a planilha: " + (e.message || e); }
+  };
+  bt.onclick = async () => {
+    const ramo = inRamo.value.trim();
+    if(!QUALMAPS.itens.length) return toast("Escolha a planilha do Google Maps primeiro.");
+    if(!ramo){ inRamo.focus(); return toast("Digite o ramo no Cadastro (ex.: Clínica de depilação)."); }
+    const { resp: est, erro } = await m04Enviar({ type:"estado" }, 5000);
+    if(erro) return toast("A extensão Elosgate · Modelo 04 não respondeu. Confira se está na versão 2.5 e recarregue esta página.");
+    if(est && est.existe && est.rodando && !est.concluido) return toast("Já tem uma busca rodando em Buscar por cidade. Pare ou espere terminar.");
+    if(est && est.existe){ if(!confirm("A extensão ainda guarda a busca anterior. Ela será trocada por esta (o que já entrou no Cadastro fica). Continuar?")) return; await m04Importar(est); }
+    /* cidade da busca: o nome de cidade do estado que aparece na busca do Maps (ex.: "… campinas") ou nos endereços */
+    const uf = selUf.value; QUALMAPS.uf = uf;
+    const { resp: rc } = await m04Enviar({ type:"cidades", uf }, 20000);
+    const nomes = (rc && rc.cidades) || [];
+    const txt = " " + ramoNorm([QUALMAPS.origem, GMAPS.busca].concat(QUALMAPS.itens.slice(0, 50).map(x => x.endereco)).join(" ")) + " ";
+    let cidade = nomes.filter(n => txt.includes(" " + ramoNorm(n) + " ")).sort((a, b) => b.length - a.length)[0] || M04_CAPITAIS[uf];
+    const quando = new Date().toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" }).replace(",", "");
+    const rotulo = "Leads tratados " + ramo + " " + quando;
+    ramoCfgGravar(ramo, Object.assign({}, ramoCfg(ramo), { cnaesExcluir: cnaesDoTexto(inCn.value).join(", "), cnaeSempre: true }));
+    m04BuscaCfgGravar(ramo, { ramo:"", soNovas:true, rotulo });
+    const conhecidos = await m04Conhecidos(uf);
+    const { resp, erro: e2 } = await m04Enviar({ type:"iniciar", termo: ramo, uf, opcoes:{ modo:"maps", escopo:"cidades", cidades:[cidade], maxPorCidade: 100000, dividir:false,
+      janela:"fixada", intervalo:1500, conhecidos, cnaesExcluir: cnaesDoTexto(inCn.value),
+      lugaresProntos: QUALMAPS.itens.map(x => ({ href: x.href, nome: x.nome, categoria: x.categoria, texto: [x.categoria, x.endereco].filter(Boolean).join(" · ") })) } }, 60000);
+    if(e2 || !resp || !resp.existe) return toast("Não consegui começar: " + (e2 || (resp && resp.aviso) || "sem resposta da extensão"));
+    if(!resp.lugaresProntos) return toast("A extensão está numa versão antiga: atualize para a 2.5.");
+    QUALMAPS.ramo = ramo;
+    toast(QUALMAPS.itens.length + " unidades mandadas para qualificar. Lote: " + rotulo + ".");
+    M04.campos = Object.assign({}, M04.campos || {}, { termo: ramo, uf });
+    pickEtapa = "modelo04"; desenhaPicker();
+  };
+  host.append(box);
 }
 
 /* ---------- Importar lista do MaisCNPJ ----------
