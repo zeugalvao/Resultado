@@ -1420,6 +1420,17 @@ a.nmaps::after{content:" ↗";font-size:11px;color:var(--teal);font-weight:400}
 .cattag.septag{background:#ECFDF5;color:#047857}
 .camphist{background:#F5F3FF;border:1px solid #DDD6FE;border-radius:8px;padding:8px 12px;margin:0 0 10px;font-size:12.5px;color:#4c1d95}
 .camphist ul{margin:4px 0 0;padding-left:18px}
+.auditbox{margin:4px 0 2px}
+.auditbt{font-size:11.5px;padding:2px 8px}
+.auditdet summary{cursor:pointer;list-style:none;display:inline-flex;gap:6px;align-items:center}
+.auditdet summary::-webkit-details-marker{display:none}
+.audtag{font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px;background:#EEF2F4}
+.audint{font-size:10.5px;padding:1px 7px;border-radius:999px;border:1px solid currentColor}
+.audtag.ok,.audint.ok{color:var(--teal-deep);background:var(--teal-soft)} .audtag.al,.audint.al{color:#8A5A12;background:var(--amber-soft)} .audtag.bad,.audint.bad{color:var(--brick);background:var(--brick-soft)}
+.auditcats{margin:6px 0;padding-left:16px;font-size:12px;max-width:520px}
+.auditcats li{margin:4px 0}
+.auditev{color:var(--muted);font-size:11.5px;white-space:normal}
+.cnaecat.caud{border-color:#0891b2} .cnaecat.caud.on{background:#0891b2;color:#fff}
 .novotag{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:999px;background:var(--amber-soft);color:#8A5A12;vertical-align:middle}
 .abastela{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 18px;padding-bottom:12px;border-bottom:1px solid var(--line)}
 /* menu "Mais ações" do Cadastro */
@@ -10013,6 +10024,7 @@ function pickNovos(host){
 
   const chips = el("div","leadschips"); chips.style.margin = "0 0 12px"; host.append(chips);
   const catsConfBox = el("div","cnaecats"); host.append(catsConfBox);
+  const audCats = el("div","cnaecats"); host.append(audCats);
   const cnaeCats = el("div","cnaecats"); host.append(cnaeCats);
 
   const acoes = el("div","leadsacoes");
@@ -10100,7 +10112,9 @@ function pickNovos(host){
   /* listas separadas (categorias que não vão para a lista conferida, ex.: ESTÉTICA CORPORAL) */
   const btSep = el("button","btn","Mandar marcados para outra lista…");
   btSep.onclick = () => novosMandarListaSep();
-  menu.append(btConf, btTiraConf, el("hr"), btSep, el("hr"), btRede, btExcluir, btRamoOk, btRamoRe, btRefazer, btAtual, el("hr"), btCli, btManter);
+  const btAud = el("button","btn","Analisar o negócio dos marcados (Google, Maps, Instagram, site)");
+  btAud.onclick = async () => auditarVarios((await NovosDB.todos()).filter(x => NOVOS.sel.has(x.chave)));
+  menu.append(btConf, btTiraConf, el("hr"), btSep, btAud, el("hr"), btRede, btExcluir, btRamoOk, btRamoRe, btRefazer, btAtual, el("hr"), btCli, btManter);
   menu.addEventListener("click", ev => { if(ev.target.closest("button")) mais.open = false; });
   document.addEventListener("click", ev => { if(mais.open && !mais.contains(ev.target)) mais.open = false; });
   mais.append(sm, menu);
@@ -10122,7 +10136,7 @@ function pickNovos(host){
   host.append(acoes);
 
   const corpo = el("div"); host.append(corpo);
-  NOVOS.ui = { catsConf: catsConfBox, cnaeCats, btExcCid, inB, sSt, sUf, sCid, sBus, ckN, chips, corpo, info, btEnviar, btExcluir, ramos, mostrando, divisoes, btCsv, btXls, btRede, btManter, inQtd, lbQtd };
+  NOVOS.ui = { audCats, catsConf: catsConfBox, cnaeCats, btExcCid, inB, sSt, sUf, sCid, sBus, ckN, chips, corpo, info, btEnviar, btExcluir, ramos, mostrando, divisoes, btCsv, btXls, btRede, btManter, inQtd, lbQtd };
 
   let t = null;
   inB.oninput = () => { clearTimeout(t); t = setTimeout(() => { NOVOS.filtro.busca = inB.value; NOVOS.mostrar = 200; novosDesenhar(); }, 250); };
@@ -10318,6 +10332,105 @@ function novosNomeMaps(r, texto){
   b.append(a);
   if(!r.link){ const s = el("span","nmapsbusca"," (buscar no Maps)"); b.append(s); }
   return b;
+}
+
+/* ---------- Analisar o negócio (auditoria com dados públicos) ----------
+   A extensão pesquisa no Google (nome + cidade, Instagram, CNPJ), lê o Google Maps, o Instagram e o site.
+   Aqui os textos são lidos procurando os serviços, e o lead ganha uma categoria principal. */
+const AUDIT_CATS = [
+  ["Depilação a laser", /depila[cç][aã]o a laser|fotodepila|laser (de )?diodo|alexandrite|soprano|luz pulsada|\blaser\b|espa[cç]olaser|maislaser|vialaser/gi, true],
+  ["Depilação (cera/linha)", /depila[cç][aã]o (com |de |na )?(cera|linha)|\bcera\b|depila[cç][aã]o/gi, false],
+  ["Sobrancelhas", /sobrancelha|design de sobrancelha|\bbrow|henna|brow lamination/gi, false],
+  ["Cílios", /c[ií]lios|\blash|lash lifting|extens[aã]o de c[ií]lios/gi, false],
+  ["Micropigmentação", /micropigmenta|microblading|dermopigmenta|nanoblading/gi, false],
+  ["Manicure / unhas", /manicure|pedicure|\bunhas?\b|\bnail|esmalteria|alongamento de unha|gel nas unhas/gi, false],
+  ["Cabelo / salão", /cabeleir|\bcabelos?\b|\bsal[aã]o\b|escova|progressiva|colora[cç][aã]o|mechas|corte feminino|barbearia|barber/gi, false],
+  ["Estética facial", /limpeza de pele|peeling|microagulhamento|facial|rejuvenescimento|skin ?care|acne|melasma|bioestimulador/gi, false],
+  ["Harmonização / injetáveis", /harmoniza[cç][aã]o|botox|toxina botul|preenchimento|[aá]cido hialur|fios de pdo/gi, false],
+  ["Estética corporal / emagrecimento", /emagrec|criolip|drenagem|modeladora|radiofrequ|gordura localizada|celulite|flacidez|lipo|corporal|ultraformer|endermo|detox/gi, false],
+  ["Massagem / spa", /massagem|massoterap|\bspa\b|relaxante|day spa/gi, false],
+  ["Odontologia", /dentista|odonto|ortodon|implante dent|clareamento dental/gi, false],
+  ["Médico / dermatologia", /dermatolog|m[eé]dic[oa]|cirurgi[aã]o pl[aá]stic|clínica médica|crm/gi, false],
+  ["Podologia", /podolog|unha encravada/gi, false],
+  ["Fisioterapia / pilates", /fisioterap|pilates|rpg\b/gi, false],
+  ["Tatuagem / piercing", /tatuage|tattoo|piercing/gi, false]
+];
+const AUDIT_PESO = { maps:3, instagram:2.5, site:2, "instagram-google":1.5, google:1, "cnpj-google":1 };
+function auditClassificar(fontes, nome){
+  const pontos = {}, evid = {};
+  const add = (cat, n, ev) => { pontos[cat] = (pontos[cat] || 0) + n; evid[cat] = evid[cat] || []; if(ev && evid[cat].length < 6) evid[cat].push(ev); };
+  const lista = fontes.concat([{ tipo:"maps", titulo:"Nome", texto: nome || "", url:"" }]);
+  lista.forEach(f => {
+    const t = String(f.texto || ""), peso = AUDIT_PESO[f.tipo] || 1;
+    AUDIT_CATS.forEach(([cat, re]) => {
+      re.lastIndex = 0; let m, n = 0, ex = "";
+      while((m = re.exec(t)) && n < 12){ n++; if(!ex){ const i = Math.max(0, m.index - 70); ex = t.slice(i, m.index + m[0].length + 70).replace(/\s+/g, " "); } }
+      if(n) add(cat, Math.min(n, 6) * peso, { fonte: f.titulo || f.tipo, url: f.url || "", trecho: ex });
+    });
+  });
+  /* "depilação" genérica não deve ganhar da depilação a laser quando há laser */
+  if(pontos["Depilação a laser"] && pontos["Depilação (cera/linha)"]) pontos["Depilação (cera/linha)"] = Math.max(0, pontos["Depilação (cera/linha)"] - pontos["Depilação a laser"] * 0.6);
+  const cats = Object.entries(pontos).filter(([, p]) => p > 0).sort((a, b) => b[1] - a[1]).map(([nome, p]) => ({ nome, pontos: Math.round(p * 10) / 10, evid: evid[nome] || [] }));
+  const total = cats.reduce((a, c) => a + c.pontos, 0) || 1;
+  cats.forEach(c => c.pct = Math.round(c.pontos / total * 100));
+  const principal = cats[0] ? cats[0].nome : "Sem informação";
+  const laser = cats.find(c => c.nome === "Depilação a laser");
+  const interessa = !cats.length ? "sem dados" : laser && (principal === "Depilação a laser" || laser.pct >= 20) ? "interessa" : laser ? "avaliar" : "não interessa";
+  return { principal, interessa, cats };
+}
+const AUDIT = { rodando:false, parar:false, feitos:0, total:0, atual:"" };
+async function auditarLead(x){
+  const { resp, erro } = await m04Enviar({ type:"auditar", nome: x.nomeMaps || x.nomeFantasia || x.razaoSocial || "", cnpj: x.cnpj || "", cidade: x.cidade || "", uf: x.uf || "",
+    link: x.link || "", site: x.site || "" }, 240000);
+  if(erro || !resp) throw new Error(erro || "a extensão não respondeu (precisa da versão 2.7)");
+  const c = auditClassificar(resp.fontes || [], [x.nomeMaps, x.nomeFantasia, x.razaoSocial, x.categoria].filter(Boolean).join(" "));
+  const atual = (await NovosDB.todos()).find(y => y.chave === x.chave) || x;
+  atual.auditoria = Object.assign(c, { em: new Date().toISOString(), por: fluxoQuem(), captcha: !!resp.captcha,
+    fontes: (resp.fontes || []).filter(f => f.tipo !== "erro").map(f => ({ tipo: f.tipo, titulo: f.titulo, url: f.url })) });
+  await NovosDB.gravar([atual]);
+  return atual.auditoria;
+}
+async function auditarVarios(lista){
+  if(AUDIT.rodando) return toast("Já tem uma análise rodando (veja a barra no canto).");
+  if(!lista.length) return toast("Marque os leads que quer analisar.");
+  AUDIT.rodando = true; AUDIT.parar = false; AUDIT.feitos = 0; AUDIT.total = lista.length;
+  let ok = 0, captcha = false;
+  try {
+    for(const x of lista){
+      if(AUDIT.parar) break;
+      AUDIT.atual = x.nomeMaps || x.razaoSocial || x.cnpj; AUDIT.feitos++; procDesenhar();
+      try { const a = await auditarLead(x); ok++; if(a.captcha){ captcha = true; toast("O Google pediu verificação: resolva na aba do Google e clique em Analisar de novo."); break; } }
+      catch(e){ toast("Não consegui analisar " + AUDIT.atual + ": " + (e.message || e)); break; }
+      novosDesenhar();
+    }
+  } finally { AUDIT.rodando = false; AUDIT.atual = ""; procDesenhar(); }
+  if(ok) toast(ok + (ok === 1 ? " lead analisado." : " leads analisados.") + (captcha ? " Parei porque o Google pediu verificação." : ""));
+  novosDesenhar();
+}
+/* quadro da análise dentro da linha do lead */
+function auditBloco(r){
+  const box = el("div","auditbox");
+  const a = r.auditoria;
+  const bt = el("button","btn sm auditbt", a ? "Analisar de novo" : "Analisar o negócio");
+  bt.title = "Pesquisa a empresa no Google, Google Maps, Instagram e site, e diz que serviços ela faz";
+  bt.onclick = ev => { ev.stopPropagation(); auditarVarios([r]); };
+  if(!a){ box.append(bt); return box; }
+  const cls = a.interessa === "interessa" ? "ok" : a.interessa === "avaliar" ? "al" : "bad";
+  const det = el("details","auditdet");
+  const sm = el("summary"); sm.append(el("span","audtag " + cls, a.principal), el("span","audint " + cls, a.interessa === "interessa" ? "interessa" : a.interessa === "avaliar" ? "avaliar" : a.interessa));
+  det.append(sm);
+  const ul = el("ul","auditcats");
+  a.cats.slice(0, 6).forEach(c => { const li = el("li"); li.append(el("b",null, c.nome + " · " + c.pct + "%"));
+    c.evid.slice(0, 2).forEach(e => { const d = el("div","auditev"); if(e.url){ const l = el("a",null,e.fonte); l.href = e.url; l.target = "_blank"; l.rel = "noopener"; d.append(l); } else d.append(el("span",null,e.fonte));
+      d.append(document.createTextNode(": …" + e.trecho + "…")); li.append(d); });
+    ul.append(li); });
+  if(!a.cats.length) ul.append(el("li",null,"Não achei informação pública suficiente sobre os serviços."));
+  det.append(ul);
+  det.append(el("div","leadshint","Analisado em " + new Date(a.em).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) + (a.por ? " · " + a.por : "") +
+    " · fontes: " + (a.fontes || []).map(f => f.titulo).join(", ") + (a.captcha ? " · o Google pediu verificação (análise incompleta)" : "")));
+  det.append(bt);
+  box.append(det);
+  return box;
 }
 
 /* ---------- LISTA CONFERIDA: leads conferidos, prontos para a campanha ---------- */
@@ -10729,7 +10842,21 @@ async function novosDesenhar(){
   const usaCatConf = dv === "conferida" || dv === "campanhas";
   if(!usaCatConf) f.catConf = "";
   const naCatConf = x => !f.catConf || (f.catConf === "__sem" ? !x.categoriaConf : x.categoriaConf === f.catConf);
-  const noRecorte = noRecorte0.filter(naCat).filter(naCatConf);
+  /* categoria pela análise do negócio */
+  const naAud = x => !f.audCat || (f.audCat === "__nao" ? !x.auditoria : x.auditoria && x.auditoria.principal === f.audCat);
+  const noRecorte = noRecorte0.filter(naCat).filter(naCatConf).filter(naAud);
+  if(u.audCats){ u.audCats.innerHTML = "";
+    const comA = noRecorte0.filter(x => x.auditoria);
+    if(comA.length){
+      const cont = {}; comA.forEach(x => { cont[x.auditoria.principal] = (cont[x.auditoria.principal] || 0) + 1; });
+      u.audCats.append(el("span","cnaecatsrot","Categoria pela análise do negócio:"));
+      const chip = (rot, n, k, cls) => { const b = el("button","cnaecat caud" + (f.audCat === k ? " on" : "") + (cls ? " " + cls : "")); b.append(document.createTextNode(rot + " "), el("b",null, n.toLocaleString("pt-BR")));
+        b.onclick = () => { f.audCat = f.audCat === k ? "" : k; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); }; u.audCats.append(b); };
+      chip("Todas", noRecorte0.length, "");
+      Object.entries(cont).sort((a, b) => b[1] - a[1]).forEach(([c, n]) => chip(c, n, c, c === "Depilação a laser" ? "ok" : ""));
+      chip("Não analisado", noRecorte0.length - comA.length, "__nao", "nao");
+    }
+  }
   if(u.catsConf){ u.catsConf.innerHTML = "";
     if(usaCatConf && noRecorte0.some(x => x.categoriaConf)){
       const cont = {}; let sem = 0; noRecorte0.forEach(x => { if(x.categoriaConf) cont[x.categoriaConf] = (cont[x.categoriaConf] || 0) + 1; else sem++; });
@@ -10972,6 +11099,7 @@ async function novosDesenhar(){
     tdc.append(ck); tr.append(tdc);
 
     const te = el("td"); te.append(novosNomeMaps(r, r.nomeMaps || r.nomeFantasia || r.razaoSocial || "—"));
+    te.append(auditBloco(r));
     if(r.transferidoEm && Date.now() - new Date(r.transferidoEm) < 24 * 3600000)
       te.append(el("span","novotag", "transferido " + new Date(r.transferidoEm).toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" })));
     if(f.ultimos){ const dvR = divDe(r); te.append(el("div","quem", "está em: " + ({ leads:"Leads", outras:"OUTRAS LISTAS", conferida:"LISTA CONFERIDA", frios:"Frios (só fixo)", campanhas:"CAMPANHAS", rede:"REDE", mei:"MEI", clientes:"Já são clientes" })[dvR] +
@@ -16686,6 +16814,7 @@ function procDesenhar(){
   }
   if(LISTA.rodando) itens.push({ rot:"Lendo a lista do MaisCNPJ", sub: LISTA.pg + (LISTA.total ? " de " + LISTA.total : "") + " páginas · " + LISTA.itens.length + " empresas", parar: () => { LISTA.parar = true; toast("A leitura da lista para na próxima página."); } });
   if(CNAE_AUTO.rodando) itens.push({ rot:"Conferindo CNAEs na Receita", sub: (CNAE_AUTO.feitos || 0) + " de " + (CNAE_AUTO.total || 0), parar: () => { CNAE_AUTO.parar = true; toast("A conferência dos CNAEs para no próximo CNPJ."); } });
+  if(AUDIT.rodando) itens.push({ rot:"Analisando negócios (Google, Maps, Instagram, site)", sub: AUDIT.feitos + " de " + AUDIT.total + (AUDIT.atual ? " · " + AUDIT.atual : ""), parar: () => { AUDIT.parar = true; toast("A análise para depois do lead atual."); } });
   if(FILTRO.rodando) itens.push({ rot:"Consultando CNAEs (Filtro do ramo)", sub:"", parar: () => { FILTRO.parar = true; } });
   b.innerHTML = "";
   b.hidden = !itens.length;
