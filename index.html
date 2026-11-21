@@ -1402,6 +1402,8 @@ a.nmaps::after{content:" ↗";font-size:11px;color:var(--teal);font-weight:400}
 .qcontatopo b{font-size:16px;font-variant-numeric:tabular-nums}
 .qok{color:var(--teal-deep);font-weight:600}
 @media(max-width:900px){ .lotesgrade,.lotesduas{grid-template-columns:1fr} }
+.ndiv.ult{border-color:var(--amber);background:var(--amber-soft)} .ndiv.ult.on{background:var(--amber);border-color:var(--amber);color:#fff}
+.novotag{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:999px;background:var(--amber-soft);color:#8A5A12;vertical-align:middle}
 .abastela{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 18px;padding-bottom:12px;border-bottom:1px solid var(--line)}
 /* menu "Mais ações" do Cadastro */
 .maisacoes{position:relative}
@@ -10471,7 +10473,8 @@ async function novosDesenhar(){
   /* na REDE, cada rede é uma divisão própria */
   const campanhas = [...new Set(tudo.filter(x => x.campanha).map(x => x.campanha))].sort((a, b) => a.localeCompare(b, "pt-BR"));
   if(NOVOS.campSel && !/^__dia:/.test(NOVOS.campSel) && !campanhas.includes(NOVOS.campSel)) NOVOS.campSel = "";
-  const todos = (f.ramo ? daDivisao.filter(x => novosRamoKey(x) === f.ramo) : daDivisao)
+  const ultSet = f.ultimos ? new Set((ultimosEnviados() || {}).chaves || []) : null;
+  const todos = ultSet ? tudo.filter(x => ultSet.has(x.chave)) : (f.ramo ? daDivisao.filter(x => novosRamoKey(x) === f.ramo) : daDivisao)
     .filter(x => dv !== "rede" || !NOVOS.redeSel || x.rede === NOVOS.redeSel)
     .filter(x => dv !== "campanhas" || !NOVOS.campSel || (/^__dia:/.test(NOVOS.campSel) ? novosDiaExport(x) === NOVOS.campSel.slice(6) : x.campanha === NOVOS.campSel));
   NOVOS.lista = todos;
@@ -10486,6 +10489,15 @@ async function novosDesenhar(){
   const noFiltroGeral = x => (!f.ramo || novosRamoKey(x) === f.ramo) && (!f.uf || x.uf === f.uf) && (!f.cidade || x.cidade === f.cidade) && (!f.buscaId || x.buscaId === f.buscaId);
   const nDiv = k => tudo.filter(x => divDe(x) === k && noFiltroGeral(x)).length;
   u.divisoes.innerHTML = "";
+  { const ult = ultimosEnviados();
+    if(ult && (ult.chaves || []).length){
+      const b = el("button","ndiv ult" + (f.ultimos ? " on" : ""));
+      b.append(document.createTextNode("Últimos transferidos "), el("span",null, String(ult.chaves.length)));
+      b.title = "Os leads mandados agora há pouco da qualificação (" + new Date(ult.em).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) + "), de qualquer divisão e situação";
+      b.onclick = () => { if(f.ultimos){ f.ultimos = false; } else { Object.assign(f, { ultimos:true, status:"", uf:"", cidade:"", buscaId:"", busca:"", diaMeta:"" }); } NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); };
+      u.divisoes.append(b);
+    }
+  }
   [["leads","Leads"],["frios","Frios (só fixo)"],["campanhas","Campanhas"],["rede","REDE"],["mei","MEI"],["clientes","Já são clientes"]].forEach(([k, rot]) => {
     const b = el("button","ndiv" + (dv === k ? " on" : ""));
     b.append(document.createTextNode(rot + " "), el("span",null, nDiv(k).toLocaleString("pt-BR")));
@@ -10493,7 +10505,7 @@ async function novosDesenhar(){
     if(k === "frios") b.title = "Leads sem nenhum celular (só telefone fixo ou sem telefone): não vão na exportação";
     if(k === "campanhas") b.title = campanhas.length + " campanhas · leads já exportados não aparecem de novo para exportar";
     if(f.cidade || f.uf) b.title = (b.title ? b.title + " · " : "") + "contando só " + (f.cidade ? f.cidade + "/" : "") + (f.uf || "");
-    b.onclick = () => { NOVOS.divisao = k; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); };
+    b.onclick = () => { NOVOS.divisao = k; f.ultimos = false; NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); };
     u.divisoes.append(b);
   });
   if(NOVOS.cli.n) u.divisoes.append(el("span","leadshint", NOVOS.cli.n.toLocaleString("pt-BR") + " CNPJs de clientes carregados" +
@@ -10538,7 +10550,7 @@ async function novosDesenhar(){
 
   const q = baseChave(f.busca), qd = cnpjDig(f.busca);
   /* filtros da barra (situação, só não enviados, busca); o estado e a cidade já vieram em noRecorte */
-  const passaFiltro = x => (!f.status || dv === "mei" || x.status === f.status) && (!f.naoEnviados || !x.enviadoBase) &&
+  const passaFiltro = x => (!f.status || f.ultimos || dv === "mei" || x.status === f.status) && (!f.naoEnviados || !x.enviadoBase) &&
     (!q || baseChave([x.nomeMaps, x.razaoSocial, x.nomeFantasia, x.cnpj, x.endereco, x.telMaps, x.telMaisCnpj, x.distrito, x.rede, x.zona ? "zona " + x.zona : ""].join(" ")).includes(q) ||
      (qd.length >= 4 && (cnpjDig(x.cnpj).includes(qd) || cnpjDig(x.telMaps + x.telMaisCnpj).includes(qd))));
   const noLugar = x => (!f.uf || x.uf === f.uf) && (!f.cidade || x.cidade === f.cidade) && (!f.buscaId || x.buscaId === f.buscaId);
@@ -10555,8 +10567,14 @@ async function novosDesenhar(){
     dv === "frios" ? "Frios (só fixo)" : dv === "campanhas" ? (/^__dia:/.test(NOVOS.campSel || "") ? "Exportados em " + NOVOS.campSel.slice(6).split("-").reverse().join("/") : "Campanha" + (NOVOS.campSel ? " › " + NOVOS.campSel : "s")) : "", f.ramo ? ((NOVOS.nomesRamo || {})[f.ramo] || "") : "Todos os ramos", f.uf || "todos os estados", f.cidade,
     f.buscaId ? "só as novas da busca " + ((u.sBus.selectedOptions[0] || {}).textContent || "").replace(/^Novas de /, "") : "",
     f.diaMeta ? "só os leads da meta de " + f.diaMeta.split("-").reverse().slice(0, 2).join("/") : ""].filter(Boolean);
+  if(f.ultimos){ partes.length = 0; partes.push("últimos transferidos da qualificação (de qualquer divisão e situação)"); }
   u.mostrando.append(el("b",null, lista.length.toLocaleString("pt-BR") + (lista.length === 1 ? " lead" : " leads")),
     document.createTextNode(" · " + partes.join(" · ") + (f.status ? " · " + M04_STATUS[f.status][0].toLowerCase() : " · todas as situações")));
+  if(f.ultimos){
+    const lu = el("button","btn sm","Ver todos os leads");
+    lu.onclick = () => { f.ultimos = false; NOVOS.mostrar = 200; novosDesenhar(); };
+    u.mostrando.append(lu);
+  }
   if(f.diaMeta){
     const ld = el("button","btn sm","Tirar o filtro da meta");
     ld.onclick = () => { f.diaMeta = ""; NOVOS.mostrar = 200; novosDesenhar(); };
@@ -10691,6 +10709,10 @@ async function novosDesenhar(){
     tdc.append(ck); tr.append(tdc);
 
     const te = el("td"); te.append(novosNomeMaps(r, r.nomeMaps || r.nomeFantasia || r.razaoSocial || "—"));
+    if(r.transferidoEm && Date.now() - new Date(r.transferidoEm) < 24 * 3600000)
+      te.append(el("span","novotag", "transferido " + new Date(r.transferidoEm).toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" })));
+    if(f.ultimos){ const dvR = divDe(r); te.append(el("div","quem", "está em: " + ({ leads:"Leads", frios:"Frios (só fixo)", campanhas:"Campanhas", rede:"REDE", mei:"MEI", clientes:"Já são clientes" })[dvR] +
+      " · " + (M04_STATUS[r.status] || [r.status])[0])); }
     if(r.razaoSocial) te.append(el("div","sub", r.razaoSocial));
     if(r.filiais > 1 && !r.rede) te.append(el("div","quem","possível rede: " + r.filiais + " unidades ativas"));
     if(r.enviadoBase) te.append(el("div","quem","enviado à Base em " + new Date(r.enviadoBaseEm).toLocaleString("pt-BR", { dateStyle:"short", timeStyle:"short" }) +
@@ -17115,6 +17137,15 @@ async function qrevPinta(){
   const nSaida = { lista: saidos.filter(x => x.destino === "lista").length, desc: saidos.filter(x => x.destino === "descartado").length };
   if(nSaida.lista || nSaida.desc) conta.append(el("div","leadshint", "Desta soma, " + nSaida.lista + " já foram para a lista de leads e " + nSaida.desc + " foram descartados; os outros " + regs.length + " estão nas abas abaixo para você escolher."));
   u.rev.append(conta);
+  /* acabou de transferir: atalho para ver na lista de leads */
+  const ult = ultimosEnviados();
+  if(ult && (ult.chaves || []).length && Date.now() - new Date(ult.em) < 6 * 3600000){
+    const bx = el("div","metaaviso"); bx.style.cssText = "display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0";
+    bx.append(el("span",null, "Última transferência: " + ult.chaves.length + (ult.chaves.length === 1 ? " lead mandado" : " leads mandados") + " para a lista de leads às " +
+      new Date(ult.em).toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" }) + "."));
+    const bv = el("button","btn sm primary","Ver esses leads na lista de leads"); bv.onclick = abrirUltimosEnviados; bx.append(bv);
+    u.rev.append(bx);
+  }
   if(doLote && !est.concluido && est.lugaresTotal){ const bar = el("div","leadsbar"), f = el("i"); f.style.width = Math.min(100, (est.li || 0) / est.lugaresTotal * 100) + "%"; bar.append(f); u.rev.append(bar); }
   /* abas por tipo */
   const nAba = k => regs.filter(r => r.status === k).length;
@@ -17166,19 +17197,27 @@ async function qrevPinta(){
   u.rev.append(tw);
   tw.scrollTop = rolagem;
 }
+/* últimos leads transferidos para a lista de leads (para achar fácil no Cadastro) */
+function ultimosEnviados(){ try { return JSON.parse(localStorage.getItem("m04_ultimosEnviados") || "null"); } catch(e){ return null; } }
+function abrirUltimosEnviados(){
+  const u = ultimosEnviados(); if(!u || !(u.chaves || []).length) return toast("Nenhuma transferência recente.");
+  Object.assign(NOVOS.filtro, { ultimos:true, status:"", uf:"", cidade:"", buscaId:"", ramo:"", busca:"", diaMeta:"", naoEnviados:false });
+  NOVOS.divisao = "leads"; NOVOS.sel.clear(); NOVOS.mostrar = 200; pickEtapa = "novos"; desenhaPicker(); $("#picker").scrollTop = 0;
+}
 /* manda para o Cadastro (lista de leads definitiva) */
 async function qrevEnviar(id, lote){
   if(!lote.length) return toast("Marque os leads que vão para a lista de leads.");
   const t = await qrevLotes(), L = t[id]; if(!L) return;
   const ja = new Set((await NovosDB.todos()).map(x => x.chave));
   const agora = new Date().toISOString();
-  const novos = lote.filter(r => !ja.has(r.chave)).map(r => Object.assign({}, r, { buscaId: id, buscaRotulo: L.rotulo, capturadoEm: agora, importadoEm: agora }));
+  const novos = lote.filter(r => !ja.has(r.chave)).map(r => Object.assign({}, r, { buscaId: id, buscaRotulo: L.rotulo, capturadoEm: agora, importadoEm: agora, transferidoEm: agora }));
   if(novos.length) await NovosDB.gravar(novos);
+  try { localStorage.setItem("m04_ultimosEnviados", JSON.stringify({ em: agora, chaves: lote.map(r => r.chave), rotulo: L.rotulo, n: lote.length })); } catch(e){}
   L.saidos = L.saidos || {};
   lote.forEach(r => { delete L.regs[r.chave]; L.feitos[r.chave] = "enviado"; L.saidos[r.chave] = { status: r.status, destino:"lista", href: r.hrefLista || "", nome: r.nomeMaps || "" }; QREV.sel.delete(r.chave); });
   await qrevLotesGravar(t);
   fluxoHistPorStaging(id, "mandou " + novos.length + " leads para a lista de leads"); fluxoAtualizarPorStaging(id);
-  toast(novos.length + " leads mandados para a lista de leads (lote " + L.rotulo + ")" + (lote.length > novos.length ? " · " + (lote.length - novos.length) + " já estavam lá" : "") + ".");
+  toast(novos.length + " leads mandados para a lista de leads (lote " + L.rotulo + ")" + (lote.length > novos.length ? " · " + (lote.length - novos.length) + " já estavam lá" : "") + ". Veja em Leads › “Últimos transferidos”.");
   metaAtualizar(); setTimeout(cnaeAutoConferir, 1500); qrevPinta();
 }
 async function qrevDescartar(id, lote){
