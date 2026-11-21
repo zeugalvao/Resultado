@@ -10490,12 +10490,28 @@ async function novosDesenhar(){
   const noFiltroGeral = x => (!f.ramo || novosRamoKey(x) === f.ramo) && (!f.uf || x.uf === f.uf) && (!f.cidade || x.cidade === f.cidade) && (!f.buscaId || x.buscaId === f.buscaId);
   const nDiv = k => tudo.filter(x => divDe(x) === k && noFiltroGeral(x)).length;
   u.divisoes.innerHTML = "";
-  { const ult = ultimosEnviados();
-    if(ult && (ult.chaves || []).length){
-      const b = el("button","ndiv ult" + (f.ultimos ? " on" : ""));
-      b.append(document.createTextNode("Últimos transferidos "), el("span",null, String(ult.chaves.length)));
-      b.title = "Os leads mandados agora há pouco da qualificação (" + new Date(ult.em).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) + "), de qualquer divisão e situação";
-      b.onclick = () => { if(f.ultimos){ f.ultimos = false; } else { Object.assign(f, { ultimos:true, ultChaves:null, status:"", uf:"", cidade:"", buscaId:"", busca:"", diaMeta:"" }); } NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); };
+  /* atalhos: os que chegaram por último (qualquer divisão e situação) e, num lote, o lote inteiro */
+  { const chegada = x => x.transferidoEm || x.capturadoEm || x.importadoEm || "";
+    const ult = ultimosEnviados();
+    let ultCh = null, ultEm = "";
+    const tMax = tudo.reduce((m, x) => { const t = chegada(x); return t > m ? t : m; }, "");
+    if(tMax){ const lim = new Date(new Date(tMax) - 10 * 60000).toISOString(); ultCh = tudo.filter(x => chegada(x) >= lim).map(x => x.chave); ultEm = tMax; }
+    if(ult && (ult.chaves || []).length && (!ultEm || ult.em >= ultEm)){ ultCh = ult.chaves; ultEm = ult.em; }
+    if(ultCh && ultCh.length){
+      const ativo = f.ultimos && f.ultModo === "ultimos";
+      const b = el("button","ndiv ult" + (ativo ? " on" : ""));
+      b.append(document.createTextNode("Chegaram por último "), el("span",null, String(ultCh.length)));
+      b.title = "Os leads que entraram por último no Cadastro (" + new Date(ultEm).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) + "), de qualquer divisão e situação";
+      b.onclick = () => { if(ativo){ f.ultimos = false; } else { Object.assign(f, { ultimos:true, ultModo:"ultimos", ultChaves: ultCh, status:"", uf:"", cidade:"", buscaId:"", busca:"", diaMeta:"" }); } NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); };
+      u.divisoes.append(b);
+    }
+    const idLote = f.buscaId || (f.ultimos && f.ultModo === "lote" ? f.ultLote : "");
+    if(idLote){
+      const doLote = tudo.filter(x => String(x.buscaId) === String(idLote)).map(x => x.chave);
+      const ativo = f.ultimos && f.ultModo === "lote";
+      const b = el("button","ndiv ult" + (ativo ? " on" : ""));
+      b.append(document.createTextNode("Todo este lote, em qualquer divisão "), el("span",null, String(doLote.length)));
+      b.onclick = () => { if(ativo){ f.ultimos = false; f.buscaId = f.ultLote || ""; } else { Object.assign(f, { ultimos:true, ultModo:"lote", ultLote: idLote, ultChaves: doLote, status:"", uf:"", cidade:"", buscaId:"", busca:"", diaMeta:"" }); } NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); };
       u.divisoes.append(b);
     }
   }
@@ -10568,9 +10584,14 @@ async function novosDesenhar(){
     dv === "frios" ? "Frios (só fixo)" : dv === "campanhas" ? (/^__dia:/.test(NOVOS.campSel || "") ? "Exportados em " + NOVOS.campSel.slice(6).split("-").reverse().join("/") : "Campanha" + (NOVOS.campSel ? " › " + NOVOS.campSel : "s")) : "", f.ramo ? ((NOVOS.nomesRamo || {})[f.ramo] || "") : "Todos os ramos", f.uf || "todos os estados", f.cidade,
     f.buscaId ? "só as novas da busca " + ((u.sBus.selectedOptions[0] || {}).textContent || "").replace(/^Novas de /, "") : "",
     f.diaMeta ? "só os leads da meta de " + f.diaMeta.split("-").reverse().slice(0, 2).join("/") : ""].filter(Boolean);
-  if(f.ultimos){ partes.length = 0; partes.push("últimos transferidos da qualificação (de qualquer divisão e situação)"); }
+  if(f.ultimos){ partes.length = 0; partes.push((f.ultModo === "lote" ? "todos os leads do lote" : f.ultModo === "ultimos" ? "os que chegaram por último" : "leads transferidos da qualificação") + " (de qualquer divisão e situação)"); }
   u.mostrando.append(el("b",null, lista.length.toLocaleString("pt-BR") + (lista.length === 1 ? " lead" : " leads")),
     document.createTextNode(" · " + partes.join(" · ") + (f.status ? " · " + M04_STATUS[f.status][0].toLowerCase() : " · todas as situações")));
+  if(f.buscaId && !f.ultimos){
+    const lb = el("button","btn sm","Tirar o filtro do lote");
+    lb.onclick = () => { f.buscaId = ""; NOVOS.mostrar = 200; novosDesenhar(); };
+    u.mostrando.append(lb);
+  }
   if(f.ultimos){
     const lu = el("button","btn sm","Ver todos os leads");
     lu.onclick = () => { f.ultimos = false; NOVOS.mostrar = 200; novosDesenhar(); };
@@ -17217,7 +17238,7 @@ async function qrevPinta(){
 function ultimosEnviados(){ try { return JSON.parse(localStorage.getItem("m04_ultimosEnviados") || "null"); } catch(e){ return null; } }
 function abrirUltimosEnviados(chaves){
   const u = ultimosEnviados(); if(!(chaves && chaves.length) && !(u && (u.chaves || []).length)) return toast("Nenhuma transferência recente.");
-  Object.assign(NOVOS.filtro, { ultimos:true, ultChaves: chaves && chaves.length ? chaves : null, status:"", uf:"", cidade:"", buscaId:"", ramo:"", busca:"", diaMeta:"", naoEnviados:false });
+  Object.assign(NOVOS.filtro, { ultimos:true, ultModo:"transf", ultChaves: chaves && chaves.length ? chaves : null, status:"", uf:"", cidade:"", buscaId:"", ramo:"", busca:"", diaMeta:"", naoEnviados:false });
   NOVOS.divisao = "leads"; NOVOS.sel.clear(); NOVOS.mostrar = 200; pickEtapa = "novos"; desenhaPicker(); $("#picker").scrollTop = 0;
 }
 /* manda para o Cadastro (lista de leads definitiva) */
