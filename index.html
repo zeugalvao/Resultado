@@ -10117,8 +10117,10 @@ function pickNovos(host){
   btSep.onclick = () => novosMandarListaSep();
   const btAud = el("button","btn","Analisar o negócio dos marcados (Google, Maps, Instagram, site)");
   btAud.onclick = async () => auditarVarios((await NovosDB.todos()).filter(x => NOVOS.sel.has(x.chave)));
+  const btTelG = el("button","btn","Procurar telefone no Google dos marcados (“telefone nome cidade”)");
+  btTelG.onclick = async () => { const l = (await NovosDB.todos()).filter(x => NOVOS.sel.has(x.chave)); if(!l.length) return toast("Marque os leads."); telGoogleCadastro(l); };
   const btAlvo = el("button","btn","Critério da análise (o que você procura)"); btAlvo.onclick = () => auditPerguntarAlvo(0, true);
-  menu.append(btConf, btTiraConf, el("hr"), btSep, btAud, btAlvo, el("hr"), btRede, btExcluir, btRamoOk, btRamoRe, btRefazer, btAtual, el("hr"), btCli, btManter);
+  menu.append(btConf, btTiraConf, el("hr"), btSep, btAud, btTelG, btAlvo, el("hr"), btRede, btExcluir, btRamoOk, btRamoRe, btRefazer, btAtual, el("hr"), btCli, btManter);
   menu.addEventListener("click", ev => { if(ev.target.closest("button")) mais.open = false; });
   document.addEventListener("click", ev => { if(mais.open && !mais.contains(ev.target)) mais.open = false; });
   mais.append(sm, menu);
@@ -10429,6 +10431,62 @@ function auditClassificar(fontes, nome){
   return { principal, interessa: av.interessa, motivo: av.motivo, cats };
 }
 const AUDIT = { rodando:false, parar:false, feitos:0, total:0, atual:"" };
+/* ---------- telefone pelo Google ("telefone <nome> <cidade>") ---------- */
+/* escolhe o melhor telefone achado que o lead ainda não tem (celular primeiro) e grava em telGoogle */
+function telGoogleAplicar(r, tels){
+  const ja = new Set(novosTelefones(Object.assign({}, r, { telGoogle: undefined })).map(chaveFone));
+  const novos = (tels || []).filter(t => !ja.has(chaveFone(t.tel)));
+  r.telGoogleEm = new Date().toISOString();
+  r.telGoogleAchados = (tels || []).slice(0, 4).map(t => t.tel + (t.n > 1 ? " (" + t.n + "×)" : ""));
+  const cel = novos.find(t => foneCelular(t.tel)), esc = cel || (!novosTelefones(r).length ? novos[0] : null);
+  if(esc) r.telGoogle = esc.tel; 
+  return esc ? esc.tel : "";
+}
+async function telGoogleBuscar(r){
+  const { resp, erro } = await m04Enviar({ type:"telefoneGoogle", nome: r.nomeMaps || r.nomeFantasia || r.razaoSocial || "", cidade: r.cidade || "", uf: r.uf || "" }, 60000);
+  if(erro || !resp) throw new Error(erro || "a extensão não respondeu (precisa da versão 2.9)");
+  if(resp.captcha) throw new Error("O Google pediu verificação (captcha). Resolva na aba do Google e tente de novo.");
+  return resp.telefones || [];
+}
+const TELG = { rodando:false, parar:false, feitos:0, total:0, achou:0, atual:"", onde:"" };
+/* procura em sequência; salvar(r) grava o lead onde ele estiver (revisão da qualificação ou Cadastro) */
+async function telGoogleVarios(lista, salvar, onde){
+  if(TELG.rodando) return toast("Já estou procurando telefones no Google.");
+  if(!lista.length) return toast("Nenhum lead para procurar telefone.");
+  Object.assign(TELG, { rodando:true, parar:false, feitos:0, total: lista.length, achou:0, atual:"", onde });
+  const redesenha = () => { if(onde === "qrev") qrevPinta(); else if(typeof novosDesenhar === "function") novosDesenhar(); };
+  redesenha();
+  try {
+    for(const r of lista){
+      if(TELG.parar) break;
+      TELG.atual = r.nomeMaps || r.razaoSocial || ""; redesenha();
+      let tels;
+      try { tels = await telGoogleBuscar(r); } catch(e){ toast(String(e.message || e)); break; }
+      if(telGoogleAplicar(r, tels)) TELG.achou++;
+      await salvar(r); TELG.feitos++;
+      await new Promise(ok => setTimeout(ok, 1500 + Math.random() * 1500));
+    }
+  } finally {
+    TELG.rodando = false; TELG.atual = "";
+    toast("Telefone no Google: procurei " + TELG.feitos + " de " + TELG.total + " · achei telefone novo para " + TELG.achou + ".");
+    redesenha();
+  }
+}
+/* barra de andamento (com Parar) */
+function telGoogleBarra(onde){
+  if(!TELG.rodando || TELG.onde !== onde) return null;
+  const bx = el("div","metaaviso");
+  bx.append(el("b",null,"Procurando telefone no Google: " + TELG.feitos + " de " + TELG.total), el("span",null, (TELG.atual ? " · " + TELG.atual : "") + " · achei " + TELG.achou + " "));
+  const bp = el("button","btn sm danger","Parar"); bp.onclick = () => { TELG.parar = true; toast("Paro depois deste lead."); };
+  bx.append(bp); return bx;
+}
+async function telGoogleCadastro(lote){
+  const alvo = lote.filter(x => !novosTemCelular(x));
+  const lista = alvo.length ? alvo : lote;
+  if(alvo.length < lote.length && alvo.length) toast((lote.length - alvo.length) + " já têm celular e ficam de fora.");
+  await telGoogleVarios(lista, async r => { const at = (await NovosDB.todos()).find(y => y.chave === r.chave); if(!at) return;
+    ["telGoogle","telGoogleEm","telGoogleAchados"].forEach(k => { if(r[k] !== undefined) at[k] = r[k]; }); await NovosDB.gravar([at]); }, "novos");
+}
 async function auditarLead(x){
   const { resp, erro } = await m04Enviar({ type:"auditar", nome: x.nomeMaps || x.nomeFantasia || x.razaoSocial || "", cnpj: x.cnpj || "", cidade: x.cidade || "", uf: x.uf || "",
     link: x.link || "", site: x.site || "" }, 240000);
@@ -10439,7 +10497,7 @@ async function auditarLead(x){
   const achados = (resp.cnpjsAchados || []).filter(a => novosCnpjValido(a.cnpj));
   const top = achados[0] || null, dAtual = cnpjDig(atual.cnpj);
   atual.auditoria = Object.assign(c, { em: new Date().toISOString(), por: fluxoQuem(), captcha: !!resp.captcha,
-    cnpjsAchados: achados.slice(0, 4), cnpjDif: !!(top && dAtual.length === 14 && top.cnpj !== dAtual),
+    cnpjsAchados: achados.slice(0, 4), cnpjDif: !!(top && dAtual.length === 14 && top.cnpj !== dAtual), telAchado: (resp.telsAchados || []).length ? telGoogleAplicar(atual, resp.telsAchados) : "",
     fontes: (resp.fontes || []).filter(f => f.tipo !== "erro").map(f => ({ tipo: f.tipo, titulo: f.titulo, url: f.url })) });
   await NovosDB.gravar([atual]);
   /* lead sem CNPJ: confere na Receita o CNPJ achado (situação, natureza, abertura) e atualiza o lead */
@@ -10810,7 +10868,7 @@ function novosCelulaRede(r, redes){
 
 function novosTelefones(r){
   const out = [];
-  [r.telMaps].concat(String(r.telMaisCnpj || "").split(" / "), r.telReceita || []).forEach(t => {
+  [r.telMaps].concat(String(r.telMaisCnpj || "").split(" / "), r.telReceita || [], r.telGoogle || []).forEach(t => {
     t = String(t || "").trim(); if(t && !out.some(x => chaveFone(x) === chaveFone(t))) out.push(t);
   });
   return out;
@@ -11238,7 +11296,10 @@ async function novosDesenhar(){
     const tdEnd = el("td"); tdEnd.append(el("span",null, r.endereco || "—"));
     if(r.enderecoReceita) tdEnd.append(el("div","sub","Receita: " + r.enderecoReceita));
     tr.append(tdEnd);
-    tr.append(el("td","tel", r.telMaps || "—"));
+    { const tdM = el("td","tel", r.telMaps || (r.telGoogle ? "" : "—"));
+      if(r.telGoogle) tdM.append(el("div", r.telMaps ? "sub" : null, (r.telMaps ? "Google: " : "") + r.telGoogle), r.telMaps ? "" : el("div","sub","do Google"));
+      else if(r.telGoogleEm) tdM.append(el("div","sub","Google: nada novo"));
+      tr.append(tdM); }
     const tdTm = el("td","tel", r.telMaisCnpj || "—");
     if(!r.telMaisCnpj && (r.telReceita || []).length){ tdTm.textContent = r.telReceita.join(" / "); tdTm.append(el("div","sub","da Receita")); }
     tr.append(tdTm);
@@ -17707,6 +17768,25 @@ async function qrevPinta(){
     const pr = el("button","btn sm danger","Parar"); pr.onclick = () => procCmd("parar"); cab.append(pr);
   }
   u.rev.append(cab);
+  /* telefone no Google para quem ficou sem celular: roda sozinho quando a qualificação termina */
+  { const TELG_ST = ["aprovado","aguardando","verificar","sem_cnpj","fora"];
+    const pend = regs.filter(r => TELG_ST.includes(r.status) && !novosTemCelular(r) && !r.telGoogleEm);
+    const salvarQ = async r => { const t2 = await qrevLotes(), L2 = t2[L.id]; if(!L2 || !L2.regs[r.chave]) return;
+      ["telGoogle","telGoogleEm","telGoogleAchados"].forEach(k => { if(r[k] !== undefined) L2.regs[r.chave][k] = r[k]; });
+      await qrevLotesGravar(t2); if(r.status === "aprovado" && novosTemCelular(L2.regs[r.chave])) QREV.sel.add(r.chave); };
+    const barra = telGoogleBarra("qrev");
+    if(barra) u.rev.append(barra);
+    else if(pend.length){
+      QREV.telgAuto = QREV.telgAuto || {};
+      const pronta = !doLote || est.concluido || !(est.rodando || est.pausado);
+      const bx = el("div","metaaviso");
+      bx.append(el("b",null, pend.length + (pend.length === 1 ? " lead está" : " leads estão") + " sem celular. "),
+        el("span",null, pronta ? "Vou procurar o telefone no Google (“telefone nome cidade”), um por vez. " : "Quando a qualificação terminar, procuro o telefone deles no Google. "));
+      const bt = el("button","btn sm primary","Procurar telefone no Google agora"); bt.onclick = () => telGoogleVarios(pend, salvarQ, "qrev");
+      bx.append(bt); u.rev.append(bx);
+      if(pronta && !QREV.telgAuto[L.id] && !TELG.rodando){ QREV.telgAuto[L.id] = true; setTimeout(() => telGoogleVarios(pend, salvarQ, "qrev"), 400); }
+    }
+  }
   /* desenho do fluxo do lote */
   const loteF = fluxoPorStaging(L.id) || fluxoAdotarStaging(L);
   { const nConf = Object.keys(L.regs || {}).length + Object.keys(L.saidos || {}).length, nTot = L.total || nConf;
@@ -17795,8 +17875,10 @@ async function qrevPinta(){
       ck.onchange = () => { ck.checked ? QREV.sel.add(r.chave) : QREV.sel.delete(r.chave); qrevPinta(); };
       td0.append(ck); tr.append(td0);
       const te = el("td"); te.append(novosNomeMaps(r, r.nomeMaps || r.nomeFantasia || r.razaoSocial || "—")); if(r.razaoSocial) te.append(el("div","sub", r.razaoSocial));
-      if(!novosTemCelular(r)) te.append(el("div","quem nfrio","sem celular (frio)"));
-      tr.append(te, el("td",null, r.cnpj || "—"), el("td",null, (r.cidade || "") + (r.uf ? "/" + r.uf : "")), el("td","tel", r.telMaps || "—"),
+      if(!novosTemCelular(r)) te.append(el("div","quem nfrio","sem celular (frio)" + (r.telGoogleEm ? " · Google não achou celular" : "")));
+      const tdM = el("td","tel", r.telMaps || (r.telGoogle ? "" : "—"));
+      if(r.telGoogle) tdM.append(el("div", r.telMaps ? "sub" : null, (r.telMaps ? "Google: " : "") + r.telGoogle), r.telMaps ? "" : el("div","sub","do Google"));
+      tr.append(te, el("td",null, r.cnpj || "—"), el("td",null, (r.cidade || "") + (r.uf ? "/" + r.uf : "")), tdM,
         el("td","tel", r.telMaisCnpj || (r.telReceita || []).join(" / ") || "—"));
       const ts = el("td"); const [rot, cls] = M04_STATUS[r.status] || [r.status, "st-todo"]; ts.append(el("span","pill " + cls, rot));
       [r.motivo && r.status !== "aprovado" ? r.motivo : "", r.ramoMotivo ? "ramo: " + r.ramoMotivo : ""].filter(Boolean).forEach(x => ts.append(el("div","sub",x)));
