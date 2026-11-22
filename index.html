@@ -11346,10 +11346,9 @@ async function novosJuntarRamos(grupos){
   dlg.append(el("p","leadshint","Marque os ramos que são o mesmo negócio. Todos os leads deles passam para um ramo só, e as próximas buscas com esses nomes já entram nele."));
   const lista = el("div"); lista.style.cssText = "display:flex;flex-direction:column;gap:6px;margin:10px 0";
   const cks = grupos.map(g => { const l = el("label","qualcheck"); const c = el("input"); c.type = "checkbox";
-    c.checked = /DEPIL|LASER|ESTET/.test(g.k); l.append(c, document.createTextNode(" " + g.nome + " (" + g.lista.length.toLocaleString("pt-BR") + ")")); lista.append(l); return { g, c }; });
+    c.checked = false; l.append(c, document.createTextNode(" " + g.nome + " (" + g.lista.length.toLocaleString("pt-BR") + ")")); lista.append(l); return { g, c }; });
   dlg.append(lista);
   const inp = el("input"); inp.type = "text"; inp.placeholder = "Nome do ramo junto";
-  inp.value = "Clínica de depilação a laser";
   dlg.append(el("label","leadshint","Nome do ramo junto"), inp);
   const bt = el("div","leadsbotoes"), ok = el("button","btn primary","Juntar"), cancela = el("button","btn","Cancelar");
   ok.type = cancela.type = "button"; bt.append(ok, cancela); dlg.append(bt);
@@ -11367,7 +11366,9 @@ async function novosJuntarRamos(grupos){
     try { localStorage.setItem("m04_ramoAlias", JSON.stringify(al)); } catch(e){}
     /* filtro do ramo (palavras, CNAEs): o ramo novo herda o do maior ramo, se ainda não tiver */
     if(!Object.keys(ramoCfg(alvo)).length){ const maior = sel.slice().sort((a, b) => b.lista.length - a.lista.length)[0]; const nm = Object.keys(maior.nomes)[0]; ramoCfgGravar(alvo, ramoCfg(nm)); }
-    for(const g of sel) await NovosDB.gravar(g.lista.map(x => Object.assign({}, x, { termo: alvo })));
+    const antes = {}; sel.forEach(g => g.lista.forEach(x => { antes[x.chave] = x.termo || ""; }));
+    await ramoUnioesAdd({ id: Date.now(), em: new Date().toISOString(), alvo, nomes: sel.flatMap(g => Object.keys(g.nomes)), antes });
+    for(const g of sel) await NovosDB.gravar(g.lista.map(x => Object.assign({}, x, { termoAntes: x.termoAntes || x.termo, termo: alvo })));
     /* revisões de qualificação também passam a usar o ramo novo */
     const t = await qrevLotes(); let mud = false;
     Object.values(t).forEach(L => { if(al[baseChave(L.ramo || "")]){ L.ramo = alvo; mud = true; } Object.values(L.regs || {}).forEach(r => { if(r.termo && al[baseChave(r.termo)]){ r.termo = alvo; mud = true; } }); });
@@ -11377,6 +11378,106 @@ async function novosJuntarRamos(grupos){
   };
 }
 
+/* histórico das uniões (para desfazer) */
+async function ramoUnioes(){ let m = null; try { m = await NovosDB.meta("ramoUnioes"); } catch(e){} return Array.isArray(m) ? m : []; }
+async function ramoUnioesAdd(u){ const l = await ramoUnioes(); l.push(u); await NovosDB.metaGravar("ramoUnioes", l.slice(-30)); }
+async function novosDesfazerUnioes(){
+  const l = (await ramoUnioes()).slice().reverse();
+  if(!l.length) return toast("Nenhuma união registrada. As uniões feitas antes desta versão não guardaram o ramo antigo: use “Separar ramo…”.");
+  const dlg = el("dialog","nrededlg"); dlg.style.width = "min(620px,94vw)";
+  dlg.append(el("h3",null,"Desfazer uniões de ramos"), el("p","leadshint","Da última para a primeira. Desfazer volta cada lead para o ramo que tinha antes da união."));
+  l.forEach(u => {
+    const linha = el("div","leadsacoes"); linha.style.cssText = "align-items:center;justify-content:space-between;border-top:1px solid #e5e7eb;padding:8px 0";
+    const nAnt = Object.keys(u.antes || {}).length;
+    linha.append(el("div",null, new Date(u.em).toLocaleString("pt-BR", { dateStyle:"short", timeStyle:"short" }) + " · " + [...new Set(u.nomes)].join(", ") + " → “" + u.alvo + "” · " + nAnt + " leads"));
+    const b = el("button","btn sm danger","Desfazer"); b.type = "button";
+    b.onclick = async () => {
+      if(!confirm("Desfazer a união em “" + u.alvo + "”? " + nAnt + " leads voltam para o ramo antigo.")) return;
+      const al = ramoAliases(); u.nomes.forEach(nm => { if(al[baseChave(nm)] === u.alvo) delete al[baseChave(nm)]; });
+      try { localStorage.setItem("m04_ramoAlias", JSON.stringify(al)); } catch(e){}
+      const todos = await NovosDB.todos(), mud = [];
+      todos.forEach(x => { if(u.antes[x.chave] != null && x.termo === u.alvo){ x.termo = u.antes[x.chave] || x.termo; delete x.termoAntes; mud.push(x); } });
+      await NovosDB.gravar(mud);
+      await NovosDB.metaGravar("ramoUnioes", (await ramoUnioes()).filter(y => y.id !== u.id));
+      dlg.close(); dlg.remove(); NOVOS.filtro.ramo = ""; toast(mud.length + " leads voltaram para o ramo antigo."); novosDesenhar();
+    };
+    linha.append(b); dlg.append(linha);
+  });
+  const fe = el("button","btn","Fechar"); fe.type = "button"; fe.onclick = () => { dlg.close(); dlg.remove(); };
+  dlg.append(el("div","leadsbotoes"), fe); document.body.append(dlg); dlg.showModal();
+}
+/* separa de um ramo os leads de outro negócio, pelas pistas que sobraram: ramo antigo, nome do lote/busca, CNAE e nome da empresa */
+async function novosSepararRamo(grupos){
+  const dlg = el("dialog","nrededlg"); dlg.style.width = "min(860px,96vw)";
+  dlg.append(el("h3",null,"Separar ramo"), el("p","leadshint","Escolha o ramo de onde tirar, o nome do ramo novo e as palavras que identificam o negócio. Confira a lista e clique em Separar."));
+  const lin = el("div","leadsacoes"); lin.style.cssText = "flex-wrap:wrap;gap:10px;align-items:end";
+  const sDe = el("select"); grupos.forEach(g => { const o = el("option",null, g.nome + " (" + g.lista.length + ")"); o.value = g.k; sDe.append(o); });
+  if(NOVOS.filtro.ramo && grupos.some(g => g.k === NOVOS.filtro.ramo)) sDe.value = NOVOS.filtro.ramo;
+  const inNovo = el("input"); inNovo.type = "text"; inNovo.value = "Odontologia"; inNovo.style.width = "200px";
+  const inPal = el("input"); inPal.type = "text"; inPal.value = "ODONTO, DENT, ORTODON, SORRISO, IMPLANT, ORAL"; inPal.style.width = "330px";
+  const inCn = el("input"); inCn.type = "text"; inCn.value = "8630-5/04"; inCn.style.width = "130px";
+  const cx = (rot, inp) => { const d = el("label"); d.style.cssText = "display:flex;flex-direction:column;gap:3px;font-size:13px"; d.append(el("span",null,rot), inp); return d; };
+  const ckNome = el("input"); ckNome.type = "checkbox"; ckNome.checked = true;
+  const lbNome = el("label","qualcheck"); lbNome.append(ckNome, document.createTextNode(" usar também o nome da empresa"));
+  lin.append(cx("Tirar do ramo", sDe), cx("Ramo novo", inNovo), cx("Palavras (separe por vírgula)", inPal), cx("CNAE", inCn), lbNome);
+  dlg.append(lin);
+  const res = el("div"); res.style.cssText = "max-height:420px;overflow:auto;margin:10px 0;border:1px solid #e5e7eb;border-radius:8px";
+  const info = el("div","leadshint");
+  dlg.append(info, res);
+  const bt = el("div","leadsbotoes"), ok = el("button","btn primary","Separar"), ca = el("button","btn","Cancelar"); ok.type = ca.type = "button"; bt.append(ok, ca); dlg.append(bt);
+  document.body.append(dlg); dlg.showModal();
+  ca.onclick = () => { dlg.close(); dlg.remove(); };
+  const lotesNome = {}; Object.values(fluxoLotes()).forEach(L => { [L.buscaId, L.qrevId].filter(Boolean).forEach(id => { lotesNome[String(id)] = L.nome || ""; }); });
+  try { Object.values(await qrevLotes()).forEach(L => { lotesNome[String(L.id)] = (lotesNome[String(L.id)] || "") + " " + (L.rotulo || ""); }); } catch(e){}
+  let achados = [], marc = new Set();
+  const calcula = () => {
+    const pals = inPal.value.split(",").map(x => baseChave(x).trim()).filter(Boolean);
+    const cns = cnaesDoTexto(inCn.value);
+    const bate = t => { const b = baseChave(t || ""); return pals.some(p => b.includes(p)); };
+    const g = grupos.find(x => x.k === sDe.value); if(!g){ achados = []; return; }
+    achados = g.lista.map(x => {
+      const pistas = [];
+      if(x.termoAntes && bate(x.termoAntes)) pistas.push("ramo antigo: " + x.termoAntes);
+      if(bate(x.buscaRotulo) || bate(lotesNome[String(x.buscaId)])) pistas.push("lote: " + (x.buscaRotulo || lotesNome[String(x.buscaId)] || "").trim().slice(0, 50));
+      const cnP = String(x.cnae || "").replace(/\D/g, ""), secs = leadSecs(x);
+      if(cns.length && (cns.includes(cnP) || secs.some(c => cns.includes(c)))) pistas.push(cns.includes(cnP) ? "CNAE principal" : "CNAE secundário");
+      if(ckNome.checked && bate([x.nomeMaps, x.nomeFantasia, x.razaoSocial, x.categoria].join(" "))) pistas.push("nome");
+      return { x, pistas };
+    }).filter(a => a.pistas.length);
+    marc = new Set(achados.map(a => a.x.chave));
+    res.innerHTML = "";
+    const tb = el("table","leadlista"), h = el("tr"); ["","Empresa","Cidade","Pistas"].forEach(t => h.append(el("th",null,t))); tb.append(h);
+    achados.forEach(a => { const tr = el("tr"), td = el("td","ck"), c = el("input"); c.type = "checkbox"; c.checked = true;
+      c.onchange = () => { c.checked ? marc.add(a.x.chave) : marc.delete(a.x.chave); ok.textContent = "Separar " + marc.size + " leads"; };
+      td.append(c); tr.append(td, el("td",null, a.x.nomeMaps || a.x.razaoSocial || "—"), el("td",null, (a.x.cidade || "") + "/" + (a.x.uf || "")), el("td","sub", a.pistas.join(" · "))); tb.append(tr); });
+    res.append(achados.length ? tb : el("p","leadshint","Nenhum lead com essas pistas."));
+    const conta = k => achados.filter(a => a.pistas.some(p => p.startsWith(k))).length;
+    info.textContent = achados.length + " leads achados · pelo ramo antigo: " + conta("ramo antigo") + " · pelo lote/busca: " + conta("lote") + " · pelo CNAE: " + conta("CNAE") + " · pelo nome: " + conta("nome") + ". Desmarque o que não for.";
+    ok.textContent = "Separar " + marc.size + " leads";
+  };
+  [sDe, inPal, inCn, ckNome].forEach(e => e.onchange = calcula); inPal.oninput = inCn.oninput = () => { clearTimeout(dlg._t); dlg._t = setTimeout(calcula, 400); };
+  calcula();
+  ok.onclick = async () => {
+    const novo = inNovo.value.trim().replace(/\s+/g, " ");
+    if(!novo) return toast("Digite o nome do ramo novo.");
+    if(!marc.size) return toast("Nenhum lead marcado.");
+    const g = grupos.find(x => x.k === sDe.value), deNome = g ? g.nome : "";
+    if(!confirm("Mover " + marc.size + " leads de “" + deNome + "” para “" + novo + "”?")) return;
+    /* apelidos: nomes de busca com essas palavras que apontavam para o ramo de origem passam a apontar para o ramo novo */
+    const pals = inPal.value.split(",").map(x => baseChave(x).trim()).filter(Boolean);
+    const al = ramoAliases(); Object.keys(al).forEach(k => { if(pals.some(p => k.includes(p))) al[k] = novo; }); delete al[baseChave(novo)];
+    try { localStorage.setItem("m04_ramoAlias", JSON.stringify(al)); } catch(e){}
+    const antes = {}; const lista = achados.filter(a => marc.has(a.x.chave)).map(a => { antes[a.x.chave] = a.x.termo || ""; return Object.assign({}, a.x, { termoAntes: a.x.termo, termo: novo }); });
+    await NovosDB.gravar(lista);
+    await ramoUnioesAdd({ id: Date.now(), em: new Date().toISOString(), alvo: novo, nomes: [deNome + " (separação)"], antes });
+    /* revisões de qualificação desses lotes também mudam de ramo */
+    const t = await qrevLotes(); let mud = false;
+    Object.values(t).forEach(L => { if(pals.some(p => baseChave((L.rotulo || "") + " " + (L.ramo || "")).includes(p))){ L.ramo = novo; Object.values(L.regs || {}).forEach(r => { r.termo = novo; }); mud = true; } });
+    if(mud) await qrevLotesGravar(t);
+    dlg.close(); dlg.remove(); NOVOS.filtro.ramo = baseChave(novo); NOVOS.sel.clear();
+    toast(lista.length + " leads foram para o ramo “" + novo + "”."); novosDesenhar();
+  };
+}
 /* ---------- categoria pelo CNAE secundário ---------- */
 function leadSecs(x){
   const a = (x.cnaesSec && x.cnaesSec.length) ? x.cnaesSec : (x.receita && Array.isArray(x.receita.cnaesSec)) ? x.receita.cnaesSec : (x.cnaesSec || []);
@@ -11439,6 +11540,8 @@ function novosPainelRamos(box, todos){
   };
   aba("Todos os ramos", todos.length, "");
   lst.forEach(g => aba(g.nome, g.lista.length, g.k));
+  { const bs = el("button","btn sm","Separar ramo…"); bs.title = "Tira de um ramo os leads de outro negócio (ex.: Odontologia) e cria um ramo só para eles"; bs.onclick = () => novosSepararRamo(lst); abas.append(bs); }
+  { const bd = el("button","btn sm","Desfazer uniões…"); bd.title = "Mostra as uniões de ramos, da última para a primeira, e desfaz a que você escolher"; bd.onclick = () => novosDesfazerUnioes(); abas.append(bd); }
   if(lst.length > 1){ const bj = el("button","btn sm","Juntar ramos…"); bj.title = "Junta ramos que são o mesmo negócio (ex.: Clínica de depilação, Estética e Depilação a laser)"; bj.onclick = () => novosJuntarRamos(lst); abas.append(bj); }
   bl.append(abas);
 
