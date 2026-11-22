@@ -1403,6 +1403,7 @@ a.nmaps::after{content:" ↗";font-size:11px;color:var(--teal);font-weight:400}
 .qok{color:var(--teal-deep);font-weight:600}
 @media(max-width:900px){ .lotesgrade,.lotesduas{grid-template-columns:1fr} }
 .ndiv.ult{border-color:var(--amber);background:var(--amber-soft)} .ndiv.ult.on{background:var(--amber);border-color:var(--amber);color:#fff}
+.ndiv.ult.fila{border-color:var(--accent,#2563eb);background:#eef4ff;font-weight:700} .ndiv.ult.fila.on{background:var(--accent,#2563eb);color:#fff} .tratbt{margin:4px 0 2px;display:block}
 .qlista{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0}
 .cnaecats{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:-4px 0 12px}
 .cnaecatsrot{font-size:12px;font-weight:600;color:var(--muted);margin-right:2px}
@@ -10434,9 +10435,20 @@ async function auditarLead(x){
   if(erro || !resp) throw new Error(erro || "a extensão não respondeu (precisa da versão 2.7)");
   const c = auditClassificar(resp.fontes || [], [x.nomeMaps, x.nomeFantasia, x.razaoSocial, x.categoria].filter(Boolean).join(" "));
   const atual = (await NovosDB.todos()).find(y => y.chave === x.chave) || x;
+  /* CNPJ achado no Google ("cnpj <nome> <cidade>"): o mais citado */
+  const achados = (resp.cnpjsAchados || []).filter(a => novosCnpjValido(a.cnpj));
+  const top = achados[0] || null, dAtual = cnpjDig(atual.cnpj);
   atual.auditoria = Object.assign(c, { em: new Date().toISOString(), por: fluxoQuem(), captcha: !!resp.captcha,
+    cnpjsAchados: achados.slice(0, 4), cnpjDif: !!(top && dAtual.length === 14 && top.cnpj !== dAtual),
     fontes: (resp.fontes || []).filter(f => f.tipo !== "erro").map(f => ({ tipo: f.tipo, titulo: f.titulo, url: f.url })) });
   await NovosDB.gravar([atual]);
+  /* lead sem CNPJ: confere na Receita o CNPJ achado (situação, natureza, abertura) e atualiza o lead */
+  if(top && dAtual.length !== 14){
+    atual.auditoria.cnpjUsado = top.cnpj;
+    await NovosDB.gravar([atual]);
+    await novosConferirManual(atual, top.cnpj, {});
+    toast("CNPJ achado no Google para " + (atual.nomeMaps || "o lead") + ": " + novosFmtCnpj(top.cnpj) + " (conferido na Receita).");
+  }
   return atual.auditoria;
 }
 async function auditarVarios(lista){
@@ -10479,6 +10491,14 @@ function auditBloco(r){
     ul.append(li); });
   if(!a.cats.length) ul.append(el("li",null,"Não achei informação pública suficiente sobre os serviços."));
   det.append(ul);
+  if((a.cnpjsAchados || []).length){
+    const cb = el("div","auditmot " + (a.cnpjDif ? "al" : "ok"));
+    cb.append(document.createTextNode("CNPJ no Google: " + a.cnpjsAchados.map(c => novosFmtCnpj(c.cnpj) + " (" + c.n + "×)").join(", ") +
+      (a.cnpjUsado ? " · usado neste lead e conferido na Receita" : a.cnpjDif ? " · diferente do CNPJ deste lead: confira" : " · bate com o deste lead")));
+    if(a.cnpjDif){ const bt2 = el("button","btn sm","Usar " + novosFmtCnpj(a.cnpjsAchados[0].cnpj)); bt2.onclick = async ev => { ev.stopPropagation();
+      if(!confirm("Trocar o CNPJ deste lead por " + novosFmtCnpj(a.cnpjsAchados[0].cnpj) + " e conferir na Receita?")) return; await novosConferirManual(r, a.cnpjsAchados[0].cnpj, {}); }; cb.append(document.createTextNode(" "), bt2); }
+    det.append(cb);
+  } else if(cnpjDig(r.cnpj).length !== 14) det.append(el("div","auditmot al","Não achei o CNPJ no Google (pesquisa “cnpj " + (r.nomeMaps || "") + " " + (r.cidade || "") + "”)."));
   det.append(el("div","leadshint","Analisado em " + new Date(a.em).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) + (a.por ? " · " + a.por : "") +
     " · fontes: " + (a.fontes || []).map(f => f.titulo).join(", ") + (a.captcha ? " · o Google pediu verificação (análise incompleta)" : "")));
   det.append(bt);
@@ -10807,8 +10827,12 @@ async function novosDesenhar(){
   const campanhas = [...new Set(tudo.filter(x => x.campanha).map(x => x.campanha)
     .concat(tudo.flatMap(x => (x.campanhasAnteriores || []).filter(c => c.para).map(c => c.nome))))].filter(Boolean).sort((a, b) => a.localeCompare(b, "pt-BR"));
   if(NOVOS.campSel && !/^__dia:/.test(NOVOS.campSel) && !campanhas.includes(NOVOS.campSel)) NOVOS.campSel = "";
-  const ultSet = f.ultimos ? new Set(f.ultChaves || (ultimosEnviados() || {}).chaves || []) : null;
-  const todos = ultSet ? tudo.filter(x => ultSet.has(x.chave)) : (f.ramo ? daDivisao.filter(x => novosRamoKey(x) === f.ramo) : daDivisao)
+  /* LEADS A TRATAR: tudo que veio da qualificação e ainda não foi mexido (some da fila ao ir para outra divisão, ser excluído ou marcado como tratado) */
+  const aTratar = x => !!x.transferidoEm && !x.tratadoEm && (divDe(x) === "leads" || divDe(x) === "frios");
+  NOVOS.aTratar = aTratar;
+  const fila = f.ultimos && f.ultModo === "fila";
+  const ultSet = f.ultimos && !fila ? new Set(f.ultChaves || (ultimosEnviados() || {}).chaves || []) : null;
+  const todos = fila ? tudo.filter(aTratar) : ultSet ? tudo.filter(x => ultSet.has(x.chave)) : (f.ramo ? daDivisao.filter(x => novosRamoKey(x) === f.ramo) : daDivisao)
     .filter(x => dv !== "rede" || !NOVOS.redeSel || x.rede === NOVOS.redeSel)
     .filter(x => dv !== "outras" || !NOVOS.sepSel || x.listaSep === NOVOS.sepSel)
     .filter(x => dv !== "campanhas" || !NOVOS.campSel || (/^__dia:/.test(NOVOS.campSel) ? novosDiaExport(x) === NOVOS.campSel.slice(6) : x.campanha === NOVOS.campSel));
@@ -10827,6 +10851,14 @@ async function novosDesenhar(){
   /* atalhos: os que chegaram por último (qualquer divisão e situação) e, num lote, o lote inteiro */
   { const chegada = x => x.transferidoEm || x.capturadoEm || x.importadoEm || "";
     const ult = ultimosEnviados();
+    const nFila = tudo.filter(aTratar).length;
+    { const ativo = fila;
+      const b = el("button","ndiv ult fila" + (ativo ? " on" : ""));
+      b.append(document.createTextNode("LEADS A TRATAR "), el("span",null, String(nFila)));
+      b.title = "Todos os leads mandados da qualificação que você ainda não tratou. Ao mandar para REDE, LISTA CONFERIDA, OUTRAS LISTAS, excluir ou marcar como tratado, o lead sai daqui.";
+      b.onclick = () => { if(ativo){ f.ultimos = false; } else { Object.assign(f, { ultimos:true, ultModo:"fila", ultChaves:null, status:"", uf:"", cidade:"", buscaId:"", busca:"", diaMeta:"", ramo:"" }); NOVOS.divisao = "leads"; } NOVOS.sel.clear(); NOVOS.mostrar = 200; novosDesenhar(); };
+      u.divisoes.append(b);
+    }
     let ultCh = null, ultEm = "";
     const tMax = tudo.reduce((m, x) => { const t = chegada(x); return t > m ? t : m; }, "");
     if(tMax){ const lim = new Date(new Date(tMax) - 10 * 60000).toISOString(); ultCh = tudo.filter(x => chegada(x) >= lim).map(x => x.chave); ultEm = tMax; }
@@ -10851,7 +10883,7 @@ async function novosDesenhar(){
   }
   [["leads","Leads"],["conferida","LISTA CONFERIDA"],["campanhas","CAMPANHAS"],["outras","OUTRAS LISTAS"],["frios","Frios (só fixo)"],["rede","REDE"],["mei","MEI"],["clientes","Já são clientes"]].forEach(([k, rot], i) => {
     if(i === 3 || i === 4) u.divisoes.append(el("span","ndivsep"));
-    const b = el("button","ndiv" + (dv === k ? " on" : "") + (k === "conferida" ? " dconf" : k === "campanhas" ? " dcamp" : k === "outras" ? " dsep" : ""));
+    const b = el("button","ndiv" + (dv === k && !f.ultimos ? " on" : "") + (k === "conferida" ? " dconf" : k === "campanhas" ? " dcamp" : k === "outras" ? " dsep" : ""));
     b.append(document.createTextNode(rot + " "), el("span",null, nDiv(k).toLocaleString("pt-BR")));
     if(k === "rede" && redes.length) b.title = redes.length + " redes";
     if(k === "frios") b.title = "Leads sem nenhum celular (só telefone fixo ou sem telefone): não vão na exportação";
@@ -10978,13 +11010,19 @@ async function novosDesenhar(){
     dv === "frios" ? "Frios (só fixo)" : dv === "campanhas" ? (/^__dia:/.test(NOVOS.campSel || "") ? "Exportados em " + NOVOS.campSel.slice(6).split("-").reverse().join("/") : "Campanha" + (NOVOS.campSel ? " › " + NOVOS.campSel : "s")) : "", f.ramo ? ((NOVOS.nomesRamo || {})[f.ramo] || "") : "Todos os ramos", f.uf || "todos os estados", f.cidade,
     f.buscaId ? "só as novas da busca " + ((u.sBus.selectedOptions[0] || {}).textContent || "").replace(/^Novas de /, "") : "",
     f.diaMeta ? "só os leads da meta de " + f.diaMeta.split("-").reverse().slice(0, 2).join("/") : ""].filter(Boolean);
-  if(f.ultimos){ partes.length = 0; partes.push((f.ultModo === "lote" ? "todos os leads do lote" : f.ultModo === "ultimos" ? "os que chegaram por último" : "leads transferidos da qualificação") + " (de qualquer divisão e situação)"); }
+  if(fila){ partes.length = 0; partes.push("LEADS A TRATAR · mande cada um para onde vai (REDE, LISTA CONFERIDA, OUTRAS LISTAS), exclua ou marque “Tratado”: ele sai da lista e a contagem atualiza"); }
+  else if(f.ultimos){ partes.length = 0; partes.push((f.ultModo === "lote" ? "todos os leads do lote" : f.ultModo === "ultimos" ? "os que chegaram por último" : "leads transferidos da qualificação") + " (de qualquer divisão e situação)"); }
   u.mostrando.append(el("b",null, lista.length.toLocaleString("pt-BR") + (lista.length === 1 ? " lead" : " leads")),
     document.createTextNode(" · " + partes.join(" · ") + (f.status ? " · " + M04_STATUS[f.status][0].toLowerCase() : " · todas as situações")));
   if(f.buscaId && !f.ultimos){
     const lb = el("button","btn sm","Tirar o filtro do lote");
     lb.onclick = () => { f.buscaId = ""; NOVOS.mostrar = 200; novosDesenhar(); };
     u.mostrando.append(lb);
+  }
+  if(fila){
+    const bt = el("button","btn sm primary","Marcados → tratados (ficam em Leads)");
+    bt.onclick = () => NOVOS.sel.size ? novosMarcarTratado([...NOVOS.sel]) : toast("Marque os leads que já tratou.");
+    u.mostrando.append(bt);
   }
   if(f.ultimos){
     const lu = el("button","btn sm","Ver todos os leads");
@@ -11161,6 +11199,8 @@ async function novosDesenhar(){
       te.append(el("span","novotag", "transferido " + new Date(r.transferidoEm).toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" })));
     if(f.ultimos){ const dvR = divDe(r); te.append(el("div","quem", "está em: " + ({ leads:"Leads", outras:"OUTRAS LISTAS", conferida:"LISTA CONFERIDA", frios:"Frios (só fixo)", campanhas:"CAMPANHAS", rede:"REDE", mei:"MEI", clientes:"Já são clientes" })[dvR] +
       " · " + (M04_STATUS[r.status] || [r.status])[0])); }
+    if(fila){ const bt = el("button","btn sm tratbt","✓ Tratado (fica em Leads)"); bt.title = "Já conferi este lead e ele fica na divisão Leads: sai da lista A TRATAR";
+      bt.onclick = () => novosMarcarTratado([r.chave]); te.append(bt); }
     if(r.razaoSocial) te.append(el("div","sub", r.razaoSocial));
     if(r.filiais > 1 && !r.rede) te.append(el("div","quem","possível rede: " + r.filiais + " unidades ativas"));
     if(r.enviadoBase) te.append(el("div","quem","enviado à Base em " + new Date(r.enviadoBaseEm).toLocaleString("pt-BR", { dateStyle:"short", timeStyle:"short" }) +
@@ -17757,12 +17797,21 @@ async function qrevPinta(){
   u.rev.append(tw);
   tw.scrollTop = rolagem;
 }
+/* tira da fila LEADS A TRATAR quem fica em Leads */
+async function novosMarcarTratado(chaves){
+  const set = new Set(chaves), agora = new Date().toISOString();
+  const alvo = (await NovosDB.todos()).filter(x => set.has(x.chave));
+  alvo.forEach(x => { x.tratadoEm = agora; x.tratadoPor = (typeof fluxoQuem === "function" ? fluxoQuem() : ""); });
+  await NovosDB.gravar(alvo); chaves.forEach(k => NOVOS.sel.delete(k));
+  toast(alvo.length + (alvo.length === 1 ? " lead tratado" : " leads tratados") + " (continuam em Leads).");
+  novosDesenhar();
+}
 /* últimos leads transferidos para a lista de leads (para achar fácil no Cadastro) */
 function ultimosEnviados(){ try { return JSON.parse(localStorage.getItem("m04_ultimosEnviados") || "null"); } catch(e){ return null; } }
 function abrirUltimosEnviados(chaves){
-  const u = ultimosEnviados(); if(!(chaves && chaves.length) && !(u && (u.chaves || []).length)) return toast("Nenhuma transferência recente.");
-  Object.assign(NOVOS.filtro, { ultimos:true, ultModo:"transf", ultChaves: chaves && chaves.length ? chaves : null, status:"", uf:"", cidade:"", buscaId:"", ramo:"", busca:"", diaMeta:"", naoEnviados:false });
+  Object.assign(NOVOS.filtro, { ultimos:true, ultModo:"fila", ultChaves: null, status:"", uf:"", cidade:"", buscaId:"", ramo:"", busca:"", diaMeta:"", naoEnviados:false });
   NOVOS.divisao = "leads"; NOVOS.sel.clear(); NOVOS.mostrar = 200; pickEtapa = "novos"; desenhaPicker(); $("#picker").scrollTop = 0;
+  setTimeout(() => { const d = NOVOS.ui && NOVOS.ui.divisoes; if(d && d.scrollIntoView) d.scrollIntoView({ block:"start" }); }, 700);
 }
 /* manda para o Cadastro (lista de leads definitiva) */
 async function qrevEnviar(id, lote){
@@ -17777,7 +17826,7 @@ async function qrevEnviar(id, lote){
   lote.forEach(r => { delete L.regs[r.chave]; L.feitos[r.chave] = "enviado"; L.saidos[r.chave] = { status: r.status, destino:"lista", href: r.hrefLista || "", nome: r.nomeMaps || "" }; QREV.sel.delete(r.chave); });
   await qrevLotesGravar(t);
   fluxoHistPorStaging(id, "mandou " + novos.length + " leads para a lista de leads"); fluxoAtualizarPorStaging(id);
-  toast(novos.length + " leads mandados para a lista de leads (lote " + L.rotulo + ")" + (lote.length > novos.length ? " · " + (lote.length - novos.length) + " já estavam lá" : "") + ". Veja em Leads › “Últimos transferidos”.");
+  toast(novos.length + " leads mandados para a lista de leads (lote " + L.rotulo + ")" + (lote.length > novos.length ? " · " + (lote.length - novos.length) + " já estavam lá" : "") + ". Veja em Cadastro › LEADS A TRATAR.");
   metaAtualizar(); setTimeout(cnaeAutoConferir, 1500); qrevPinta();
 }
 async function qrevDescartar(id, lote){
