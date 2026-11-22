@@ -16977,7 +16977,7 @@ function procDesenhar(){
     const tipo = est.lugaresProntos ? "Qualificação da lista do Maps" : est.listaPronta ? "Conferência da lista do MaisCNPJ" : est.modo === "cnae" ? "Busca pelo CNAE" : "Busca pelo Google Maps";
     const prog = est.fase === "cnpj" && est.lugaresTotal ? Math.min((est.li || 0) + 1, est.lugaresTotal) + " de " + est.lugaresTotal
       : (est.cidades || []).length ? (est.cidades || []).filter(c => c.status === "pronta").length + " de " + est.cidades.length + " cidades" : "";
-    itens.push({ rot: tipo + " · " + (est.termo || ""), sub: (est.pausado ? "Pausada" + (est.motivo || est.bloqueio ? ": " + (est.bloqueio || est.motivo) : "") : prog + (est.atual ? " · " + est.atual : "")),
+    itens.push({ rot: tipo + " · " + (est.termo || ""), sub: (est.pausado ? "Pausada" + (est.bloqueio || est.motivo ? ": " + (est.bloqueio || est.motivo) : "") : prog + (est.atual ? " · " + est.atual : "")),
       pausado: !!est.pausado, ext:true });
   }
   if(LISTA.rodando) itens.push({ rot:"Lendo a lista do MaisCNPJ", sub: LISTA.pg + (LISTA.total ? " de " + LISTA.total : "") + " páginas · " + LISTA.itens.length + " empresas", parar: () => { LISTA.parar = true; toast("A leitura da lista para na próxima página."); } });
@@ -17758,7 +17758,7 @@ async function qrevPinta(){
   } else cab.append(el("b",null, L.rotulo));
   const est = QREV.est;
   const doLote = est && est.existe && est.lugaresProntos && String(est.criadoEm) === String(L.id);
-  const andamento = doLote ? (est.concluido ? "Qualificação concluída." : est.pausado ? "Pausada: " + (est.motivo || est.bloqueio || "") :
+  const andamento = doLote ? (est.concluido ? "Qualificação concluída." : est.pausado ? "Pausada: " + (est.bloqueio || est.motivo || "") :
     "Qualificando " + Math.min((est.li || 0) + 1, est.lugaresTotal || 0) + " de " + (est.lugaresTotal || "…") + (est.atual ? " · " + est.atual : "")) : "";
   if(andamento) cab.append(el("span","leadshint", andamento));
   /* pausar, continuar e parar aqui mesmo */
