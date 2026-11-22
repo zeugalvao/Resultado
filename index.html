@@ -10590,7 +10590,7 @@ async function novosMandarListaSep(){
     (camp ? " " + camp + " já em campanha ficam onde estão." : ""));
   if(!nome) return;
   const agora = new Date().toISOString(), quem = fluxoQuem();
-  await NovosDB.gravar(ok.map(x => { const y = Object.assign({}, x, { listaSep: nome, listaSepEm: agora, listaSepPor: quem }); delete y.conferidaEm; delete y.conferidaPor; return y; }));
+  await NovosDB.gravar(ok.map(x => { const y = Object.assign({}, x, { listaSep: nome, listaSepEm: agora, listaSepPor: quem }); delete y.conferidaEm; delete y.conferidaPor; delete y.conferidaManual; return y; }));
   NOVOS.sel.clear(); toast(ok.length + " leads na lista " + nome + ". Veja na divisão OUTRAS LISTAS."); novosDesenhar();
 }
 async function novosTirarListaSep(){
@@ -10618,15 +10618,24 @@ async function novosMandarConferida(){
   if(NOVOS.divisao === "campanhas") return novosCampanhaParaConferida();
   const lote = (await NovosDB.todos()).filter(x => NOVOS.sel.has(x.chave));
   if(!lote.length) return toast("Marque os leads que vão para a LISTA CONFERIDA.");
-  const ok = [], pul = { campanha:0, cliente:0, status:0, celular:0, ja:0 };
+  const ok = [], forcar = [], pul = { campanha:0, cliente:0, status:0, celular:0, ja:0 };
   lote.forEach(x => {
     if(x.campanha) pul.campanha++; else if(novosCliente(x)) pul.cliente++; else if(x.conferidaEm) pul.ja++;
-    else if(x.status !== "aprovado") pul.status++; else if(!novosTemCelular(x)) pul.celular++; else ok.push(x);
+    else if(x.status !== "aprovado" || !novosTemCelular(x)) forcar.push(x); else ok.push(x);
   });
+  /* leads fora do requisito ou sem celular: você conferiu à mão e decide se vão também */
+  if(forcar.length){
+    const nSt = forcar.filter(x => x.status !== "aprovado").length, nCel = forcar.filter(x => !novosTemCelular(x)).length;
+    const desc = [nSt && nSt + " não são Aprovados (ex.: " + forcar.filter(x => x.status !== "aprovado").slice(0, 2).map(x => (x.nomeMaps || x.razaoSocial || "").slice(0, 30) + " — " + (M04_STATUS[x.status] || [x.status])[0]).join("; ") + ")",
+      nCel && nCel + " sem celular"].filter(Boolean).join(" e ");
+    if(confirm(forcar.length + " dos " + lote.length + " marcados " + desc + ".\n\nVocê conferiu e quer mandar esses também para a LISTA CONFERIDA?\n\nOK = mandar todos os " + (ok.length + forcar.length) + "\nCancelar = mandar só os " + ok.length + " aprovados com celular"))
+      forcar.forEach(x => ok.push(Object.assign({}, x, { conferidaManual: true })));
+    else forcar.forEach(x => { if(x.status !== "aprovado") pul.status++; else pul.celular++; });
+  }
   const motivos = [pul.campanha && pul.campanha + " já estão em campanha", pul.cliente && pul.cliente + " já são clientes", pul.ja && pul.ja + " já estavam na lista conferida",
     pul.status && pul.status + " não são Aprovados", pul.celular && pul.celular + " sem celular"].filter(Boolean);
   if(!ok.length) return toast("Nenhum lead foi para a LISTA CONFERIDA: " + motivos.join(", ") + ".");
-  if(!confirm("Mandar " + ok.length + " leads para a LISTA CONFERIDA? Eles saem das outras listas e ficam prontos para a campanha." + (motivos.length ? "\n\nFicam de fora: " + motivos.join(", ") + "." : ""))) return;
+  if(!forcar.length && !confirm("Mandar " + ok.length + " leads para a LISTA CONFERIDA? Eles saem das outras listas e ficam prontos para a campanha." + (motivos.length ? "\n\nFicam de fora: " + motivos.join(", ") + "." : ""))) return;
   const agora = new Date().toISOString(), quem = fluxoQuem(), cat = "";
   await NovosDB.gravar(ok.map(x => { const y = Object.assign({}, x, { conferidaEm: agora, conferidaPor: quem }); delete y.listaSep; return y; }));
   NOVOS.sel.clear();
@@ -10637,7 +10646,7 @@ async function novosTirarConferida(){
   const lote = (await NovosDB.todos()).filter(x => NOVOS.sel.has(x.chave) && x.conferidaEm && !x.campanha);
   if(!lote.length) return toast("Marque, na LISTA CONFERIDA, os leads que quer tirar (lead já exportado em campanha não sai daqui).");
   if(!confirm("Tirar " + lote.length + " leads da LISTA CONFERIDA? Eles voltam para Leads.")) return;
-  await NovosDB.gravar(lote.map(x => { const y = Object.assign({}, x); delete y.conferidaEm; delete y.conferidaPor; return y; }));
+  await NovosDB.gravar(lote.map(x => { const y = Object.assign({}, x); delete y.conferidaEm; delete y.conferidaPor; delete y.conferidaManual; return y; }));
   NOVOS.sel.clear(); toast(lote.length + " leads voltaram para Leads."); novosDesenhar();
 }
 
@@ -11208,6 +11217,7 @@ async function novosDesenhar(){
     if(r.campanha) te.append(el("div","quem","campanha " + r.campanha + (r.campanhaEm ? " · exportado em " + new Date(r.campanhaEm).toLocaleDateString("pt-BR") : "")));
     else if((r.campanhasAnteriores || []).length) te.append(el("div","quem","remarketing · já esteve em " + r.campanhasAnteriores.map(c => c.nome).join(", ")));
     if(dv === "frios") te.append(el("div","quem nfrio","frio · sem celular"));
+    if(r.conferidaManual && r.conferidaEm && r.status !== "aprovado") te.append(el("div","quem","conferido à mão (" + (M04_STATUS[r.status] || [r.status])[0].toLowerCase() + ")"));
     if(r.categoriaConf && (r.conferidaEm || r.campanha)) te.append(el("span","cattag", r.categoriaConf));
     if(r.listaSep && !r.campanha && !r.conferidaEm) te.append(el("span","cattag septag", r.listaSep));
     if(r.conferidaEm && !r.campanha) te.append(el("div","quem","na lista conferida desde " + new Date(r.conferidaEm).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) + (r.conferidaPor ? " · " + r.conferidaPor : "")));
@@ -11562,7 +11572,7 @@ async function novosExportar(tipo){
   let base = (NOVOS.filtrada || []).filter(x => x.conferidaEm && !novosCliente(x) && !x.campanha && x.status !== "mei");
   const marcados = base.filter(x => NOVOS.sel.has(x.chave));
   if(marcados.length) base = marcados;
-  if(base.some(x => x.status !== "aprovado"))
+  if(base.some(x => x.status !== "aprovado" && !x.conferidaManual))
     return toast("Exportação recusada: há leads que não são Aprovados na seleção.");
   if(!base.length) return toast("Não há leads aprovados com esses filtros para exportar.");
   /* regra 2: só quem tem celular; fixos ficam como frios */
