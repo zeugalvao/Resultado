@@ -10963,7 +10963,7 @@ async function novosDesenhar(){
   });
   if(NOVOS.cli.n) u.divisoes.append(el("span","leadshint", NOVOS.cli.n.toLocaleString("pt-BR") + " CNPJs de clientes carregados" +
     (NOVOS.cli.em ? " em " + new Date(NOVOS.cli.em).toLocaleDateString("pt-BR") : "") + (NOVOS.cli.arquivo ? " (" + NOVOS.cli.arquivo + ")" : "")));
-  const semExport = { outras:"Outras listas não são exportadas para campanha. Para exportar, mande os leads para a LISTA CONFERIDA.", leads:"Exporte pela LISTA CONFERIDA: marque os leads e use Mais ações › Mandar marcados para a LISTA CONFERIDA", rede:"Exporte pela LISTA CONFERIDA (Mais ações › Mandar marcados para a LISTA CONFERIDA)",
+  const semExport = { leads:"Exporte pela LISTA CONFERIDA: marque os leads e use Mais ações › Mandar marcados para a LISTA CONFERIDA", rede:"Exporte pela LISTA CONFERIDA (Mais ações › Mandar marcados para a LISTA CONFERIDA)",
     clientes:"Clientes não são exportados", frios:"Frios (só telefone fixo) não são exportados",
     campanhas:"Leads de campanha já foram exportados. Use “Baixar de novo” na campanha ou volte a campanha para remarketing.", mei:"MEI não é exportado" }[dv];
   u.btCsv.disabled = u.btXls.disabled = u.inQtd.disabled = !!semExport;
@@ -11141,7 +11141,7 @@ async function novosDesenhar(){
     nomes.forEach(n => pill(n, n, daDiv.filter(x => x.listaSep === n).length));
     u.corpo.append(nav);
     const bar = el("div","ncampinfo dsepinfo");
-    bar.append(el("span",null,"OUTRAS LISTAS: leads de categorias que você separou (ex.: ESTÉTICA CORPORAL). Não vão para a lista conferida nem para a campanha."));
+    bar.append(el("span",null,"OUTRAS LISTAS: leads de categorias que você separou (ex.: ESTÉTICA CORPORAL). Escolha a lista e use “Baixar Excel” para exportar numa campanha (só Aprovados com celular)."));
     const b1 = el("button","btn sm","Mandar marcados para outra lista…"); b1.onclick = novosMandarListaSep;
     const b2 = el("button","btn sm","Voltar marcados para Leads"); b2.onclick = novosTirarListaSep;
     bar.append(b1, b2); u.corpo.append(bar);
@@ -11732,13 +11732,14 @@ function novosBaixarArquivo(tipo, nome, linhas){
 
 async function novosExportar(tipo){
   const f = NOVOS.filtro, dv = NOVOS.divisao;
-  if(dv !== "conferida") return toast("A exportação de campanha é feita pela LISTA CONFERIDA. Marque os leads e use Mais ações › Mandar marcados para a LISTA CONFERIDA.");
-  let base = (NOVOS.filtrada || []).filter(x => x.conferidaEm && !novosCliente(x) && !x.campanha && x.status !== "mei");
+  if(dv !== "conferida" && dv !== "outras") return toast("A exportação de campanha é feita pela LISTA CONFERIDA ou por uma das OUTRAS LISTAS. Marque os leads e use Mais ações › Mandar marcados para a LISTA CONFERIDA.");
+  let base = (NOVOS.filtrada || []).filter(x => (dv === "outras" ? x.listaSep : x.conferidaEm) && !novosCliente(x) && !x.campanha && x.status !== "mei");
   const marcados = base.filter(x => NOVOS.sel.has(x.chave));
   if(marcados.length) base = marcados;
-  if(base.some(x => x.status !== "aprovado" && !x.conferidaManual))
-    return toast("Exportação recusada: há leads que não são Aprovados na seleção.");
-  if(!base.length) return toast("Não há leads aprovados com esses filtros para exportar.");
+  /* quem não é Aprovado (e não foi conferido à mão) fica de fora, com aviso */
+  const naoAprov = base.filter(x => x.status !== "aprovado" && !x.conferidaManual).length;
+  base = base.filter(x => x.status === "aprovado" || x.conferidaManual);
+  if(!base.length) return toast("Não há leads aprovados com esses filtros para exportar" + (naoAprov ? " (" + naoAprov + " não são Aprovados)" : "") + ".");
   /* regra 2: só quem tem celular; fixos ficam como frios */
   const comCel = base.filter(novosTemCelular), frios = base.length - comCel.length;
   if(!comCel.length) return toast("Nenhum desses leads tem celular. Os " + base.length + " ficam como frios e não são exportados.");
@@ -11756,7 +11757,7 @@ async function novosExportar(tipo){
   const existentes = [...new Set(tudo.filter(x => x.campanha).map(x => x.campanha))].sort((a, b) => a.localeCompare(b, "pt-BR"));
   const resumo = lote.length.toLocaleString("pt-BR") + " leads aprovados com celular vão para o " + (tipo === "csv" ? "CSV" : "Excel") +
     (qtdTxt && parseInt(qtdTxt, 10) > comCel.length ? " (você pediu " + parseInt(qtdTxt, 10) + ", mas só há " + comCel.length + " disponíveis)" : "") +
-    (frios ? ". " + frios + " só com fixo ficaram de fora (frios)" : "") + ".";
+    (frios ? ". " + frios + " só com fixo ficaram de fora (frios)" : "") + (naoAprov ? ". " + naoAprov + " que não são Aprovados ficaram de fora" : "") + ".";
   const campanha = await novosPerguntarCampanha(resumo, existentes);
   if(!campanha) return;
   const agora = new Date().toISOString();
@@ -11969,6 +11970,22 @@ async function novosEnviarBase(){
   toast(guardados.toLocaleString("pt-BR") + " leads enviados para a Base de Leads (" +
     Object.entries(porRamo).map(([k, n]) => n + " " + k).join(", ") + ")" +
     (marcados.length > comCnpj.length ? " (" + (marcados.length - comCnpj.length) + " sem CNPJ ficaram de fora)" : "") + ".");
+  novosDesenhar();
+  /* oferece exportar os mesmos leads para Excel, guardados numa campanha */
+  const jaCamp = comCnpj.filter(x => x.campanha).length;
+  const exp = comCnpj.filter(x => !x.campanha && novosTemCelular(x)), frios = comCnpj.filter(x => !x.campanha && !novosTemCelular(x)).length;
+  if(!exp.length) return;
+  const tudo = await NovosDB.todos();
+  const existentes = [...new Set(tudo.filter(x => x.campanha).map(x => x.campanha))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const campanha = await novosPerguntarCampanha("Enviados para a Base. Quer exportar também para Excel? " + exp.length + " leads com celular vão para a planilha" +
+    (frios ? " (" + frios + " só com fixo ficam de fora)" : "") + (jaCamp ? " (" + jaCamp + " já estavam em campanha)" : "") + ". Digite o nome da campanha ou clique em Cancelar para não exportar.", existentes);
+  if(!campanha) return;
+  const em = new Date().toISOString(), atuais = new Map(tudo.map(x => [x.chave, x]));
+  const lote = exp.map(r => Object.assign({}, atuais.get(r.chave) || r, { campanha, campanhaEm: em }));
+  await NovosDB.gravar(lote);
+  const f = NOVOS.filtro;
+  novosBaixarArquivo("xlsx", novosNomeArquivo(["campanha", campanha, f.ramo ? (NOVOS.nomesRamo || {})[f.ramo] : "", f.uf, f.cidade, stamp()]), novosLinhasExport(lote));
+  toast(lote.length + " leads exportados na campanha " + campanha + ". Agora ficam em CAMPANHAS.");
   novosDesenhar();
 }
 
